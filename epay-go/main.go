@@ -14,7 +14,6 @@ func main() {
 		"create":   create,
 		"alipay":   alipay,
 		"wxpay":    wxpay,
-		"bank":     bank,
 		"query":    query,
 		"refund":   refund,
 		"transfer": transfer,
@@ -26,9 +25,9 @@ func main() {
 func info(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
 	return map[string]any{
 		"id":       "epay",
-		"name":     "易支付",
+		"name":     "彩虹易支付",
 		"link":     "https://www.epay.com",
-		"paytypes": []string{"alipay", "wxpay", "bank"},
+		"paytypes": []string{"alipay", "wxpay"},
 		"inputs": map[string]plugin.InputField{
 			"appurl": {
 				Name:     "接口地址",
@@ -55,7 +54,6 @@ func create(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	return plugin.CreateWithHandlers(ctx, req, map[string]plugin.HandlerFunc{
 		"alipay": alipay,
 		"wxpay":  wxpay,
-		"bank":   bank,
 	})
 }
 
@@ -107,31 +105,6 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 		}
 		if method == "qrcode" {
 			return map[string]any{"type": "page", "page": "wxpay_qrcode", "url": url}, stats, nil
-		}
-		return map[string]any{"type": "error", "msg": "渠道未返回可用支付地址"}, stats, nil
-	})
-}
-
-func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
-	return plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
-		cfg, err := readConfig(req)
-		if err != nil {
-			return nil, plugin.RequestStats{}, err
-		}
-		resp, stats, err := createOrder(ctx, req, cfg, order)
-		if err != nil {
-			return nil, stats, err
-		}
-		method, url, err := resolvePayMethod(resp)
-		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, stats, nil
-		}
-		if method == "jump" {
-			return map[string]any{"type": "jump", "url": url}, stats, nil
-		}
-		if method == "qrcode" {
-			return map[string]any{"type": "page", "page": "bank_qrcode", "url": url}, stats, nil
 		}
 		return map[string]any{"type": "error", "msg": "渠道未返回可用支付地址"}, stats, nil
 	})
@@ -216,13 +189,5 @@ func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 }
 
 func ret(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
-	target := strings.TrimSpace(order.ReturnURL)
-	if target == "" {
-		target = fmt.Sprint(req.Config["sitedomain"])
-	}
-	if target == "" {
-		target = "/"
-	}
-	return map[string]any{"type": "return", "url": target}, nil
+	return plugin.ReturnOrOK(req), nil
 }
