@@ -55,20 +55,21 @@ func readConfig(req *plugin.CallRequest) (*epayConfig, error) {
 }
 
 func createOrder(ctx context.Context, req *plugin.CallRequest, cfg *epayConfig, order *plugin.OrderPayload) (*epayCreateResp, plugin.RequestStats, error) {
-	createUrl := strings.TrimSpace(cfg.AppURL) + "mapi.php"
+	createUrl := cfg.AppURL + "mapi.php"
 	notifyDomain := strings.TrimRight(fmt.Sprint(req.Config["notifydomain"]), "/")
 	siteDomain := strings.TrimRight(fmt.Sprint(req.Config["sitedomain"]), "/")
+
 	params := map[string]string{
 		"pid":          cfg.PID,
-		"type":         strings.TrimSpace(order.Type),
-		"out_trade_no": strings.TrimSpace(order.TradeNo),
+		"type":         order.Type,
+		"out_trade_no": order.TradeNo,
 		"notify_url":   notifyDomain + "/pay/notify/" + order.TradeNo,
-		"return_url":   siteDomain + "/pay/return/" + order.TradeNo,
-		"name":         strings.TrimSpace(order.Name),
+		"return_url":   siteDomain + "/pay/" + order.Type + "/" + order.TradeNo,
+		"name":         order.Name,
 		"money":        fmtYuan(order.Money),
-		"clientip":     reqIP(req, order),
+		"clientip":     order.IPBuyer,
 		"device":       reqDevice(req),
-		"param":        strings.TrimSpace(order.Param),
+		"param":        order.Param,
 		"sign_type":    signTypeMD5,
 	}
 	params["sign"] = signMD5(params, cfg.Key)
@@ -83,9 +84,9 @@ func createOrder(ctx context.Context, req *plugin.CallRequest, cfg *epayConfig, 
 		return nil, plugin.RequestStats{ReqBody: reqBody, RespBody: body, ReqCount: reqCount, ReqMs: reqMs}, fmt.Errorf("响应解析失败: %w", err)
 	}
 	if resp.Code != 1 {
-		msg := strings.TrimSpace(resp.Msg)
+		msg := resp.Msg
 		if msg == "" {
-			msg = "易支付返回失败"
+			msg = "接口通道返回为空"
 		}
 		return nil, plugin.RequestStats{ReqBody: reqBody, RespBody: body, ReqCount: reqCount, ReqMs: reqMs}, fmt.Errorf("%s", msg)
 	}
@@ -93,12 +94,12 @@ func createOrder(ctx context.Context, req *plugin.CallRequest, cfg *epayConfig, 
 }
 
 func epayQuery(ctx context.Context, cfg *epayConfig, order *plugin.OrderPayload) (string, *epayQueryResp, error) {
-	queryUrl := strings.TrimSpace(cfg.AppURL) + "api.php"
+	queryUrl := cfg.AppURL + "api.php"
 	query := url.Values{}
 	query.Set("act", "order")
 	query.Set("pid", cfg.PID)
 	query.Set("key", cfg.Key)
-	query.Set("out_trade_no", strings.TrimSpace(order.TradeNo))
+	query.Set("out_trade_no", order.TradeNo)
 	body, _, _, err := httpClient.Do(ctx, http.MethodGet, queryUrl+"?"+query.Encode(), "", "")
 	if err != nil {
 		return "", nil, err

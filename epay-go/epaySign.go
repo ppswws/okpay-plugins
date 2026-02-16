@@ -31,7 +31,7 @@ func signMD5(params map[string]string, key string) string {
 }
 
 func verifyMD5(params map[string]string, key string) bool {
-	sign := strings.ToLower(strings.TrimSpace(params["sign"]))
+	sign := strings.ToLower(params["sign"])
 	if sign == "" {
 		return false
 	}

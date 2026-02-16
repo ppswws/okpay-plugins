@@ -33,14 +33,6 @@ func fmtYuan(cents int64) string {
 	return fmt.Sprintf("%.2f", float64(cents)/100.0)
 }
 
-// reqIP 优先取请求上下文 IP，否则回退订单 IP。
-func reqIP(req *plugin.CallRequest, order *plugin.OrderPayload) string {
-	if strings.TrimSpace(req.Request.IP) != "" {
-		return strings.TrimSpace(req.Request.IP)
-	}
-	return strings.TrimSpace(order.IPBuyer)
-}
-
 // reqDevice 根据 UA 判断设备类型（mobile/pc）。
 func reqDevice(req *plugin.CallRequest) string {
 	if plugin.IsMobile(req.Request.UA) {

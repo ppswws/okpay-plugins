@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"okpay/payment/plugin"
 )
@@ -18,7 +17,6 @@ func main() {
 		"refund":   refund,
 		"transfer": transfer,
 		"notify":   notify,
-		"return":   ret,
 	})
 }
 
@@ -111,15 +109,15 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 }
 
 func resolvePayMethod(resp *epayCreateResp) (string, string, error) {
-	payURL := strings.TrimSpace(resp.PayURL)
+	payURL := resp.PayURL
 	if payURL != "" {
 		return "jump", payURL, nil
 	}
-	urlScheme := strings.TrimSpace(resp.URLScheme)
+	urlScheme := resp.URLScheme
 	if urlScheme != "" {
 		return "scheme", urlScheme, nil
 	}
-	qr := strings.TrimSpace(resp.QRCode)
+	qr := resp.QRCode
 	if qr == "" {
 		return "", "", fmt.Errorf("渠道未返回支付地址")
 	}
@@ -174,20 +172,16 @@ func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	if !verifyMD5(params, cfg.Key) {
 		return map[string]any{"type": "html", "data": "fail"}, nil
 	}
-	if strings.TrimSpace(params["trade_status"]) != "TRADE_SUCCESS" {
+	if params["trade_status"] != "TRADE_SUCCESS" {
 		return map[string]any{"type": "html", "data": "success"}, nil
 	}
 
 	if err := plugin.CompleteOrder(ctx, req, plugin.CompleteOrderRequest{
 		TradeNo:    order.TradeNo,
-		APITradeNo: strings.TrimSpace(params["trade_no"]),
-		Buyer:      strings.TrimSpace(params["buyer"]),
+		APITradeNo: params["trade_no"],
+		Buyer:      params["buyer"],
 	}); err != nil {
 		return map[string]any{"type": "html", "data": "fail"}, nil
 	}
 	return map[string]any{"type": "html", "data": "success"}, nil
-}
-
-func ret(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	return plugin.ReturnOrOK(req), nil
 }
