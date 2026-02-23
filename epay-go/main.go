@@ -156,7 +156,7 @@ func transfer(ctx context.Context, req *plugin.CallRequest) (map[string]any, err
 		"state":        2,
 		"api_trade_no": "",
 		"req_body":     "",
-		"resp_body":    "易支付接口不支持转账",
+		"resp_body":    "易支付接口不支持代付",
 		"req_ms":       0,
 	}, nil
 }
