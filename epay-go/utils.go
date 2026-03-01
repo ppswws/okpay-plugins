@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"okpay/payment/plugin"
+
+	"github.com/shopspring/decimal"
 )
 
 func channelConfig(req *plugin.CallRequest) map[string]any {
@@ -28,9 +30,27 @@ func channelConfig(req *plugin.CallRequest) map[string]any {
 	return map[string]any{}
 }
 
-// fmtYuan 将分转换为元字符串（保留 2 位小数）。
-func fmtYuan(cents int64) string {
-	return fmt.Sprintf("%.2f", float64(cents)/100.0)
+// toYuan 将分转换为元字符串（保留 2 位小数）。
+func toYuan(cents int64) string {
+	return decimal.NewFromInt(cents).Div(decimal.NewFromInt(100)).StringFixed(2)
+}
+
+// toCents parses amount in yuan (e.g. "1", "1.00") into cents.
+// Invalid input returns 0.
+func toCents(raw string) int64 {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return 0
+	}
+	val, err := decimal.NewFromString(s)
+	if err != nil || val.IsNegative() {
+		return 0
+	}
+	cents := val.Mul(decimal.NewFromInt(100))
+	if !cents.Equal(cents.Truncate(0)) {
+		return 0
+	}
+	return cents.IntPart()
 }
 
 // reqDevice 根据 UA 判断设备类型（mobile/pc）。

@@ -1,0 +1,55 @@
+4.1单笔代付
+请求参数
+字段名	变量名	必填	类型	示例	说明
+交易类型	P1_bizType	是	String (20)	Transfer	单笔代付接口
+商户订单号	P2_orderId	是	String (50)	120000000000001	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+商户编号	P3_customerNumber	是	String (15)	C1800000002/EXXXX	合利宝分配商户号
+金额	P4_amount	是	Number (10.2)	0.01	金额单位为元，最少值0.01
+银行编码	P5_bankCode	是	String (20)	CCB	见附录银行编码表
+银行账户号	P6_bankAccountNo	是	String	SxtwUQ8tohS6qmcjVP CEKGsJ8qunwZXTBHda szF1LBDVPnaa7xggET RqM7JKc	银行账户号；SM4算法加密
+银行账户名	P7_bankAccountName	是	String (50)	张三	银行账户名
+业务类型	P8_biz	是	String (10)	B2C	B2B:对公;B2C:对私
+银行联行号	P9_bankUnionCode	否	String (20)	102100004951	银行联行号;对公联行号必填
+手续费收取 方式	P10_feeType	是	String (20)	PAYER	PAYER:付款方收取手续费; RECEIVER:收款方收取手续费
+是否加急	P11_urgency	是	String (20)	true	固定值;true：加急
+打款备注	P12_summary	否	String (50)	结算款	打款备注
+订单状态通 知地址	notifyUrl	是	String (200)	http://192.168.33. 50:8062/transfer/n otify	商户用于接收合利宝通知代 付结果的地址,本文档中4.3 节中代付结果通知地址即:n otifyUrl;特别地,notifyUr l接收通知成功后必须返回: “success”;;notifyUrl不参 与签名
+签名	sign	是	String (200)	SxtwUQ8tohS6qmcjVP CEKGsJ8qunwZXTBHda szF1LBDVPnaa7xggET RqM7JKc	SM2签名结果，详见“5.4节S M2签名”;URLEncoder.encod e(sign,”UTF-8”)
+签名类型	signatureType	是	Sting	SM3WITHSM2	SM3WITHSM2;固定值，不参与 签名
+加密秘钥	encryptionKey	是	String	SxtwUQ8tohS6qmcjVP CEKGsJ8qunwZXTBHda szF1LBDVPnaa7xggET RqM7JKc	参数加密秘钥，不参与签名
+付款方信息：
+
+字段名	变量名	必填	类型	示例	说明
+付款方名称	payerName	是	String (30)	xxxxxxxx	xxxxxxxx
+付款方简称	payerShowName	是	String (30)	xxxxxxxx	xxxxxxxx
+付款方编号	payerAccountNo	是	String (50)	xxxxxxxx	xxxxxxxx
+响应参数
+字段名	变量名	必填	类型	示例	说明
+交易类型	rt1_bizType	是	String (20)	Transfer	单笔代付接口
+返回码	rt2_retCode	是	String (20)	0000	详情见附录-返回码
+返回信息	rt3_retMsg	否	String (200)	成功	不参与签名;详情见附录-返 回码
+商户编号	rt4_customerNumber	是	String (15)	C1800000002	合利宝分配商户号
+商户订单号	rt5_orderId	是	String (50)	20170302000001	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+平台流水号	rt6_serialNumber	否	String (50)	1217030200000001	合利宝系统唯一流水号
+签名	sign	是	String (200)	0533368b60e9d826b0 66105affccf7bc	SM2签名结果，详见“5.4节S M2签名”;URLEncoder.encod e(sign,”UTF-8”)
+签名类型	signatureType	是	Sting	SM3WITHSM2	SM3WITHSM2;固定值，不参与 签名
+
+
+
+4.3代付结果通知(主动通知，无请求参数)
+响应参数
+字段名	变量名	必填	类型	示例	说明
+交易类型	rt1_bizType	是	String (20)	Transfer	代付
+返回码	rt2_retCode	是	String (20)	0000	详情见附录-返回码
+返回信息	rt3_retMsg	是	String (200)	成功	详情见附录-返回码
+商户编号	rt4_customerNumber	是	String (15)	201703020 00001	订单编号商
+商户订单号	rt5_orderId	是	String (50)	100000000 000001	户系统内部订单号，要求 50字符以内，同一商户 号下订单号唯一
+平台流水号	rt6_serialNumber	是	String (50)	121703020 0000001	通知记录合利宝系统唯一 流水号
+打款状态	rt7_orderStatus	是	String (50)	DOING	RECEIVE已接收 INIT初始化 DOING处理中 SUCCESS成功 FAIL失败; REFUND退款
+通知类型	rt8_notifyType	是	String (50)	RETURN_RE MITTANCE	ORDER_STATUS:普通通知； RETURN_REMITTANCE:退汇通知
+返回信息	rt9_reason	是	String (100)	成功	成功或者失败的原因
+订单创建时 间	rt10_createDate	是	String (100)	2018-09-1019:58:00	订单创建时间
+订单完成时 间	rt11_completeDate	是	String (100)	2018-09-1019:59:00	订单完成时间
+订单金额	rt12_amount	否	String (50)	0.01	不参与签名，订单金额
+签名	sign	是	String (200)	75a989cc9 985e6d2bc 2d53d9eda 3c31f	SM2签名结果，详见“ 5.4节SM2签名”U RLEncoder.e ncode(sign, “UTF-8”)
+签名类型	signatureType	是	Sting	SM3WITHSM 2	SM3WITHSM2固 定值，不参与签名

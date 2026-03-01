@@ -17,8 +17,8 @@ var httpClient = plugin.NewHTTPClient(plugin.HTTPClientConfig{})
 
 type epayConfig struct {
 	AppURL string
-	PID    string
-	Key    string
+	AppID  string
+	AppKey string
 }
 
 type epayCreateResp struct {
@@ -36,21 +36,50 @@ type epayQueryResp struct {
 	TradeNo    string `json:"trade_no"`
 	OutTradeNo string `json:"out_trade_no"`
 	APITradeNo string `json:"api_trade_no"`
-	Status     int    `json:"status"`
+	Status     intStr `json:"status"`
+}
+
+type intStr string
+
+func (s *intStr) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 {
+		*s = ""
+		return nil
+	}
+	if b[0] == '"' {
+		var v string
+		if err := json.Unmarshal(b, &v); err != nil {
+			return err
+		}
+		*s = intStr(v)
+		return nil
+	}
+	var v json.Number
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*s = intStr(v.String())
+	return nil
+}
+
+func (s intStr) String() string {
+	return strings.TrimSpace(string(s))
 }
 
 func readConfig(req *plugin.CallRequest) (*epayConfig, error) {
 	cfg := channelConfig(req)
-	appurl := strings.TrimSpace(fmt.Sprint(cfg["appurl"]))
-	pid := strings.TrimSpace(fmt.Sprint(cfg["pid"]))
-	key := strings.TrimSpace(fmt.Sprint(cfg["key"]))
-	if appurl == "" || pid == "" || key == "" {
+	appurl := strings.TrimRight(strings.TrimSpace(fmt.Sprint(cfg["appurl"])), "/") + "/"
+	appid := strings.TrimSpace(fmt.Sprint(cfg["appid"]))
+	appkey := strings.TrimSpace(fmt.Sprint(cfg["appkey"]))
+	if appurl == "" || appid == "" || appkey == "" {
 		return nil, fmt.Errorf("通道配置不完整")
 	}
+	// 统一处理末尾斜杠，避免拼接 mapi.php/api.php 出错
+
 	return &epayConfig{
 		AppURL: appurl,
-		PID:    pid,
-		Key:    key,
+		AppID:  appid,
+		AppKey: appkey,
 	}, nil
 }
 
@@ -60,19 +89,19 @@ func createOrder(ctx context.Context, req *plugin.CallRequest, cfg *epayConfig, 
 	siteDomain := strings.TrimRight(fmt.Sprint(req.Config["sitedomain"]), "/")
 
 	params := map[string]string{
-		"pid":          cfg.PID,
+		"pid":          cfg.AppID,
 		"type":         order.Type,
 		"out_trade_no": order.TradeNo,
 		"notify_url":   notifyDomain + "/pay/notify/" + order.TradeNo,
 		"return_url":   siteDomain + "/pay/" + order.Type + "/" + order.TradeNo,
 		"name":         fmt.Sprint(req.Config["goodsname"]),
-		"money":        fmtYuan(order.Real),
+		"money":        toYuan(order.Real),
 		"clientip":     order.IPBuyer,
 		"device":       reqDevice(req),
 		"param":        order.Param,
 		"sign_type":    signTypeMD5,
 	}
-	params["sign"] = signMD5(params, cfg.Key)
+	params["sign"] = signMD5(params, cfg.AppKey)
 
 	reqBody := encodeParams(params)
 	body, reqCount, reqMs, err := httpClient.Do(ctx, http.MethodPost, createUrl, reqBody, "application/x-www-form-urlencoded")
@@ -97,8 +126,8 @@ func epayQuery(ctx context.Context, cfg *epayConfig, order *plugin.OrderPayload)
 	queryUrl := cfg.AppURL + "api.php"
 	query := url.Values{}
 	query.Set("act", "order")
-	query.Set("pid", cfg.PID)
-	query.Set("key", cfg.Key)
+	query.Set("pid", cfg.AppID)
+	query.Set("key", cfg.AppKey)
 	query.Set("out_trade_no", order.TradeNo)
 	body, _, _, err := httpClient.Do(ctx, http.MethodGet, queryUrl+"?"+query.Encode(), "", "")
 	if err != nil {

@@ -1,0 +1,429 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"okpay/payment/plugin"
+	"okpay/payment/plugin/wechatpay"
+)
+
+func main() {
+	plugin.Serve(map[string]plugin.HandlerFunc{
+		"info":           info,
+		"create":         create,
+		"alipay":         alipay,
+		"wxpay":          wxpay,
+		"bank":           bank,
+		"notify":         notify,
+		"refund":         refund,
+		"transfer":       transfer,
+		"transfernotify": transferNotify,
+	})
+}
+
+func info(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+	return map[string]any{
+		"id":         "helipay",
+		"name":       "合利宝",
+		"link":       "https://www.helipay.com/",
+		"paytypes":   []string{"wxpay", "alipay", "bank"},
+		"transtypes": []string{"bank"},
+		"bindwxmp":   true,
+		"bindwxa":    true,
+		"inputs": map[string]plugin.InputField{
+			"appid": {
+				Name:     "商户号 customerNumber",
+				Type:     "input",
+				Required: true,
+			},
+			"appmchid": {
+				Name:     "报备编号",
+				Type:     "input",
+				Required: true,
+			},
+			"appkey": {
+				Name:     "商户密钥(MD5签名密钥)",
+				Type:     "input",
+				Note:     "合利宝提供的签名密钥",
+				Required: true,
+			},
+			"sm4_key": {
+				Name:     "加密密钥(SM4)",
+				Type:     "input",
+				Note:     "合利宝提供的加密密钥",
+				Required: true,
+			},
+			"biztype_alipay": {
+				Name: "支付宝方式",
+				Type: "checkbox",
+				Options: map[string]string{
+					"1": "公众号/JS/服务窗",
+					"2": "小程序",
+					"3": "WAP(H5)",
+					"4": "扫码",
+				},
+			},
+			"biztype_wxpay": {
+				Name: "微信方式",
+				Type: "checkbox",
+				Options: map[string]string{
+					"1": "公众号/JS",
+					"2": "小程序",
+					"3": "WAP(H5)",
+					"4": "扫码",
+				},
+			},
+			"biztype_bank": {
+				Name: "银联方式",
+				Type: "checkbox",
+				Options: map[string]string{
+					"1": "云闪付扫码",
+				},
+			},
+		},
+		"note": "配置说明：商户号/报备编号/签名密钥/加密密钥由合利宝提供",
+	}, nil
+}
+
+func create(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+	return plugin.CreateWithHandlers(ctx, req, map[string]plugin.HandlerFunc{
+		"alipay": alipay,
+		"wxpay":  wxpay,
+		"bank":   bank,
+	})
+}
+
+func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+	order := plugin.DecodeOrder(req.Order)
+	cfg, err := readConfig(req)
+	if err != nil {
+		return nil, err
+	}
+	modes := plugin.ModeSet(cfg.Biztypes)
+	allowPublic := plugin.AllowMode(modes, "1")
+	allowMini := plugin.AllowMode(modes, "2")
+	allowH5 := plugin.AllowMode(modes, "3")
+	allowScan := plugin.AllowMode(modes, "4")
+
+	if allowH5 && plugin.IsMobile(req.Request.UA) {
+		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+			payURL, stats, err := createWapOrder(ctx, req, cfg, order, "alipay")
+			if err != nil {
+				return nil, stats, err
+			}
+			return map[string]any{"type": "jump", "url": payURL}, stats, nil
+		})
+		if err != nil {
+			return map[string]any{"type": "error", "msg": err.Error()}, nil
+		}
+		return result, nil
+	}
+
+	if allowScan || allowH5 {
+		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+			payURL, stats, err := createScanOrder(ctx, req, cfg, order, "alipay")
+			if err != nil {
+				return nil, stats, err
+			}
+			return map[string]any{"type": "page", "page": "alipay_qrcode", "url": payURL}, stats, nil
+		})
+		if err != nil {
+			return map[string]any{"type": "error", "msg": err.Error()}, nil
+		}
+		return result, nil
+	}
+
+	if allowMini {
+		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+			payURL, stats, err := createAppletOrder(ctx, req, cfg, order, "alipay", "1")
+			if err != nil {
+				return nil, stats, err
+			}
+			return map[string]any{"type": "page", "page": "alipay_qrcode", "url": payURL}, stats, nil
+		})
+		if err != nil {
+			return map[string]any{"type": "error", "msg": err.Error()}, nil
+		}
+		return result, nil
+	}
+
+	if allowPublic {
+		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+			payURL, stats, err := createPublicOrder(ctx, req, cfg, order, "alipay", "1", "0", "1")
+			if err != nil {
+				return nil, stats, err
+			}
+			return map[string]any{"type": "page", "page": "alipay_qrcode", "url": payURL}, stats, nil
+		})
+		if err != nil {
+			return map[string]any{"type": "error", "msg": err.Error()}, nil
+		}
+		return result, nil
+	}
+
+	return map[string]any{"type": "error", "msg": "当前通道未开启支付宝支付方式"}, nil
+}
+
+func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+	order := plugin.DecodeOrder(req.Order)
+	cfg, err := readConfig(req)
+	if err != nil {
+		return nil, err
+	}
+	modes := plugin.ModeSet(cfg.Biztypes)
+	allowPublic := plugin.AllowMode(modes, "1")
+	allowMini := plugin.AllowMode(modes, "2")
+	allowH5 := plugin.AllowMode(modes, "3")
+	allowScan := plugin.AllowMode(modes, "4")
+
+	if allowPublic && plugin.IsWeChat(req.Request.UA) {
+		if cfg.MPAppID == "" || cfg.MPAppSecret == "" {
+			return map[string]any{"type": "error", "msg": "支付通道未绑定微信公众号"}, nil
+		}
+		code := plugin.GetQuery(req, "code")
+		redirectURL := buildPayURL(req, order, map[string]string{"t": fmt.Sprintf("%d", time.Now().Unix())})
+		openID, authURL, err := wechatpay.GetOpenid(ctx, wechatpay.MPAuthParams{
+			AppID:       cfg.MPAppID,
+			AppSecret:   cfg.MPAppSecret,
+			Code:        code,
+			RedirectURL: redirectURL,
+			State:       order.TradeNo,
+		})
+		if err != nil {
+			return map[string]any{"type": "error", "msg": err.Error()}, nil
+		}
+		if authURL != "" {
+			return map[string]any{"type": "jump", "url": authURL}, nil
+		}
+		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+			payInfo, stats, err := createPublicOrder(ctx, req, cfg, order, "wxpay", cfg.MPAppID, "1", openID)
+			if err != nil {
+				return nil, stats, err
+			}
+			jsParams, err := parseJSONAny(payInfo)
+			if err != nil {
+				return nil, stats, err
+			}
+			return map[string]any{"type": "page", "page": "wxpay_jspay", "data": map[string]any{"js_api_parameters": jsParams}}, stats, nil
+		})
+		if err != nil {
+			return map[string]any{"type": "error", "msg": err.Error()}, nil
+		}
+		return result, nil
+	}
+
+	if allowMini {
+		if cfg.MiniAppID == "" {
+			return map[string]any{"type": "error", "msg": "支付通道未绑定微信小程序"}, nil
+		}
+		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+			codeURL, stats, err := createAppletOrder(ctx, req, cfg, order, "wxpay", cfg.MiniAppID)
+			if err != nil {
+				return nil, stats, err
+			}
+			return map[string]any{"type": "page", "page": "wxpay_h5", "url": codeURL}, stats, nil
+		})
+		if err != nil {
+			return map[string]any{"type": "error", "msg": err.Error()}, nil
+		}
+		return result, nil
+	}
+
+	if allowH5 && plugin.IsMobile(req.Request.UA) {
+		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+			payURL, stats, err := createWapOrder(ctx, req, cfg, order, "wxpay")
+			if err != nil {
+				return nil, stats, err
+			}
+			return map[string]any{"type": "jump", "url": payURL}, stats, nil
+		})
+		if err != nil {
+			return map[string]any{"type": "error", "msg": err.Error()}, nil
+		}
+		return result, nil
+	}
+
+	if allowScan {
+		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+			payURL, stats, err := createScanOrder(ctx, req, cfg, order, "wxpay")
+			if err != nil {
+				return nil, stats, err
+			}
+			return map[string]any{"type": "page", "page": "wxpay_qrcode", "url": payURL}, stats, nil
+		})
+		if err != nil {
+			return map[string]any{"type": "error", "msg": err.Error()}, nil
+		}
+		return result, nil
+	}
+
+	if allowPublic {
+		qrURL := buildPayURL(req, order, map[string]string{"t": fmt.Sprintf("%d", time.Now().Unix())})
+		return map[string]any{"type": "page", "page": "wxpay_qrcode", "url": qrURL}, nil
+	}
+
+	return map[string]any{"type": "error", "msg": "当前通道未开启微信支付方式"}, nil
+}
+
+func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+	order := plugin.DecodeOrder(req.Order)
+	cfg, err := readConfig(req)
+	if err != nil {
+		return nil, err
+	}
+	modes := plugin.ModeSet(cfg.Biztypes)
+	allowScan := plugin.AllowMode(modes, "1")
+	if allowScan {
+		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+			payURL, stats, err := createPublicOrder(ctx, req, cfg, order, "bank", "1", "0", "1")
+			if err != nil {
+				return nil, stats, err
+			}
+			return map[string]any{"type": "page", "page": "bank_qrcode", "url": payURL}, stats, nil
+		})
+		if err != nil {
+			return map[string]any{"type": "error", "msg": err.Error()}, nil
+		}
+		return result, nil
+	}
+	return map[string]any{"type": "error", "msg": "当前通道未开启银联支付方式"}, nil
+}
+
+func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+	order := plugin.DecodeOrder(req.Order)
+	cfg, err := readConfig(req)
+	if err != nil {
+		return map[string]any{"type": "html", "data": "fail"}, nil
+	}
+	params := reqParams(req)
+	if !verifyNotify(params, cfg.AppKey) {
+		return map[string]any{"type": "html", "data": "fail"}, nil
+	}
+	if params["rt4_status"] != "SUCCESS" {
+		return map[string]any{"type": "html", "data": "fail"}, nil
+	}
+	if order != nil {
+		if params["rt2_orderId"] != order.TradeNo {
+			return map[string]any{"type": "html", "data": "fail"}, nil
+		}
+		if order.Real != toCents(params["rt5_orderAmount"]) {
+			return map[string]any{"type": "html", "data": "amount_mismatch"}, nil
+		}
+	}
+	if order != nil {
+		if err := plugin.CompleteOrder(ctx, req, plugin.CompleteOrderRequest{
+			TradeNo:    order.TradeNo,
+			APITradeNo: params["rt3_systemSerial"],
+			Buyer:      params["rt10_openId"],
+		}); err != nil {
+			return map[string]any{"type": "html", "data": "fail"}, nil
+		}
+	}
+	return map[string]any{"type": "html", "data": "success"}, nil
+}
+
+func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+	refund := plugin.DecodeRefund(req.Refund)
+	cfg, err := readConfig(req)
+	if err != nil {
+		return nil, err
+	}
+	result, err := refundOrder(ctx, cfg, refund)
+	if err != nil {
+		return map[string]any{
+			"state":     2,
+			"req_body":  result.ReqBody,
+			"resp_body": result.RespBody,
+			"req_ms":    result.ReqMs,
+			"err":       err.Error(),
+		}, nil
+	}
+	return map[string]any{
+		"state":         1,
+		"api_refund_no": result.APIRefundNo,
+		"req_body":      result.ReqBody,
+		"resp_body":     result.RespBody,
+		"req_ms":        result.ReqMs,
+	}, nil
+}
+
+func transfer(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+	transfer := plugin.DecodeTransfer(req.Transfer)
+	cfg, err := readConfig(req)
+	if err != nil {
+		return nil, err
+	}
+	notifyDomain := strings.TrimRight(fmt.Sprint(req.Config["notifydomain"]), "/")
+	params := map[string]string{
+		"P1_bizType":         "Transfer",
+		"P2_orderId":         transfer.TradeNo,
+		"P3_customerNumber":  cfg.AppID,
+		"P4_amount":          toYuan(transfer.Amount),
+		"P5_bankCode":        transfer.BankName,
+		"P6_bankAccountNo":   transfer.CardNo,
+		"P7_bankAccountName": transfer.CardName,
+		"P8_biz":             "B2C",
+		"P9_bankUnionCode":   transfer.BranchName,
+		"P10_feeType":        "PAYER",
+		"P11_urgency":        "true",
+		"P12_summary":        "",
+		"notifyUrl":          notifyDomain + "/pay/transfernotify/" + transfer.TradeNo,
+		"payerName":          "",
+		"payerShowName":      "",
+		"payerAccountNo":     "",
+	}
+	resp, stats, err := transferOrder(ctx, cfg, params)
+	if err != nil {
+		return map[string]any{"state": 2, "api_trade_no": "", "req_body": stats.ReqBody, "resp_body": err.Error(), "req_ms": stats.ReqMs}, nil
+	}
+	if resp["rt2_retCode"] != "0000" {
+		msg := resp["rt3_retMsg"]
+		if msg == "" {
+			msg = resp["rt2_retCode"]
+		}
+		return map[string]any{"state": 2, "api_trade_no": "", "req_body": stats.ReqBody, "resp_body": msg, "req_ms": stats.ReqMs}, nil
+	}
+	return map[string]any{"state": 0, "api_trade_no": resp["rt6_serialNumber"], "req_body": stats.ReqBody, "resp_body": stats.RespBody, "req_ms": stats.ReqMs}, nil
+}
+
+func transferNotify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+	transfer := plugin.DecodeTransfer(req.Transfer)
+	cfg, err := readConfig(req)
+	if err != nil {
+		return map[string]any{"type": "html", "data": "fail"}, nil
+	}
+	params := reqParams(req)
+	if !verifyNotify(params, cfg.AppKey) {
+		return map[string]any{"type": "html", "data": "fail"}, nil
+	}
+	status := params["rt7_orderStatus"]
+	apiTradeNo := params["rt6_serialNumber"]
+	result := params["rt9_reason"]
+	if transfer == nil {
+		if status == "SUCCESS" {
+			return map[string]any{"type": "html", "data": "success"}, nil
+		}
+		return map[string]any{"type": "html", "data": "success"}, nil
+	}
+	if status == "SUCCESS" {
+		_ = plugin.CompleteTransfer(ctx, req, plugin.CompleteTransferRequest{
+			TradeNo:    transfer.TradeNo,
+			Status:     1,
+			APITradeNo: apiTradeNo,
+			Result:     result,
+		})
+		return map[string]any{"type": "html", "data": "success"}, nil
+	}
+	if status == "FAIL" || status == "REFUND" {
+		_ = plugin.CompleteTransfer(ctx, req, plugin.CompleteTransferRequest{
+			TradeNo:    transfer.TradeNo,
+			Status:     -1,
+			APITradeNo: apiTradeNo,
+			Result:     result,
+		})
+	}
+	return map[string]any{"type": "html", "data": "success"}, nil
+}
