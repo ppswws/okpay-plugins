@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func signJoinpay(data map[string]string, fields []string, key string) string {
+func joinpaySignPlain(data map[string]string, fields []string) string {
 	buf := strings.Builder{}
 	for _, field := range fields {
 		val := data[field]
@@ -15,6 +15,12 @@ func signJoinpay(data map[string]string, fields []string, key string) string {
 		}
 		buf.WriteString(val)
 	}
+	return buf.String()
+}
+
+func signJoinpay(data map[string]string, fields []string, key string) string {
+	buf := strings.Builder{}
+	buf.WriteString(joinpaySignPlain(data, fields))
 	buf.WriteString(key)
 	sum := md5.Sum([]byte(buf.String()))
 	return hex.EncodeToString(sum[:])

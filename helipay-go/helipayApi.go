@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/md5"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -31,6 +30,7 @@ type helipayConfig struct {
 
 type refundResult struct {
 	APIRefundNo string
+	RetCode     string
 	ReqBody     string
 	RespBody    string
 	ReqMs       int32
@@ -38,27 +38,27 @@ type refundResult struct {
 
 func readConfig(req *plugin.CallRequest) (*helipayConfig, error) {
 	cfg := plugin.DecodeConfig(req)
-	appid := strings.TrimSpace(fmt.Sprint(cfg["appid"]))
-	appkey := strings.TrimSpace(fmt.Sprint(cfg["appkey"]))
+	appid := plugin.String(cfg["appid"])
+	appkey := plugin.String(cfg["appkey"])
 	if appid == "" || appkey == "" {
 		return nil, fmt.Errorf("通道配置不完整")
 	}
 	return &helipayConfig{
 		AppID:         appid,
 		AppKey:        appkey,
-		SM4Key:        strings.TrimSpace(fmt.Sprint(cfg["sm4_key"])),
-		AppMchID:      strings.TrimSpace(fmt.Sprint(cfg["appmchid"])),
-		MPAppID:       strings.TrimSpace(fmt.Sprint(cfg["mp_appid"])),
-		MPAppSecret:   strings.TrimSpace(fmt.Sprint(cfg["mp_appsecret"])),
-		MiniAppID:     strings.TrimSpace(fmt.Sprint(cfg["mini_appid"])),
-		MiniAppSecret: strings.TrimSpace(fmt.Sprint(cfg["mini_appsecret"])),
+		SM4Key:        plugin.String(cfg["sm4_key"]),
+		AppMchID:      plugin.String(cfg["appmchid"]),
+		MPAppID:       plugin.String(cfg["mp_appid"]),
+		MPAppSecret:   plugin.String(cfg["mp_appsecret"]),
+		MiniAppID:     plugin.String(cfg["mini_appid"]),
+		MiniAppSecret: plugin.String(cfg["mini_appsecret"]),
 		Biztypes:      plugin.ReadStringSlice(cfg["biztype"]),
 	}, nil
 }
 
 func createPublicOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipayConfig, order *plugin.OrderPayload, payType, appid, isRaw, openid string) (string, plugin.RequestStats, error) {
-	notifyURL := strings.TrimRight(fmt.Sprint(req.Config["notifydomain"]), "/") + "/pay/notify/" + order.TradeNo
-	productName := fmt.Sprint(req.Config["goodsname"])
+	notifyURL := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/") + "/pay/notify/" + order.TradeNo
+	productName := plugin.String(req.Config["goodsname"])
 	params := map[string]string{
 		"P1_bizType":         "AppPayPublic",
 		"P2_orderId":         order.TradeNo,
@@ -86,8 +86,8 @@ func createPublicOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipa
 }
 
 func createAppletOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipayConfig, order *plugin.OrderPayload, payType, appid string) (string, plugin.RequestStats, error) {
-	notifyURL := strings.TrimRight(fmt.Sprint(req.Config["notifydomain"]), "/") + "/pay/notify/" + order.TradeNo
-	productName := fmt.Sprint(req.Config["goodsname"])
+	notifyURL := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/") + "/pay/notify/" + order.TradeNo
+	productName := plugin.String(req.Config["goodsname"])
 	params := map[string]string{
 		"P1_bizType":         "AppPayApplet",
 		"P2_orderId":         order.TradeNo,
@@ -115,8 +115,8 @@ func createAppletOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipa
 }
 
 func createWapOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipayConfig, order *plugin.OrderPayload, payType string) (string, plugin.RequestStats, error) {
-	notifyURL := strings.TrimRight(fmt.Sprint(req.Config["notifydomain"]), "/") + "/pay/notify/" + order.TradeNo
-	productName := fmt.Sprint(req.Config["goodsname"])
+	notifyURL := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/") + "/pay/notify/" + order.TradeNo
+	productName := plugin.String(req.Config["goodsname"])
 	params := map[string]string{
 		"P1_bizType":        "AppPayH5WFT",
 		"P2_orderId":        order.TradeNo,
@@ -129,7 +129,7 @@ func createWapOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipayCo
 		"P9_payType":        "WAP",
 		"P10_appName":       "短剧剧场",
 		"P11_deviceInfo":    "iOS_WAP",
-		"P12_applicationId": strings.TrimRight(fmt.Sprint(req.Config["sitedomain"]), "/"),
+		"P12_applicationId": strings.TrimRight(plugin.String(req.Config["sitedomain"]), "/"),
 		"P13_goodsName":     productName,
 		"P14_goodsDetail":   "",
 		"P15_desc":          "",
@@ -144,8 +144,8 @@ func createWapOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipayCo
 }
 
 func createScanOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipayConfig, order *plugin.OrderPayload, payType string) (string, plugin.RequestStats, error) {
-	notifyURL := strings.TrimRight(fmt.Sprint(req.Config["notifydomain"]), "/") + "/pay/notify/" + order.TradeNo
-	productName := fmt.Sprint(req.Config["goodsname"])
+	notifyURL := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/") + "/pay/notify/" + order.TradeNo
+	productName := plugin.String(req.Config["goodsname"])
 	params := map[string]string{
 		"P1_bizType":        "AppPay",
 		"P2_orderId":        order.TradeNo,
@@ -186,7 +186,7 @@ func refundOrder(ctx context.Context, cfg *helipayConfig, refund *plugin.RefundP
 		return refundResult{ReqBody: stats.ReqBody, RespBody: stats.RespBody, ReqMs: stats.ReqMs}, err
 	}
 	retCode := resp["rt2_retCode"]
-	if retCode != "0000" && retCode != "0001" {
+	if retCode != "0000" && retCode != "0001" && retCode != "0002" {
 		msg := resp["rt3_retMsg"]
 		if msg == "" {
 			msg = retCode
@@ -200,7 +200,7 @@ func refundOrder(ctx context.Context, cfg *helipayConfig, refund *plugin.RefundP
 	if apiRefundNo == "" {
 		apiRefundNo = refundOrderID
 	}
-	return refundResult{APIRefundNo: apiRefundNo, ReqBody: stats.ReqBody, RespBody: stats.RespBody, ReqMs: stats.ReqMs}, nil
+	return refundResult{APIRefundNo: apiRefundNo, RetCode: retCode, ReqBody: stats.ReqBody, RespBody: stats.RespBody, ReqMs: stats.ReqMs}, nil
 }
 
 func transferOrder(ctx context.Context, cfg *helipayConfig, params map[string]string) (map[string]string, plugin.RequestStats, error) {
@@ -253,8 +253,7 @@ func parseResponse(body string) map[string]string {
 	if body == "" {
 		return map[string]string{}
 	}
-	var jsonMap map[string]any
-	if err := json.Unmarshal([]byte(body), &jsonMap); err == nil && len(jsonMap) > 0 {
+	if jsonMap, err := plugin.DecodeJSONMap(body); err == nil && len(jsonMap) > 0 {
 		return toStringMap(jsonMap)
 	}
 	values, err := url.ParseQuery(body)

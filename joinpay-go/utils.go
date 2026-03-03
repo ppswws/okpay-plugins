@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -17,8 +16,7 @@ func toYuan(cents int64) string {
 	return decimal.NewFromInt(cents).Div(decimal.NewFromInt(100)).StringFixed(2)
 }
 
-// toCents parses amount in yuan (e.g. "1", "1.00") into cents.
-// Invalid input returns 0.
+// toCents 函数将元金额（例如“1”、“1.00”）解析为分，无效输入返回 0。
 func toCents(raw string) int64 {
 	s := strings.TrimSpace(raw)
 	if s == "" {
@@ -34,6 +32,7 @@ func toCents(raw string) int64 {
 	}
 	return cents.IntPart()
 }
+
 func encodeParams(params map[string]string) string {
 	q := url.Values{}
 	for k, v := range params {
@@ -44,15 +43,41 @@ func encodeParams(params map[string]string) string {
 
 func reqParams(req *plugin.CallRequest) map[string]string {
 	out := map[string]string{}
-	for k, v := range req.Request.Query {
-		out[k] = fmt.Sprint(v)
+	if req == nil {
+		return out
 	}
-	for k, v := range req.Request.Body {
-		out[k] = fmt.Sprint(v)
+	if raw := req.Request.Query; raw != "" {
+		if values, err := url.ParseQuery(raw); err == nil && len(values) > 0 {
+			for k, vals := range values {
+				if len(vals) > 0 {
+					out[k] = vals[0]
+				}
+			}
+		}
+	}
+	if raw := req.Request.Body; raw != "" {
+		if jsonMap, err := plugin.DecodeJSONMap(raw); err == nil {
+			for k, v := range jsonMap {
+				out[k] = plugin.String(v)
+			}
+		}
 	}
 	return out
 }
 
+func reqQueryValue(req *plugin.CallRequest, key string) string {
+	if req == nil || key == "" {
+		return ""
+	}
+	if raw := req.Request.Query; raw != "" {
+		if values, err := url.ParseQuery(raw); err == nil && len(values) > 0 {
+			if vals, ok := values[key]; ok && len(vals) > 0 {
+				return vals[0]
+			}
+		}
+	}
+	return ""
+}
 
 func limitLength(value string, length int) string {
 	if value == "" || length <= 0 {
@@ -69,7 +94,7 @@ func buildPayURL(req *plugin.CallRequest, order *plugin.OrderPayload, query map[
 	if order == nil {
 		return ""
 	}
-	siteDomain := strings.TrimRight(fmt.Sprint(req.Config["sitedomain"]), "/")
+	siteDomain := strings.TrimRight(plugin.String(req.Config["sitedomain"]), "/")
 	if siteDomain == "" {
 		return ""
 	}
@@ -108,7 +133,7 @@ func buildQRResponse(result map[string]string, page string) (map[string]any, err
 	if code == "" {
 		return nil, fmt.Errorf("二维码信息为空")
 	}
-	return map[string]any{"type": "page", "page": page, "url": code}, nil
+	return plugin.RespPageURL(page, code), nil
 }
 
 func buildDirectResponse(result map[string]string) (map[string]any, error) {
@@ -118,13 +143,9 @@ func buildDirectResponse(result map[string]string) (map[string]any, error) {
 	}
 	lower := strings.ToLower(payload)
 	if strings.Contains(lower, "<form") || strings.Contains(lower, "<html") {
-		out := map[string]any{"type": "html", "data": payload}
-		if strings.HasPrefix(lower, "<form") {
-			out["submit"] = true
-		}
-		return out, nil
+		return plugin.RespHTMLWithSubmit(payload, strings.HasPrefix(lower, "<form")), nil
 	}
-	return map[string]any{"type": "jump", "url": payload}, nil
+	return plugin.RespJump(payload), nil
 }
 
 func buildH5Response(result map[string]string, page string) (map[string]any, error) {
@@ -134,30 +155,15 @@ func buildH5Response(result map[string]string, page string) (map[string]any, err
 	}
 	lower := strings.ToLower(payload)
 	if strings.Contains(lower, "<form") || strings.Contains(lower, "<html") {
-		out := map[string]any{"type": "html", "data": payload}
-		if strings.HasPrefix(lower, "<form") {
-			out["submit"] = true
-		}
-		return out, nil
+		return plugin.RespHTMLWithSubmit(payload, strings.HasPrefix(lower, "<form")), nil
 	}
-	return map[string]any{"type": "page", "page": page, "url": payload}, nil
+	return plugin.RespPageURL(page, payload), nil
 }
 
 func toStringMap(input map[string]any) map[string]string {
 	out := map[string]string{}
 	for k, v := range input {
-		out[k] = fmt.Sprint(v)
+		out[k] = plugin.String(v)
 	}
 	return out
-}
-
-func parseJSONAny(raw string) (any, error) {
-	if raw == "" {
-		return nil, fmt.Errorf("支付数据为空")
-	}
-	var out any
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return nil, fmt.Errorf("支付参数解析失败: %w", err)
-	}
-	return out, nil
 }

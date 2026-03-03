@@ -2,15 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"okpay/payment/plugin"
-	"okpay/payment/plugin/wechatpay"
+	"okpay/payment/plugin/sdk/wechatpay"
 )
 
 func main() {
@@ -133,9 +131,9 @@ func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	if allowMini {
 		result, err := aliappHosting(ctx, client, req, cfg, order)
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
-		return map[string]any{"type": "page", "page": "alipay_h5", "url": result}, nil
+		return plugin.RespPageURL("alipay_h5", result), nil
 	}
 
 	if allowHosting {
@@ -145,34 +143,36 @@ func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 		}
 		jumpURL, err := hostingOrder(ctx, client, req, cfg, order, "A_JSAPI", requestType)
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		if plugin.IsAlipay(req.Request.UA) {
-			return map[string]any{"type": "jump", "url": jumpURL}, nil
+			return plugin.RespJump(jumpURL), nil
 		}
 		if plugin.IsMobile(req.Request.UA) {
-			return map[string]any{"type": "page", "page": "alipay_h5", "url": jumpURL}, nil
+			return plugin.RespPageURL("alipay_h5", jumpURL), nil
 		}
-		return map[string]any{"type": "page", "page": "alipay_qrcode", "url": jumpURL}, nil
+		return plugin.RespPageURL("alipay_qrcode", jumpURL), nil
 	}
 
 	if allowJS {
 		buyerID := pickBuyerID(order, req)
 		if buyerID == "" {
-			return map[string]any{"type": "error", "msg": "缺少支付宝用户标识"}, nil
+			return plugin.RespError("缺少支付宝用户标识"), nil
 		}
-		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
-			payInfo, stats, err := addOrder(ctx, client, req, cfg, order, "A_JSAPI", buyerID)
-			if err != nil {
-				return nil, stats, err
-			}
-			out := map[string]any{}
-			_ = json.Unmarshal([]byte(payInfo), &out)
-			tradeNo := fmt.Sprint(out["tradeNO"])
-			return map[string]any{"type": "page", "page": "alipay_jspay", "data": map[string]any{"alipay_trade_no": tradeNo, "redirect_url": "data.backurl"}}, stats, nil
-		})
+			result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+				payInfo, stats, err := addOrder(ctx, client, req, cfg, order, "A_JSAPI", buyerID)
+				if err != nil {
+					return nil, stats, err
+				}
+				out, err := plugin.DecodeJSONMap(payInfo)
+				if err != nil {
+					return nil, stats, err
+				}
+				tradeNo := plugin.String(out["tradeNO"])
+				return plugin.RespPageData("alipay_jspay", map[string]any{"alipay_trade_no": tradeNo, "redirect_url": "data.backurl"}), stats, nil
+			})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
@@ -183,15 +183,15 @@ func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 			if err != nil {
 				return nil, stats, err
 			}
-			return map[string]any{"type": "page", "page": "alipay_qrcode", "url": codeURL}, stats, nil
+			return plugin.RespPageURL("alipay_qrcode", codeURL), stats, nil
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
 
-	return map[string]any{"type": "error", "msg": "当前通道未开启支付宝支付方式"}, nil
+	return plugin.RespError("当前通道未开启支付宝支付方式"), nil
 }
 
 func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
@@ -212,19 +212,19 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 	if allowMini {
 		mini, err := wxappHosting(ctx, client, req, cfg, order, "Y")
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		if scheme, ok := mini["scheme_code"]; ok {
-			return map[string]any{"type": "page", "page": "wxpay_h5", "url": fmt.Sprint(scheme)}, nil
+			return plugin.RespPageURL("wxpay_h5", plugin.String(scheme)), nil
 		}
-		return map[string]any{"type": "error", "msg": "托管小程序返回异常"}, nil
+		return plugin.RespError("托管小程序返回异常"), nil
 	}
 
 	if allowSelf && plugin.IsWeChat(req.Request.UA) {
 		if cfg.MPAppID == "" || cfg.MPAppSecret == "" {
-			return map[string]any{"type": "error", "msg": "支付通道未绑定微信公众号"}, nil
+			return plugin.RespError("支付通道未绑定微信公众号"), nil
 		}
-		code := plugin.GetQuery(req, "code")
+		code := reqQueryValue(req, "code")
 		redirectURL := buildPayURL(req, order, map[string]string{"t": fmt.Sprintf("%d", time.Now().Unix())})
 		openID, authURL, err := wechatpay.GetOpenid(ctx, wechatpay.MPAuthParams{
 			AppID:       cfg.MPAppID,
@@ -234,31 +234,33 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 			State:       order.TradeNo,
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		if authURL != "" {
-			return map[string]any{"type": "jump", "url": authURL}, nil
+			return plugin.RespJump(authURL), nil
 		}
-		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
-			payInfo, stats, err := addOrder(ctx, client, req, cfg, order, "T_JSAPI", openID)
-			if err != nil {
-				return nil, stats, err
-			}
-			jsParams := map[string]any{}
-			_ = json.Unmarshal([]byte(payInfo), &jsParams)
-			return map[string]any{"type": "page", "page": "wxpay_jspay", "data": map[string]any{"js_api_parameters": jsParams}}, stats, nil
-		})
+			result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+				payInfo, stats, err := addOrder(ctx, client, req, cfg, order, "T_JSAPI", openID)
+				if err != nil {
+					return nil, stats, err
+				}
+				jsParams, err := plugin.DecodeJSONMap(payInfo)
+				if err != nil {
+					return nil, stats, err
+				}
+				return plugin.RespPageData("wxpay_jspay", map[string]any{"js_api_parameters": jsParams}), stats, nil
+			})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
 
 	if allowSelf {
-		code := plugin.GetQuery(req, "code")
+		code := reqQueryValue(req, "code")
 		if code != "" {
 			if cfg.MiniAppID == "" || cfg.MiniAppSecret == "" {
-				return map[string]any{"type": "json", "data": map[string]any{"code": 1, "message": "支付通道未配置微信小程序"}}, nil
+				return plugin.RespJSON(map[string]any{"code": 1, "message": "支付通道未配置微信小程序"}), nil
 			}
 			openID, err := wechatpay.AppGetOpenid(ctx, wechatpay.MiniAuthParams{
 				AppID:     cfg.MiniAppID,
@@ -266,24 +268,26 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 				Code:      code,
 			})
 			if err != nil {
-				return map[string]any{"type": "json", "data": map[string]any{"code": 1, "message": err.Error()}}, nil
+				return plugin.RespJSON(map[string]any{"code": 1, "message": err.Error()}), nil
 			}
-			result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
-				payInfo, stats, err := addOrder(ctx, client, req, cfg, order, "T_MINIAPP", openID)
-				if err != nil {
-					return nil, stats, err
-				}
-				jsParams := map[string]any{}
-				_ = json.Unmarshal([]byte(payInfo), &jsParams)
-				return map[string]any{"type": "json", "data": map[string]any{"code": 0, "js_api_parameters": jsParams}}, stats, nil
-			})
+				result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+					payInfo, stats, err := addOrder(ctx, client, req, cfg, order, "T_MINIAPP", openID)
+					if err != nil {
+						return nil, stats, err
+					}
+					jsParams, err := plugin.DecodeJSONMap(payInfo)
+					if err != nil {
+						return nil, stats, err
+					}
+					return plugin.RespJSON(map[string]any{"code": 0, "js_api_parameters": jsParams}), stats, nil
+				})
 			if err != nil {
-				return map[string]any{"type": "json", "data": map[string]any{"code": 1, "message": err.Error()}}, nil
+				return plugin.RespJSON(map[string]any{"code": 1, "message": err.Error()}), nil
 			}
 			return result, nil
 		}
 		if cfg.MiniAppID == "" || cfg.MiniAppSecret == "" {
-			return map[string]any{"type": "error", "msg": "支付通道未配置微信小程序"}, nil
+			return plugin.RespError("支付通道未配置微信小程序"), nil
 		}
 		payURL := buildPayURL(req, order, nil)
 		values := url.Values{}
@@ -291,9 +295,9 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 		values.Set("url", payURL)
 		scheme, err := wechatpay.GenerateScheme(ctx, cfg.MiniAppID, cfg.MiniAppSecret, "page/pay", values.Encode())
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
-		return map[string]any{"type": "page", "page": "wxpay_h5", "url": scheme}, nil
+		return plugin.RespPageURL("wxpay_h5", scheme), nil
 	}
 
 	if allowHosting {
@@ -303,9 +307,9 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 		}
 		jumpURL, err := hostingOrder(ctx, client, req, cfg, order, "T_JSAPI", requestType)
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
-		return map[string]any{"type": "jump", "url": jumpURL}, nil
+		return plugin.RespJump(jumpURL), nil
 	}
 
 	result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
@@ -313,10 +317,10 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 		if err != nil {
 			return nil, stats, err
 		}
-		return map[string]any{"type": "page", "page": "wxpay_qrcode", "url": codeURL}, stats, nil
+		return plugin.RespPageURL("wxpay_qrcode", codeURL), stats, nil
 	})
 	if err != nil {
-		return map[string]any{"type": "error", "msg": err.Error()}, nil
+		return plugin.RespError(err.Error()), nil
 	}
 	return result, nil
 }
@@ -348,9 +352,9 @@ func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 		}
 		jumpURL, err := quickpayOrder(ctx, client, req, cfg, order, requestType, gwType, deviceType)
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
-		return map[string]any{"type": "jump", "url": jumpURL}, nil
+		return plugin.RespJump(jumpURL), nil
 	}
 
 	if allowBank {
@@ -362,25 +366,25 @@ func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 		}
 		jumpURL, err := bankOrder(ctx, client, req, cfg, order, gwType, deviceType)
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
-		return map[string]any{"type": "jump", "url": jumpURL}, nil
+		return plugin.RespJump(jumpURL), nil
 	}
 
 	if allowJS {
 		buyerID := pickBuyerID(order, req)
 		if buyerID == "" {
-			return map[string]any{"type": "error", "msg": "缺少银联用户标识"}, nil
+			return plugin.RespError("缺少银联用户标识"), nil
 		}
 		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
 			codeURL, stats, err := addOrder(ctx, client, req, cfg, order, "U_JSAPI", buyerID)
 			if err != nil {
 				return nil, stats, err
 			}
-			return map[string]any{"type": "jump", "url": codeURL}, stats, nil
+			return plugin.RespJump(codeURL), stats, nil
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
@@ -391,15 +395,15 @@ func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 			if err != nil {
 				return nil, stats, err
 			}
-			return map[string]any{"type": "page", "page": "bank_qrcode", "url": codeURL}, stats, nil
+			return plugin.RespPageURL("bank_qrcode", codeURL), stats, nil
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
 
-	return map[string]any{"type": "error", "msg": "当前通道未开启银联支付方式"}, nil
+	return plugin.RespError("当前通道未开启银联支付方式"), nil
 }
 
 func ecny(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
@@ -417,10 +421,10 @@ func ecny(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 		if err != nil {
 			return nil, stats, err
 		}
-		return map[string]any{"type": "page", "page": "bank_qrcode", "url": codeURL}, stats, nil
+		return plugin.RespPageURL("bank_qrcode", codeURL), stats, nil
 	})
 	if err != nil {
-		return map[string]any{"type": "error", "msg": err.Error()}, nil
+		return plugin.RespError(err.Error()), nil
 	}
 	return result, nil
 }
@@ -440,42 +444,67 @@ func query(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 		return nil, err
 	}
 	state := 0
-	switch fmt.Sprint(resp["trans_stat"]) {
+	switch plugin.String(resp["trans_stat"]) {
 	case "S":
 		state = 1
 	case "F":
-		state = 2
+		state = -1
 	}
-	apiTradeNo := fmt.Sprint(resp["org_hf_seq_id"])
-	return map[string]any{"state": state, "api_trade_no": apiTradeNo}, nil
+	apiTradeNo := plugin.String(resp["org_hf_seq_id"])
+	queryResp := plugin.QueryStateResponse{
+		State:      state,
+		APITradeNo: apiTradeNo,
+	}
+	return plugin.RespQuery(queryResp), nil
 }
 
 func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
 	order := plugin.DecodeOrder(req.Order)
 	cfg, err := readConfig(req)
 	if err != nil {
-		return map[string]any{"type": "html", "data": "fail"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("fail"),
+		})
 	}
 	client, err := newHuifuClient(*cfg)
 	if err != nil {
-		return map[string]any{"type": "html", "data": "fail"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("fail"),
+		})
 	}
 	params := reqParams(req)
 	respData := params["resp_data"]
 	sign := params["sign"]
 	if respData == "" {
-		return map[string]any{"type": "html", "data": "no data"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("no data"),
+		})
 	}
 	if !client.checkNotifySign(respData, sign) {
-		return map[string]any{"type": "html", "data": "sign fail"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("sign fail"),
+		})
 	}
-	data := map[string]any{}
-	if err := json.Unmarshal([]byte(respData), &data); err != nil {
-		return map[string]any{"type": "html", "data": "sign fail"}, nil
+	data, err := plugin.DecodeJSONMap(respData)
+	if err != nil {
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("sign fail"),
+		})
 	}
-	if fmt.Sprint(data["trans_stat"]) == "S" {
-		if order != nil && fmt.Sprint(data["req_seq_id"]) == order.TradeNo {
-			apiTradeNo := fmt.Sprint(data["hf_seq_id"])
+	tradeNo := ""
+	if order != nil {
+		tradeNo = order.TradeNo
+	} else {
+		tradeNo = plugin.String(data["req_seq_id"])
+	}
+	if plugin.String(data["trans_stat"]) == "S" {
+		if order != nil && plugin.String(data["req_seq_id"]) == order.TradeNo {
+			apiTradeNo := plugin.String(data["hf_seq_id"])
 			buyer := ""
 			if v, ok := data["alipay_response"]; ok {
 				buyer = extractBuyerFromResp(v, "buyer_id")
@@ -488,9 +517,16 @@ func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 				Buyer:      buyer,
 			})
 		}
-		return map[string]any{"type": "html", "data": "RECV_ORD_ID_" + order.TradeNo}, nil
+		resp := "RECV_ORD_ID_" + tradeNo
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML(resp),
+		})
 	}
-	return map[string]any{"type": "html", "data": "resp_code fail"}, nil
+	return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+		BizType: plugin.BizTypeOrder,
+		Result:  plugin.RespHTML("resp_code fail"),
+	})
 }
 
 func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
@@ -513,27 +549,55 @@ func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 		resp, err = refundOrder(ctx, client, cfg, order, refund)
 	}
 	if err != nil {
-		return map[string]any{"state": 2, "api_refund_no": "", "req_body": "", "resp_body": err.Error(), "req_ms": 0}, nil
+		refundResp := plugin.RefundStateResponse{
+			State:       0,
+			APIRefundNo: "",
+			ReqBody:     "",
+			RespBody:    "",
+			Result:      err.Error(),
+			ReqMs:       0,
+		}
+		return plugin.RespRefund(refundResp), nil
 	}
-	code := fmt.Sprint(resp["resp_code"])
+	code := plugin.String(resp["resp_code"])
 	if code != "00000000" && code != "00000100" {
-		msg := fmt.Sprint(resp["resp_desc"])
+		msg := plugin.String(resp["resp_desc"])
 		if msg == "" {
 			msg = "退款失败"
 		}
-		return map[string]any{"state": 2, "api_refund_no": "", "req_body": "", "resp_body": msg, "req_ms": 0}, nil
+		refundResp := plugin.RefundStateResponse{
+			State:       0,
+			APIRefundNo: "",
+			ReqBody:     "",
+			RespBody:    "",
+			Result:      msg,
+			ReqMs:       0,
+		}
+		return plugin.RespRefund(refundResp), nil
 	}
-	return map[string]any{"state": 0, "api_refund_no": fmt.Sprint(resp["hf_seq_id"]), "req_body": "", "resp_body": "", "req_ms": 0}, nil
+	state := 0
+	if code == "00000000" {
+		state = 1
+	}
+	refundResp := plugin.RefundStateResponse{
+		State:       state,
+		APIRefundNo: plugin.String(resp["hf_seq_id"]),
+		ReqBody:     "",
+		RespBody:    "",
+		Result:      "",
+		ReqMs:       0,
+	}
+	return plugin.RespRefund(refundResp), nil
 }
 
 func extractBuyerFromResp(value any, key string) string {
 	switch v := value.(type) {
 	case map[string]any:
-		return strings.TrimSpace(fmt.Sprint(v[key]))
+		return plugin.String(v[key])
 	case string:
-		out := map[string]any{}
-		if err := json.Unmarshal([]byte(v), &out); err == nil {
-			return strings.TrimSpace(fmt.Sprint(out[key]))
+		out, err := plugin.DecodeJSONMap(v)
+		if err == nil {
+			return plugin.String(out[key])
 		}
 	}
 	return ""

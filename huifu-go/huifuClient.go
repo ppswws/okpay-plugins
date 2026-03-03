@@ -73,9 +73,14 @@ func (c *huifuClient) requestAPI(ctx context.Context, path string, data map[stri
 		Data map[string]any `json:"data"`
 		Sign string         `json:"sign"`
 	}
-	if err := json.Unmarshal([]byte(respBody), &resp); err != nil {
+	respMap, err := plugin.DecodeJSONMap(respBody)
+	if err != nil {
 		return nil, stats, fmt.Errorf("接口返回数据解析失败")
 	}
+	if v, ok := respMap["data"].(map[string]any); ok {
+		resp.Data = v
+	}
+	resp.Sign = plugin.String(respMap["sign"])
 	if len(resp.Data) == 0 || strings.TrimSpace(resp.Sign) == "" {
 		return nil, stats, fmt.Errorf("接口返回数据解析失败")
 	}

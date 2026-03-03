@@ -67,10 +67,10 @@ func (s intStr) String() string {
 }
 
 func readConfig(req *plugin.CallRequest) (*epayConfig, error) {
-	cfg := channelConfig(req)
-	appurl := strings.TrimRight(strings.TrimSpace(fmt.Sprint(cfg["appurl"])), "/") + "/"
-	appid := strings.TrimSpace(fmt.Sprint(cfg["appid"]))
-	appkey := strings.TrimSpace(fmt.Sprint(cfg["appkey"]))
+	cfg := plugin.DecodeConfig(req)
+	appurl := strings.TrimRight(plugin.String(cfg["appurl"]), "/") + "/"
+	appid := plugin.String(cfg["appid"])
+	appkey := plugin.String(cfg["appkey"])
 	if appurl == "" || appid == "" || appkey == "" {
 		return nil, fmt.Errorf("通道配置不完整")
 	}
@@ -85,8 +85,8 @@ func readConfig(req *plugin.CallRequest) (*epayConfig, error) {
 
 func createOrder(ctx context.Context, req *plugin.CallRequest, cfg *epayConfig, order *plugin.OrderPayload) (*epayCreateResp, plugin.RequestStats, error) {
 	createUrl := cfg.AppURL + "mapi.php"
-	notifyDomain := strings.TrimRight(fmt.Sprint(req.Config["notifydomain"]), "/")
-	siteDomain := strings.TrimRight(fmt.Sprint(req.Config["sitedomain"]), "/")
+	notifyDomain := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/")
+	siteDomain := strings.TrimRight(plugin.String(req.Config["sitedomain"]), "/")
 
 	params := map[string]string{
 		"pid":          cfg.AppID,
@@ -94,7 +94,7 @@ func createOrder(ctx context.Context, req *plugin.CallRequest, cfg *epayConfig, 
 		"out_trade_no": order.TradeNo,
 		"notify_url":   notifyDomain + "/pay/notify/" + order.TradeNo,
 		"return_url":   siteDomain + "/pay/" + order.Type + "/" + order.TradeNo,
-		"name":         fmt.Sprint(req.Config["goodsname"]),
+		"name":         plugin.String(req.Config["goodsname"]),
 		"money":        toYuan(order.Real),
 		"clientip":     order.IPBuyer,
 		"device":       reqDevice(req),

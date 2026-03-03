@@ -79,20 +79,20 @@ type joinpayConfig struct {
 
 func readConfig(req *plugin.CallRequest) (*joinpayConfig, error) {
 	cfg := plugin.DecodeConfig(req)
-	appid := strings.TrimSpace(fmt.Sprint(cfg["appid"]))
-	appkey := strings.TrimSpace(fmt.Sprint(cfg["appkey"]))
-	appmchid := strings.TrimSpace(fmt.Sprint(cfg["appmchid"]))
-	if appid == "" || appkey == "" || appmchid == "" {
+	appid := plugin.String(cfg["appid"])
+	appkey := plugin.String(cfg["appkey"])
+	appmchid := plugin.String(cfg["appmchid"])
+	if appid == "" || appkey == "" {
 		return nil, fmt.Errorf("通道配置不完整")
 	}
 	return &joinpayConfig{
 		AppID:         appid,
 		AppKey:        appkey,
 		AppMchID:      appmchid,
-		MPAppID:       strings.TrimSpace(fmt.Sprint(cfg["mp_appid"])),
-		MPAppSecret:   strings.TrimSpace(fmt.Sprint(cfg["mp_appsecret"])),
-		MiniAppID:     strings.TrimSpace(fmt.Sprint(cfg["mini_appid"])),
-		MiniAppSecret: strings.TrimSpace(fmt.Sprint(cfg["mini_appsecret"])),
+		MPAppID:       plugin.String(cfg["mp_appid"]),
+		MPAppSecret:   plugin.String(cfg["mp_appsecret"]),
+		MiniAppID:     plugin.String(cfg["mini_appid"]),
+		MiniAppSecret: plugin.String(cfg["mini_appsecret"]),
 		Biztypes:      plugin.ReadStringSlice(cfg["biztype"]),
 	}, nil
 }
@@ -105,9 +105,9 @@ func createOrder(
 	frpCode string,
 	extra map[string]string,
 ) (map[string]string, plugin.RequestStats, error) {
-	notifyDomain := strings.TrimRight(fmt.Sprint(req.Config["notifydomain"]), "/")
-	siteDomain := strings.TrimRight(fmt.Sprint(req.Config["sitedomain"]), "/")
-	productName := fmt.Sprint(req.Config["goodsname"])
+	notifyDomain := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/")
+	siteDomain := strings.TrimRight(plugin.String(req.Config["sitedomain"]), "/")
+	productName := plugin.String(req.Config["goodsname"])
 
 	params := map[string]string{
 		"p0_Version":     "2.6",
@@ -134,8 +134,8 @@ func createOrder(
 	if err != nil {
 		return nil, stats, err
 	}
-	resp := map[string]any{}
-	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+	resp, err := plugin.DecodeJSONMap(body)
+	if err != nil {
 		return nil, stats, fmt.Errorf("响应解析失败: %w", err)
 	}
 	respStr := toStringMap(resp)
@@ -159,7 +159,7 @@ func refundOrder(
 	order *plugin.OrderPayload,
 	refund *plugin.RefundPayload,
 ) (map[string]string, plugin.RequestStats, error) {
-	notifyDomain := strings.TrimRight(fmt.Sprint(req.Config["notifydomain"]), "/")
+	notifyDomain := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/")
 	params := map[string]string{
 		"p0_Version":       "2.3",
 		"p1_MerchantNo":    cfg.AppID,
@@ -177,8 +177,8 @@ func refundOrder(
 	if err != nil {
 		return nil, stats, err
 	}
-	resp := map[string]any{}
-	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+	resp, err := plugin.DecodeJSONMap(body)
+	if err != nil {
 		return nil, stats, fmt.Errorf("响应解析失败: %w", err)
 	}
 	respStr := toStringMap(resp)
@@ -213,8 +213,8 @@ func queryOrder(
 	if err != nil {
 		return nil, stats, err
 	}
-	resp := map[string]any{}
-	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+	resp, err := plugin.DecodeJSONMap(body)
+	if err != nil {
 		return nil, stats, fmt.Errorf("响应解析失败: %w", err)
 	}
 	respStr := toStringMap(resp)
@@ -239,8 +239,8 @@ func transferOrder(
 	if err != nil {
 		return nil, stats, err
 	}
-	resp := map[string]any{}
-	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+	resp, err := plugin.DecodeJSONMap(body)
+	if err != nil {
 		return nil, stats, fmt.Errorf("响应解析失败: %w", err)
 	}
 	dataAny, ok := resp["data"]
@@ -252,9 +252,9 @@ func transferOrder(
 	case map[string]any:
 		dataMap = v
 	case string:
-		_ = json.Unmarshal([]byte(v), &dataMap)
+		dataMap, _ = plugin.DecodeJSONMap(v)
 	default:
-		_ = json.Unmarshal([]byte(fmt.Sprint(v)), &dataMap)
+		dataMap, _ = plugin.DecodeJSONMap(plugin.String(v))
 	}
 	dataStr := toStringMap(dataMap)
 	if !verifyJoinpay(dataStr, joinpayTransferResponseFields, cfg.AppKey) {

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"okpay/payment/plugin"
-	"okpay/payment/plugin/wechatpay"
+	"okpay/payment/plugin/sdk/wechatpay"
 )
 
 func main() {
@@ -114,10 +114,10 @@ func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 			if err != nil {
 				return nil, stats, err
 			}
-			return map[string]any{"type": "jump", "url": payURL}, stats, nil
+			return plugin.RespJump(payURL), stats, nil
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
@@ -128,10 +128,10 @@ func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 			if err != nil {
 				return nil, stats, err
 			}
-			return map[string]any{"type": "page", "page": "alipay_qrcode", "url": payURL}, stats, nil
+			return plugin.RespPageURL("alipay_qrcode", payURL), stats, nil
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
@@ -142,10 +142,10 @@ func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 			if err != nil {
 				return nil, stats, err
 			}
-			return map[string]any{"type": "page", "page": "alipay_qrcode", "url": payURL}, stats, nil
+			return plugin.RespPageURL("alipay_qrcode", payURL), stats, nil
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
@@ -156,15 +156,15 @@ func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 			if err != nil {
 				return nil, stats, err
 			}
-			return map[string]any{"type": "page", "page": "alipay_qrcode", "url": payURL}, stats, nil
+			return plugin.RespPageURL("alipay_qrcode", payURL), stats, nil
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
 
-	return map[string]any{"type": "error", "msg": "当前通道未开启支付宝支付方式"}, nil
+	return plugin.RespError("当前通道未开启支付宝支付方式"), nil
 }
 
 func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
@@ -181,9 +181,9 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 
 	if allowPublic && plugin.IsWeChat(req.Request.UA) {
 		if cfg.MPAppID == "" || cfg.MPAppSecret == "" {
-			return map[string]any{"type": "error", "msg": "支付通道未绑定微信公众号"}, nil
+			return plugin.RespError("支付通道未绑定微信公众号"), nil
 		}
-		code := plugin.GetQuery(req, "code")
+		code := reqQueryValue(req, "code")
 		redirectURL := buildPayURL(req, order, map[string]string{"t": fmt.Sprintf("%d", time.Now().Unix())})
 		openID, authURL, err := wechatpay.GetOpenid(ctx, wechatpay.MPAuthParams{
 			AppID:       cfg.MPAppID,
@@ -193,41 +193,41 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 			State:       order.TradeNo,
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		if authURL != "" {
-			return map[string]any{"type": "jump", "url": authURL}, nil
+			return plugin.RespJump(authURL), nil
 		}
 		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
 			payInfo, stats, err := createPublicOrder(ctx, req, cfg, order, "wxpay", cfg.MPAppID, "1", openID)
 			if err != nil {
 				return nil, stats, err
 			}
-			jsParams, err := parseJSONAny(payInfo)
-			if err != nil {
-				return nil, stats, err
-			}
-			return map[string]any{"type": "page", "page": "wxpay_jspay", "data": map[string]any{"js_api_parameters": jsParams}}, stats, nil
+				jsParams, err := plugin.DecodeJSONMap(payInfo)
+				if err != nil {
+					return nil, stats, err
+				}
+			return plugin.RespPageData("wxpay_jspay", map[string]any{"js_api_parameters": jsParams}), stats, nil
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
 
 	if allowMini {
 		if cfg.MiniAppID == "" {
-			return map[string]any{"type": "error", "msg": "支付通道未绑定微信小程序"}, nil
+			return plugin.RespError("支付通道未绑定微信小程序"), nil
 		}
 		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
 			codeURL, stats, err := createAppletOrder(ctx, req, cfg, order, "wxpay", cfg.MiniAppID)
 			if err != nil {
 				return nil, stats, err
 			}
-			return map[string]any{"type": "page", "page": "wxpay_h5", "url": codeURL}, stats, nil
+			return plugin.RespPageURL("wxpay_h5", codeURL), stats, nil
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
@@ -238,10 +238,10 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 			if err != nil {
 				return nil, stats, err
 			}
-			return map[string]any{"type": "jump", "url": payURL}, stats, nil
+			return plugin.RespJump(payURL), stats, nil
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
@@ -252,20 +252,20 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 			if err != nil {
 				return nil, stats, err
 			}
-			return map[string]any{"type": "page", "page": "wxpay_qrcode", "url": payURL}, stats, nil
+			return plugin.RespPageURL("wxpay_qrcode", payURL), stats, nil
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
 
 	if allowPublic {
 		qrURL := buildPayURL(req, order, map[string]string{"t": fmt.Sprintf("%d", time.Now().Unix())})
-		return map[string]any{"type": "page", "page": "wxpay_qrcode", "url": qrURL}, nil
+		return plugin.RespPageURL("wxpay_qrcode", qrURL), nil
 	}
 
-	return map[string]any{"type": "error", "msg": "当前通道未开启微信支付方式"}, nil
+	return plugin.RespError("当前通道未开启微信支付方式"), nil
 }
 
 func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
@@ -282,35 +282,50 @@ func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 			if err != nil {
 				return nil, stats, err
 			}
-			return map[string]any{"type": "page", "page": "bank_qrcode", "url": payURL}, stats, nil
+			return plugin.RespPageURL("bank_qrcode", payURL), stats, nil
 		})
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, nil
+			return plugin.RespError(err.Error()), nil
 		}
 		return result, nil
 	}
-	return map[string]any{"type": "error", "msg": "当前通道未开启银联支付方式"}, nil
+	return plugin.RespError("当前通道未开启银联支付方式"), nil
 }
 
 func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
 	order := plugin.DecodeOrder(req.Order)
 	cfg, err := readConfig(req)
 	if err != nil {
-		return map[string]any{"type": "html", "data": "fail"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("fail"),
+		})
 	}
 	params := reqParams(req)
 	if !verifyNotify(params, cfg.AppKey) {
-		return map[string]any{"type": "html", "data": "fail"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("fail"),
+		})
 	}
 	if params["rt4_status"] != "SUCCESS" {
-		return map[string]any{"type": "html", "data": "fail"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("fail"),
+		})
 	}
 	if order != nil {
 		if params["rt2_orderId"] != order.TradeNo {
-			return map[string]any{"type": "html", "data": "fail"}, nil
+			return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+				BizType: plugin.BizTypeOrder,
+				Result:  plugin.RespHTML("fail"),
+			})
 		}
 		if order.Real != toCents(params["rt5_orderAmount"]) {
-			return map[string]any{"type": "html", "data": "amount_mismatch"}, nil
+			return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+				BizType: plugin.BizTypeOrder,
+				Result:  plugin.RespHTML("amount_mismatch"),
+			})
 		}
 	}
 	if order != nil {
@@ -319,10 +334,16 @@ func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 			APITradeNo: params["rt3_systemSerial"],
 			Buyer:      params["rt10_openId"],
 		}); err != nil {
-			return map[string]any{"type": "html", "data": "fail"}, nil
+			return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+				BizType: plugin.BizTypeOrder,
+				Result:  plugin.RespHTML("fail"),
+			})
 		}
 	}
-	return map[string]any{"type": "html", "data": "success"}, nil
+	return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+		BizType: plugin.BizTypeOrder,
+		Result:  plugin.RespHTML("success"),
+	})
 }
 
 func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
@@ -333,21 +354,29 @@ func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	}
 	result, err := refundOrder(ctx, cfg, refund)
 	if err != nil {
-		return map[string]any{
-			"state":     2,
-			"req_body":  result.ReqBody,
-			"resp_body": result.RespBody,
-			"req_ms":    result.ReqMs,
-			"err":       err.Error(),
-		}, nil
+		refundResp := plugin.RefundStateResponse{
+			State:       -1,
+			APIRefundNo: "",
+			ReqBody:     result.ReqBody,
+			RespBody:    result.RespBody,
+			Result:      err.Error(),
+			ReqMs:       result.ReqMs,
+		}
+		return plugin.RespRefund(refundResp), nil
 	}
-	return map[string]any{
-		"state":         1,
-		"api_refund_no": result.APIRefundNo,
-		"req_body":      result.ReqBody,
-		"resp_body":     result.RespBody,
-		"req_ms":        result.ReqMs,
-	}, nil
+	state := 1
+	if result.RetCode == "0001" || result.RetCode == "0002" {
+		state = 0
+	}
+	refundResp := plugin.RefundStateResponse{
+		State:       state,
+		APIRefundNo: result.APIRefundNo,
+		ReqBody:     result.ReqBody,
+		RespBody:    result.RespBody,
+		Result:      "",
+		ReqMs:       result.ReqMs,
+	}
+	return plugin.RespRefund(refundResp), nil
 }
 
 func transfer(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
@@ -356,7 +385,7 @@ func transfer(ctx context.Context, req *plugin.CallRequest) (map[string]any, err
 	if err != nil {
 		return nil, err
 	}
-	notifyDomain := strings.TrimRight(fmt.Sprint(req.Config["notifydomain"]), "/")
+	notifyDomain := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/")
 	params := map[string]string{
 		"P1_bizType":         "Transfer",
 		"P2_orderId":         transfer.TradeNo,
@@ -377,36 +406,73 @@ func transfer(ctx context.Context, req *plugin.CallRequest) (map[string]any, err
 	}
 	resp, stats, err := transferOrder(ctx, cfg, params)
 	if err != nil {
-		return map[string]any{"state": 2, "api_trade_no": "", "req_body": stats.ReqBody, "resp_body": err.Error(), "req_ms": stats.ReqMs}, nil
+		transferResp := plugin.TransferStateResponse{
+			State:      -1,
+			APITradeNo: "",
+			ReqBody:    stats.ReqBody,
+			RespBody:   stats.RespBody,
+			Result:     err.Error(),
+			ReqMs:      stats.ReqMs,
+		}
+		return plugin.RespTransfer(transferResp), nil
 	}
-	if resp["rt2_retCode"] != "0000" {
+	if resp["rt2_retCode"] != "0000" && resp["rt2_retCode"] != "0001" {
 		msg := resp["rt3_retMsg"]
 		if msg == "" {
 			msg = resp["rt2_retCode"]
 		}
-		return map[string]any{"state": 2, "api_trade_no": "", "req_body": stats.ReqBody, "resp_body": msg, "req_ms": stats.ReqMs}, nil
+		transferResp := plugin.TransferStateResponse{
+			State:      -1,
+			APITradeNo: "",
+			ReqBody:    stats.ReqBody,
+			RespBody:   stats.RespBody,
+			Result:     msg,
+			ReqMs:      stats.ReqMs,
+		}
+		return plugin.RespTransfer(transferResp), nil
 	}
-	return map[string]any{"state": 0, "api_trade_no": resp["rt6_serialNumber"], "req_body": stats.ReqBody, "resp_body": stats.RespBody, "req_ms": stats.ReqMs}, nil
+	// 0000/0001 为受理/已存在（按处理中处理）
+	transferResp := plugin.TransferStateResponse{
+		State:      0,
+		APITradeNo: resp["rt6_serialNumber"],
+		ReqBody:    stats.ReqBody,
+		RespBody:   stats.RespBody,
+		Result:     "",
+		ReqMs:      stats.ReqMs,
+	}
+	return plugin.RespTransfer(transferResp), nil
 }
 
 func transferNotify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
 	transfer := plugin.DecodeTransfer(req.Transfer)
 	cfg, err := readConfig(req)
 	if err != nil {
-		return map[string]any{"type": "html", "data": "fail"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeTransfer,
+			Result:  plugin.RespHTML("fail"),
+		})
 	}
 	params := reqParams(req)
 	if !verifyNotify(params, cfg.AppKey) {
-		return map[string]any{"type": "html", "data": "fail"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeTransfer,
+			Result:  plugin.RespHTML("fail"),
+		})
 	}
-	status := params["rt7_orderStatus"]
+	status := strings.ToUpper(params["rt7_orderStatus"])
 	apiTradeNo := params["rt6_serialNumber"]
 	result := params["rt9_reason"]
 	if transfer == nil {
 		if status == "SUCCESS" {
-			return map[string]any{"type": "html", "data": "success"}, nil
+			return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+				BizType: plugin.BizTypeTransfer,
+				Result:  plugin.RespHTML("success"),
+			})
 		}
-		return map[string]any{"type": "html", "data": "success"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeTransfer,
+			Result:  plugin.RespHTML("success"),
+		})
 	}
 	if status == "SUCCESS" {
 		_ = plugin.CompleteTransfer(ctx, req, plugin.CompleteTransferRequest{
@@ -415,7 +481,10 @@ func transferNotify(ctx context.Context, req *plugin.CallRequest) (map[string]an
 			APITradeNo: apiTradeNo,
 			Result:     result,
 		})
-		return map[string]any{"type": "html", "data": "success"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeTransfer,
+			Result:  plugin.RespHTML("success"),
+		})
 	}
 	if status == "FAIL" || status == "REFUND" {
 		_ = plugin.CompleteTransfer(ctx, req, plugin.CompleteTransferRequest{
@@ -424,6 +493,21 @@ func transferNotify(ctx context.Context, req *plugin.CallRequest) (map[string]an
 			APITradeNo: apiTradeNo,
 			Result:     result,
 		})
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeTransfer,
+			Result:  plugin.RespHTML("success"),
+		})
 	}
-	return map[string]any{"type": "html", "data": "success"}, nil
+	if status == "RECEIVE" || status == "INIT" || status == "DOING" {
+		_ = plugin.CompleteTransfer(ctx, req, plugin.CompleteTransferRequest{
+			TradeNo:    transfer.TradeNo,
+			Status:     0,
+			APITradeNo: apiTradeNo,
+			Result:     result,
+		})
+	}
+	return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+		BizType: plugin.BizTypeTransfer,
+		Result:  plugin.RespHTML("success"),
+	})
 }

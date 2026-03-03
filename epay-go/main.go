@@ -70,15 +70,15 @@ func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 		}
 		method, url, err := resolvePayMethod(resp)
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, stats, nil
+			return plugin.RespError(err.Error()), stats, nil
 		}
 		if method == "jump" {
-			return map[string]any{"type": "jump", "url": url}, stats, nil
+			return plugin.RespJump(url), stats, nil
 		}
 		if method == "qrcode" {
-			return map[string]any{"type": "page", "page": "alipay_qrcode", "url": url}, stats, nil
+			return plugin.RespPageURL("alipay_qrcode", url), stats, nil
 		}
-		return map[string]any{"type": "error", "msg": "渠道未返回可用支付地址"}, stats, nil
+		return plugin.RespError("渠道未返回可用支付地址"), stats, nil
 	})
 }
 
@@ -95,18 +95,18 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 		}
 		method, url, err := resolvePayMethod(resp)
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, stats, nil
+			return plugin.RespError(err.Error()), stats, nil
 		}
 		if method == "jump" {
-			return map[string]any{"type": "jump", "url": url}, stats, nil
+			return plugin.RespJump(url), stats, nil
 		}
 		if method == "scheme" {
-			return map[string]any{"type": "page", "page": "wxpay_h5", "url": url}, stats, nil
+			return plugin.RespPageURL("wxpay_h5", url), stats, nil
 		}
 		if method == "qrcode" {
-			return map[string]any{"type": "page", "page": "wxpay_qrcode", "url": url}, stats, nil
+			return plugin.RespPageURL("wxpay_qrcode", url), stats, nil
 		}
-		return map[string]any{"type": "error", "msg": "渠道未返回可用支付地址"}, stats, nil
+		return plugin.RespError("渠道未返回可用支付地址"), stats, nil
 	})
 }
 
@@ -123,15 +123,15 @@ func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 		}
 		method, url, err := resolvePayMethod(resp)
 		if err != nil {
-			return map[string]any{"type": "error", "msg": err.Error()}, stats, nil
+			return plugin.RespError(err.Error()), stats, nil
 		}
 		if method == "jump" {
-			return map[string]any{"type": "jump", "url": url}, stats, nil
+			return plugin.RespJump(url), stats, nil
 		}
 		if method == "qrcode" || method == "scheme" {
-			return map[string]any{"type": "page", "page": "bank_qrcode", "url": url}, stats, nil
+			return plugin.RespPageURL("bank_qrcode", url), stats, nil
 		}
-		return map[string]any{"type": "error", "msg": "渠道未返回可用支付地址"}, stats, nil
+		return plugin.RespError("渠道未返回可用支付地址"), stats, nil
 	})
 }
 
@@ -165,55 +165,84 @@ func query(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 	if resp.Code == 1 && resp.Status.String() == "1" {
 		state = 1
 	}
-	return map[string]any{"state": state, "api_trade_no": resp.APITradeNo}, nil
+	queryResp := plugin.QueryStateResponse{
+		State:      state,
+		APITradeNo: resp.APITradeNo,
+	}
+	return plugin.RespQuery(queryResp), nil
 }
 
 func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	return map[string]any{
-		"state":         2,
-		"api_refund_no": "",
-		"req_body":      "",
-		"resp_body":     "易支付接口不支持退款",
-		"req_ms":        0,
-	}, nil
+	refundResp := plugin.RefundStateResponse{
+		State:       -1,
+		APIRefundNo: "",
+		ReqBody:     "",
+		RespBody:    "",
+		Result:      "易支付接口不支持退款",
+		ReqMs:       0,
+	}
+	return plugin.RespRefund(refundResp), nil
 }
 
 func transfer(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	return map[string]any{
-		"state":        2,
-		"api_trade_no": "",
-		"req_body":     "",
-		"resp_body":    "易支付接口不支持代付",
-		"req_ms":       0,
-	}, nil
+	transferResp := plugin.TransferStateResponse{
+		State:      -1,
+		APITradeNo: "",
+		ReqBody:    "",
+		RespBody:   "",
+		Result:     "易支付接口不支持代付",
+		ReqMs:      0,
+	}
+	return plugin.RespTransfer(transferResp), nil
 }
 
 func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
 	order := plugin.DecodeOrder(req.Order)
 	cfg, err := readConfig(req)
 	if err != nil {
-		return map[string]any{"type": "html", "data": "config_error"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("config_error"),
+		})
 	}
 
 	params := reqParams(req)
 	if !verifyMD5(params, cfg.AppKey) {
-		return map[string]any{"type": "html", "data": "sign_error"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("sign_error"),
+		})
 	}
 	if params["trade_status"] != "TRADE_SUCCESS" {
-		return map[string]any{"type": "html", "data": "trade_status_invalid"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("trade_status_invalid"),
+		})
 	}
 	if order == nil || params["out_trade_no"] != order.TradeNo {
-		return map[string]any{"type": "html", "data": "order_mismatch"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("order_mismatch"),
+		})
 	}
 	if order.Real != toCents(params["money"]) {
-		return map[string]any{"type": "html", "data": "amount_mismatch"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("amount_mismatch"),
+		})
 	}
 	_, queryResp, err := epayQuery(ctx, cfg, order)
 	if err != nil || queryResp == nil {
-		return map[string]any{"type": "html", "data": "query_error"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("query_error"),
+		})
 	}
 	if queryResp.Code != 1 || queryResp.Status.String() != "1" {
-		return map[string]any{"type": "html", "data": "query_unpaid"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("query_unpaid"),
+		})
 	}
 
 	apiTradeNo := queryResp.APITradeNo
@@ -225,7 +254,13 @@ func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 		APITradeNo: apiTradeNo,
 		Buyer:      params["buyer"],
 	}); err != nil {
-		return map[string]any{"type": "html", "data": "complete_error"}, nil
+		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+			BizType: plugin.BizTypeOrder,
+			Result:  plugin.RespHTML("complete_error"),
+		})
 	}
-	return map[string]any{"type": "html", "data": "success"}, nil
+	return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
+		BizType: plugin.BizTypeOrder,
+		Result:  plugin.RespHTML("success"),
+	})
 }

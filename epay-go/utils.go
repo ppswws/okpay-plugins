@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"net/url"
 	"strings"
 
@@ -11,32 +9,12 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-func channelConfig(req *plugin.CallRequest) map[string]any {
-	raw := req.Channel["config"]
-	switch v := raw.(type) {
-	case map[string]any:
-		return v
-	case string:
-		cfg := map[string]any{}
-		if err := json.Unmarshal([]byte(v), &cfg); err == nil {
-			return cfg
-		}
-	case []byte:
-		cfg := map[string]any{}
-		if err := json.Unmarshal(v, &cfg); err == nil {
-			return cfg
-		}
-	}
-	return map[string]any{}
-}
-
 // toYuan 将分转换为元字符串（保留 2 位小数）。
 func toYuan(cents int64) string {
 	return decimal.NewFromInt(cents).Div(decimal.NewFromInt(100)).StringFixed(2)
 }
 
-// toCents parses amount in yuan (e.g. "1", "1.00") into cents.
-// Invalid input returns 0.
+// toCents 函数将元金额（例如“1”、“1.00”）解析为分，无效输入返回 0。
 func toCents(raw string) int64 {
 	s := strings.TrimSpace(raw)
 	if s == "" {
@@ -64,11 +42,30 @@ func reqDevice(req *plugin.CallRequest) string {
 // reqParams 合并 query/body 并转成 string map。
 func reqParams(req *plugin.CallRequest) map[string]string {
 	out := map[string]string{}
-	for k, v := range req.Request.Query {
-		out[k] = strings.TrimSpace(fmt.Sprint(v))
+	if req == nil {
+		return out
 	}
-	for k, v := range req.Request.Body {
-		out[k] = strings.TrimSpace(fmt.Sprint(v))
+	if raw := req.Request.Query; raw != "" {
+		if values, err := url.ParseQuery(raw); err == nil && len(values) > 0 {
+			for k, vals := range values {
+				if len(vals) > 0 {
+					out[k] = vals[0]
+				}
+			}
+		}
+	}
+	if raw := req.Request.Body; raw != "" {
+		if values, err := url.ParseQuery(raw); err == nil && len(values) > 0 {
+			for k, vals := range values {
+				if len(vals) > 0 {
+					out[k] = vals[0]
+				}
+			}
+		} else if jsonMap, err := plugin.DecodeJSONMap(raw); err == nil {
+			for k, v := range jsonMap {
+				out[k] = plugin.String(v)
+			}
+		}
 	}
 	return out
 }
