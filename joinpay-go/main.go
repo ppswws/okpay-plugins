@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/url"
 	"strconv"
 	"strings"
@@ -24,12 +23,13 @@ func main() {
 		"notify":         notify,
 		"refund":         refund,
 		"refundnotify":   refundNotify,
+		"balance":        balance,
 		"transfer":       transfer,
 		"transfernotify": transferNotify,
 	})
 }
 
-func info(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+func info(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
 	return map[string]any{
 		"id":         "joinpay",
 		"name":       "汇聚支付",
@@ -88,7 +88,7 @@ func info(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 	}, nil
 }
 
-func create(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+func create(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
 	return plugin.CreateWithHandlers(ctx, req, map[string]plugin.HandlerFunc{
 		"alipay": alipay,
 		"wxpay":  wxpay,
@@ -96,8 +96,8 @@ func create(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	})
 }
 
-func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func alipay(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
@@ -143,8 +143,8 @@ func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	return plugin.RespError("当前通道未开启支付宝支付方式"), nil
 }
 
-func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func wxpay(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
@@ -157,7 +157,7 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 	allowMini := plugin.AllowMode(biztypes, "4")
 
 	if allowMini {
-		code := reqQueryValue(req, "code")
+		code := plugin.QueryParam(req, "code")
 		if code != "" {
 			if cfg.MiniAppID == "" || cfg.MiniAppSecret == "" {
 				return plugin.RespJSON(map[string]any{"code": 1, "message": "支付通道未配置微信小程序"}), nil
@@ -178,10 +178,10 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 				if err != nil {
 					return nil, stats, err
 				}
-					jsParams, err := plugin.DecodeJSONMap(resp["rc_Result"])
-					if err != nil {
-						return nil, stats, err
-					}
+				jsParams, err := decodeJSONAnyMap(resp["rc_Result"])
+				if err != nil {
+					return nil, stats, err
+				}
 				return plugin.RespJSON(map[string]any{"code": 0, "js_api_parameters": jsParams}), stats, nil
 			})
 			if err != nil {
@@ -222,11 +222,11 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 	}
 
 	if allowMP {
-		if plugin.IsWeChat(req.Request.UA) {
+		if plugin.IsWeChat(req.Raw.UserAgent) {
 			if cfg.MPAppID == "" || cfg.MPAppSecret == "" {
 				return plugin.RespError("支付通道未绑定微信公众号"), nil
 			}
-			code := reqQueryValue(req, "code")
+			code := plugin.QueryParam(req, "code")
 			redirectURL := buildPayURL(req, order, map[string]string{
 				"t": fmt.Sprintf("%d", time.Now().Unix()),
 			})
@@ -251,10 +251,10 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 				if err != nil {
 					return nil, stats, err
 				}
-					jsParams, err := plugin.DecodeJSONMap(resp["rc_Result"])
-					if err != nil {
-						return nil, stats, err
-					}
+				jsParams, err := decodeJSONAnyMap(resp["rc_Result"])
+				if err != nil {
+					return nil, stats, err
+				}
 				return plugin.RespPageData("wxpay_jspay", map[string]any{"js_api_parameters": jsParams}), stats, nil
 			})
 			if err != nil {
@@ -289,8 +289,8 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 	return plugin.RespError("当前通道未开启微信支付方式"), nil
 }
 
-func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func bank(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
@@ -299,7 +299,7 @@ func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 	allowQR := plugin.AllowMode(biztypes, "1")
 	allowH5 := plugin.AllowMode(biztypes, "2")
 
-	if plugin.IsMobile(req.Request.UA) && allowH5 {
+	if plugin.IsMobile(req.Raw.UserAgent) && allowH5 {
 		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
 			resp, stats, err := createOrder(ctx, req, cfg, order, "UNIONPAY_H5", nil)
 			if err != nil {
@@ -336,8 +336,8 @@ func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 	return plugin.RespError("当前通道未开启云闪付支付方式"), nil
 }
 
-func query(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func query(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
@@ -359,13 +359,13 @@ func query(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 	}
 	queryResp := plugin.QueryStateResponse{
 		State:      state,
-		APITradeNo: plugin.String(resp["r5_TrxNo"]),
+		APITradeNo: resp["r5_TrxNo"],
 	}
 	return plugin.RespQuery(queryResp), nil
 }
 
-func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func notify(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
@@ -373,7 +373,7 @@ func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 			Result:  plugin.RespHTML("fail"),
 		})
 	}
-	params := reqParams(req)
+	params := plugin.ParseRequestParams(req)
 	if !verifyJoinpay(params, joinpayNotifyFields, cfg.AppKey) {
 		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
 			BizType: plugin.BizTypeOrder,
@@ -412,9 +412,9 @@ func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	})
 }
 
-func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
-	refund := plugin.DecodeRefund(req.Refund)
+func refund(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
+	refund := plugin.Refund(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
@@ -440,7 +440,7 @@ func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	}
 	refundResp := plugin.RefundStateResponse{
 		State:       state,
-		APIRefundNo: plugin.String(resp["r5_RefundTrxNo"]),
+		APIRefundNo: resp["r5_RefundTrxNo"],
 		ReqBody:     stats.ReqBody,
 		RespBody:    stats.RespBody,
 		Result:      "",
@@ -449,8 +449,8 @@ func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	return plugin.RespRefund(refundResp), nil
 }
 
-func refundNotify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	refund := plugin.DecodeRefund(req.Refund)
+func refundNotify(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	refund := plugin.Refund(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
@@ -458,7 +458,7 @@ func refundNotify(ctx context.Context, req *plugin.CallRequest) (map[string]any,
 			Result:  plugin.RespHTML("fail"),
 		})
 	}
-	params := reqParams(req)
+	params := plugin.ParseRequestParams(req)
 	if !verifyJoinpay(params, joinpayRefundResponseFields, cfg.AppKey) {
 		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
 			BizType: plugin.BizTypeRefund,
@@ -526,14 +526,27 @@ func refundNotify(ctx context.Context, req *plugin.CallRequest) (map[string]any,
 	})
 }
 
-func transfer(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	transfer := plugin.DecodeTransfer(req.Transfer)
+func balance(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
 	}
-	cfgMap := plugin.DecodeConfig(req)
-	notifyDomain := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/")
+	balanceValue, _, err := queryBalance(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return plugin.RespBalance(balanceValue), nil
+}
+
+func transfer(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	transfer := plugin.Transfer(req)
+	cfg, err := readConfig(req)
+	if err != nil {
+		return nil, err
+	}
+	globalCfg := plugin.GlobalConfig(req)
+	cfgMap := plugin.ChannelConfig(req)
+	notifyDomain := strings.TrimRight(plugin.MapString(globalCfg, "notifydomain"), "/")
 	params := map[string]string{
 		"userNo":                cfg.AppID,
 		"productCode":           "BANK_PAY_DAILY_ORDER",
@@ -542,7 +555,7 @@ func transfer(ctx context.Context, req *plugin.CallRequest) (map[string]any, err
 		"receiverAccountNoEnc":  transfer.CardNo,
 		"receiverNameEnc":       transfer.CardName,
 		"receiverAccountType":   "201",
-		"receiverBankChannelNo": plugin.String(cfgMap["receiverBankChannelNo"]),
+		"receiverBankChannelNo": plugin.MapString(cfgMap, "receiverBankChannelNo"),
 		"paidAmount":            toYuan(transfer.Amount),
 		"currency":              "201",
 		"isChecked":             "202",
@@ -567,8 +580,8 @@ func transfer(ctx context.Context, req *plugin.CallRequest) (map[string]any, err
 		}
 		return plugin.RespTransfer(transferResp), nil
 	}
-	statusCode := plugin.String(resp["statusCode"])
-	message := plugin.String(resp["message"])
+	statusCode := resp["statusCode"]
+	message := resp["message"]
 	if statusCode == "2002" {
 		if message == "" {
 			message = "代付受理失败"
@@ -608,8 +621,8 @@ func transfer(ctx context.Context, req *plugin.CallRequest) (map[string]any, err
 	return plugin.RespTransfer(transferResp), nil
 }
 
-func transferNotify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	transfer := plugin.DecodeTransfer(req.Transfer)
+func transferNotify(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	transfer := plugin.Transfer(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
@@ -617,12 +630,8 @@ func transferNotify(ctx context.Context, req *plugin.CallRequest) (map[string]an
 			Result:  plugin.RespHTML("fail"),
 		})
 	}
-	params := reqParams(req)
+	params := plugin.ParseRequestParams(req)
 	if !verifyJoinpay(params, joinpayTransferNotifyFields, cfg.AppKey) {
-		plain := joinpaySignPlain(params, joinpayTransferNotifyFields)
-		local := signJoinpay(params, joinpayTransferNotifyFields, cfg.AppKey)
-		log.Printf("[joinpay][transferNotify] sign mismatch recv=%s local=%s plain=%q params=%v", params["hmac"], local, plain, params)
-		debugJoinpayTransferNotifyMismatch(params, cfg)
 		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
 			BizType: plugin.BizTypeTransfer,
 			Result:  plugin.RespHTML("sign_error"),
@@ -685,53 +694,4 @@ func transferNotify(ctx context.Context, req *plugin.CallRequest) (map[string]an
 		BizType: plugin.BizTypeTransfer,
 		Result:  plugin.RespHTML("status=" + status),
 	})
-}
-
-func debugJoinpayTransferNotifyMismatch(params map[string]string, cfg *joinpayConfig) {
-	if cfg == nil || params == nil {
-		return
-	}
-	recv := strings.ToLower(plugin.String(params["hmac"]))
-	if recv == "" {
-		return
-	}
-	amountCandidates := []string{plugin.String(params["paidAmount"])}
-	if cents := toCents(plugin.String(params["paidAmount"])); cents >= 0 {
-		fixed := toYuan(cents)
-		if fixed != "" && fixed != amountCandidates[0] {
-			amountCandidates = append(amountCandidates, fixed)
-		}
-	}
-	feeCandidates := []string{plugin.String(params["fee"])}
-	if cents := toCents(plugin.String(params["fee"])); cents >= 0 {
-		fixed := toYuan(cents)
-		if fixed != "" && fixed != feeCandidates[0] {
-			feeCandidates = append(feeCandidates, fixed)
-		}
-	}
-	tmCandidates := []string{plugin.String(params["tradeMerchantNo"])}
-	if cfg.AppMchID != "" && cfg.AppMchID != tmCandidates[0] {
-		tmCandidates = append(tmCandidates, cfg.AppMchID)
-	}
-	if tmCandidates[0] != "" {
-		tmCandidates = append(tmCandidates, "")
-	}
-	for _, amt := range amountCandidates {
-		for _, fee := range feeCandidates {
-			for _, tm := range tmCandidates {
-				candidate := map[string]string{}
-				for k, v := range params {
-					candidate[k] = v
-				}
-				candidate["paidAmount"] = amt
-				candidate["fee"] = fee
-				candidate["tradeMerchantNo"] = tm
-				local := strings.ToLower(signJoinpay(candidate, joinpayTransferNotifyFields, cfg.AppKey))
-				if local == recv {
-					log.Printf("[joinpay][transferNotify] mismatch resolved by candidate tradeMerchantNo=%q paidAmount=%q fee=%q", tm, amt, fee)
-					return
-				}
-			}
-		}
-	}
 }

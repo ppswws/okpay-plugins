@@ -8,11 +8,15 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"okpay/payment/plugin"
 )
 
-const helipayAPIURL = "https://pay.trx.helipay.com/trx/app/interface.action"
+const (
+	helipayAPIURL         = "https://pay.trx.helipay.com/trx/app/interface.action"
+	helipayMerchantAPIURL = "https://pay.trx.helipay.com/trx/merchant/interface.action"
+)
 
 var httpClient = plugin.NewHTTPClient(plugin.HTTPClientConfig{})
 
@@ -36,29 +40,32 @@ type refundResult struct {
 	ReqMs       int32
 }
 
-func readConfig(req *plugin.CallRequest) (*helipayConfig, error) {
-	cfg := plugin.DecodeConfig(req)
-	appid := plugin.String(cfg["appid"])
-	appkey := plugin.String(cfg["appkey"])
+func readConfig(req *plugin.InvokeRequestV2) (*helipayConfig, error) {
+	cfg := plugin.ChannelConfig(req)
+	mp, _ := cfg["mp"].(map[string]any)
+	mini, _ := cfg["mini"].(map[string]any)
+	appid := plugin.MapString(cfg, "appid")
+	appkey := plugin.MapString(cfg, "appkey")
 	if appid == "" || appkey == "" {
 		return nil, fmt.Errorf("通道配置不完整")
 	}
 	return &helipayConfig{
 		AppID:         appid,
 		AppKey:        appkey,
-		SM4Key:        plugin.String(cfg["sm4_key"]),
-		AppMchID:      plugin.String(cfg["appmchid"]),
-		MPAppID:       plugin.String(cfg["mp_appid"]),
-		MPAppSecret:   plugin.String(cfg["mp_appsecret"]),
-		MiniAppID:     plugin.String(cfg["mini_appid"]),
-		MiniAppSecret: plugin.String(cfg["mini_appsecret"]),
+		SM4Key:        plugin.MapString(cfg, "sm4_key"),
+		AppMchID:      plugin.MapString(cfg, "appmchid"),
+		MPAppID:       plugin.MapString(mp, "appid"),
+		MPAppSecret:   plugin.MapString(mp, "appsecret"),
+		MiniAppID:     plugin.MapString(mini, "appid"),
+		MiniAppSecret: plugin.MapString(mini, "appsecret"),
 		Biztypes:      plugin.ReadStringSlice(cfg["biztype"]),
 	}, nil
 }
 
-func createPublicOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipayConfig, order *plugin.OrderPayload, payType, appid, isRaw, openid string) (string, plugin.RequestStats, error) {
-	notifyURL := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/") + "/pay/notify/" + order.TradeNo
-	productName := plugin.String(req.Config["goodsname"])
+func createPublicOrder(ctx context.Context, req *plugin.InvokeRequestV2, cfg *helipayConfig, order *plugin.OrderPayload, payType, appid, isRaw, openid string) (string, plugin.RequestStats, error) {
+	globalCfg := plugin.GlobalConfig(req)
+	notifyURL := strings.TrimRight(plugin.MapString(globalCfg, "notifydomain"), "/") + "/pay/notify/" + order.TradeNo
+	productName := plugin.MapString(globalCfg, "goodsname")
 	params := map[string]string{
 		"P1_bizType":         "AppPayPublic",
 		"P2_orderId":         order.TradeNo,
@@ -85,9 +92,10 @@ func createPublicOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipa
 	return createOrder(ctx, params, cfg.AppKey)
 }
 
-func createAppletOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipayConfig, order *plugin.OrderPayload, payType, appid string) (string, plugin.RequestStats, error) {
-	notifyURL := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/") + "/pay/notify/" + order.TradeNo
-	productName := plugin.String(req.Config["goodsname"])
+func createAppletOrder(ctx context.Context, req *plugin.InvokeRequestV2, cfg *helipayConfig, order *plugin.OrderPayload, payType, appid string) (string, plugin.RequestStats, error) {
+	globalCfg := plugin.GlobalConfig(req)
+	notifyURL := strings.TrimRight(plugin.MapString(globalCfg, "notifydomain"), "/") + "/pay/notify/" + order.TradeNo
+	productName := plugin.MapString(globalCfg, "goodsname")
 	params := map[string]string{
 		"P1_bizType":         "AppPayApplet",
 		"P2_orderId":         order.TradeNo,
@@ -114,9 +122,10 @@ func createAppletOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipa
 	return createOrder(ctx, params, cfg.AppKey)
 }
 
-func createWapOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipayConfig, order *plugin.OrderPayload, payType string) (string, plugin.RequestStats, error) {
-	notifyURL := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/") + "/pay/notify/" + order.TradeNo
-	productName := plugin.String(req.Config["goodsname"])
+func createWapOrder(ctx context.Context, req *plugin.InvokeRequestV2, cfg *helipayConfig, order *plugin.OrderPayload, payType string) (string, plugin.RequestStats, error) {
+	globalCfg := plugin.GlobalConfig(req)
+	notifyURL := strings.TrimRight(plugin.MapString(globalCfg, "notifydomain"), "/") + "/pay/notify/" + order.TradeNo
+	productName := plugin.MapString(globalCfg, "goodsname")
 	params := map[string]string{
 		"P1_bizType":        "AppPayH5WFT",
 		"P2_orderId":        order.TradeNo,
@@ -129,7 +138,7 @@ func createWapOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipayCo
 		"P9_payType":        "WAP",
 		"P10_appName":       "短剧剧场",
 		"P11_deviceInfo":    "iOS_WAP",
-		"P12_applicationId": strings.TrimRight(plugin.String(req.Config["sitedomain"]), "/"),
+		"P12_applicationId": strings.TrimRight(plugin.MapString(globalCfg, "sitedomain"), "/"),
 		"P13_goodsName":     productName,
 		"P14_goodsDetail":   "",
 		"P15_desc":          "",
@@ -143,9 +152,10 @@ func createWapOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipayCo
 	return createOrder(ctx, params, cfg.AppKey)
 }
 
-func createScanOrder(ctx context.Context, req *plugin.CallRequest, cfg *helipayConfig, order *plugin.OrderPayload, payType string) (string, plugin.RequestStats, error) {
-	notifyURL := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/") + "/pay/notify/" + order.TradeNo
-	productName := plugin.String(req.Config["goodsname"])
+func createScanOrder(ctx context.Context, req *plugin.InvokeRequestV2, cfg *helipayConfig, order *plugin.OrderPayload, payType string) (string, plugin.RequestStats, error) {
+	globalCfg := plugin.GlobalConfig(req)
+	notifyURL := strings.TrimRight(plugin.MapString(globalCfg, "notifydomain"), "/") + "/pay/notify/" + order.TradeNo
+	productName := plugin.MapString(globalCfg, "goodsname")
 	params := map[string]string{
 		"P1_bizType":        "AppPay",
 		"P2_orderId":        order.TradeNo,
@@ -211,6 +221,30 @@ func transferOrder(ctx context.Context, cfg *helipayConfig, params map[string]st
 	return resp, stats, nil
 }
 
+func queryBalance(ctx context.Context, cfg *helipayConfig) (string, plugin.RequestStats, error) {
+	params := map[string]string{
+		"P1_bizType":        "MerchantAccountQuery",
+		"P2_customerNumber": cfg.AppID,
+		"P3_timestamp":      nowTimestamp(),
+	}
+	resp, stats, err := sendRequestTo(ctx, helipayMerchantAPIURL, params, cfg.AppKey)
+	if err != nil {
+		return "", stats, err
+	}
+	if resp["rt2_retCode"] != "0000" {
+		msg := resp["rt3_retMsg"]
+		if msg == "" {
+			msg = resp["rt2_retCode"]
+		}
+		return "", stats, errors.New(msg)
+	}
+	balance := strings.TrimSpace(firstNotEmpty(resp["rt15_amountToBeSettled"], resp["rt6_balance"]))
+	if balance == "" {
+		return "", stats, errors.New("余额为空")
+	}
+	return balance, stats, nil
+}
+
 func createOrder(ctx context.Context, params map[string]string, apiKey string) (string, plugin.RequestStats, error) {
 	resp, stats, err := sendRequest(ctx, params, apiKey)
 	if err != nil {
@@ -231,10 +265,14 @@ func createOrder(ctx context.Context, params map[string]string, apiKey string) (
 }
 
 func sendRequest(ctx context.Context, params map[string]string, apiKey string) (map[string]string, plugin.RequestStats, error) {
+	return sendRequestTo(ctx, helipayAPIURL, params, apiKey)
+}
+
+func sendRequestTo(ctx context.Context, requestURL string, params map[string]string, apiKey string) (map[string]string, plugin.RequestStats, error) {
 	params["signatureType"] = "MD5"
 	params["sign"] = signRequest(params, apiKey)
 	payload := encodeParams(params)
-	body, reqCount, reqMs, err := httpClient.Do(ctx, http.MethodPost, helipayAPIURL, payload, "application/x-www-form-urlencoded;charset=UTF-8")
+	body, reqCount, reqMs, err := httpClient.Do(ctx, http.MethodPost, requestURL, payload, "application/x-www-form-urlencoded;charset=UTF-8")
 	stats := plugin.RequestStats{ReqBody: payload, RespBody: body, ReqCount: reqCount, ReqMs: reqMs}
 	if err != nil {
 		return nil, stats, err
@@ -253,8 +291,10 @@ func parseResponse(body string) map[string]string {
 	if body == "" {
 		return map[string]string{}
 	}
-	if jsonMap, err := plugin.DecodeJSONMap(body); err == nil && len(jsonMap) > 0 {
-		return toStringMap(jsonMap)
+	if m, err := decodeJSONStringMap(body); err == nil {
+		if len(m) > 0 {
+			return m
+		}
 	}
 	values, err := url.ParseQuery(body)
 	if err == nil && len(values) > 0 {
@@ -327,6 +367,8 @@ func requestOrderByBizType(bizType string) []string {
 		return []string{"P1_bizType", "P2_orderId", "P3_customerNumber", "P4_refundOrderId", "P5_amount", "P6_callbackUrl"}
 	case "Transfer":
 		return []string{"P1_bizType", "P2_orderId", "P3_customerNumber", "P4_amount", "P5_bankCode", "P6_bankAccountNo", "P7_bankAccountName", "P8_biz", "P9_bankUnionCode", "P10_feeType", "P11_urgency", "P12_summary", "notifyUrl", "payerName", "payerShowName", "payerAccountNo"}
+	case "MerchantAccountQuery":
+		return []string{"P1_bizType", "P2_customerNumber", "P3_timestamp"}
 	default:
 		return []string{}
 	}
@@ -346,9 +388,15 @@ func responseOrderByBizType(bizType string) []string {
 		return []string{"rt1_bizType", "rt2_retCode", "rt4_customerNumber", "rt5_orderId", "rt6_refundOrderNum", "rt7_serialNumber", "rt8_amount", "rt9_currency"}
 	case "Transfer":
 		return []string{"rt1_bizType", "rt2_retCode", "rt4_customerNumber", "rt5_orderId", "rt6_serialNumber"}
+	case "MerchantAccountQuery":
+		return []string{"rt1_bizType", "rt2_retCode", "rt3_retMsg", "rt4_customerNumber", "rt5_accountStatus", "rt6_balance", "rt7_frozenBalance", "rt8_d0Balance", "rt9_T1Balance", "rt10_currency", "rt11_createDate", "rt12_desc"}
 	default:
 		return []string{}
 	}
+}
+
+func nowTimestamp() string {
+	return time.Now().Format("20060102150405")
 }
 
 func notifyOrder(payload map[string]string) []string {

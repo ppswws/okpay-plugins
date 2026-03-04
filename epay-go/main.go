@@ -21,7 +21,7 @@ func main() {
 	})
 }
 
-func info(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+func info(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
 	return map[string]any{
 		"id":       "epay",
 		"name":     "彩虹易支付",
@@ -49,7 +49,7 @@ func info(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 	}, nil
 }
 
-func create(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+func create(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
 	return plugin.CreateWithHandlers(ctx, req, map[string]plugin.HandlerFunc{
 		"alipay": alipay,
 		"wxpay":  wxpay,
@@ -57,8 +57,8 @@ func create(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	})
 }
 
-func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func alipay(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	return plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
 		cfg, err := readConfig(req)
 		if err != nil {
@@ -82,8 +82,8 @@ func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	})
 }
 
-func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func wxpay(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	return plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
 		cfg, err := readConfig(req)
 		if err != nil {
@@ -110,8 +110,8 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 	})
 }
 
-func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func bank(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	return plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
 		cfg, err := readConfig(req)
 		if err != nil {
@@ -151,8 +151,8 @@ func resolvePayMethod(resp *epayCreateResp) (string, string, error) {
 	return "qrcode", qr, nil
 }
 
-func query(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func query(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
@@ -172,7 +172,7 @@ func query(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 	return plugin.RespQuery(queryResp), nil
 }
 
-func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+func refund(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
 	refundResp := plugin.RefundStateResponse{
 		State:       -1,
 		APIRefundNo: "",
@@ -184,7 +184,7 @@ func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	return plugin.RespRefund(refundResp), nil
 }
 
-func transfer(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+func transfer(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
 	transferResp := plugin.TransferStateResponse{
 		State:      -1,
 		APITradeNo: "",
@@ -196,8 +196,8 @@ func transfer(ctx context.Context, req *plugin.CallRequest) (map[string]any, err
 	return plugin.RespTransfer(transferResp), nil
 }
 
-func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func notify(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
@@ -206,7 +206,7 @@ func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 		})
 	}
 
-	params := reqParams(req)
+	params := plugin.ParseRequestParams(req)
 	if !verifyMD5(params, cfg.AppKey) {
 		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
 			BizType: plugin.BizTypeOrder,

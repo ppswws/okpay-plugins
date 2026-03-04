@@ -32,42 +32,11 @@ func toCents(raw string) int64 {
 }
 
 // reqDevice 根据 UA 判断设备类型（mobile/pc）。
-func reqDevice(req *plugin.CallRequest) string {
-	if plugin.IsMobile(req.Request.UA) {
+func reqDevice(req *plugin.InvokeRequestV2) string {
+	if plugin.IsMobile(req.Raw.UserAgent) {
 		return "mobile"
 	}
 	return "pc"
-}
-
-// reqParams 合并 query/body 并转成 string map。
-func reqParams(req *plugin.CallRequest) map[string]string {
-	out := map[string]string{}
-	if req == nil {
-		return out
-	}
-	if raw := req.Request.Query; raw != "" {
-		if values, err := url.ParseQuery(raw); err == nil && len(values) > 0 {
-			for k, vals := range values {
-				if len(vals) > 0 {
-					out[k] = vals[0]
-				}
-			}
-		}
-	}
-	if raw := req.Request.Body; raw != "" {
-		if values, err := url.ParseQuery(raw); err == nil && len(values) > 0 {
-			for k, vals := range values {
-				if len(vals) > 0 {
-					out[k] = vals[0]
-				}
-			}
-		} else if jsonMap, err := plugin.DecodeJSONMap(raw); err == nil {
-			for k, v := range jsonMap {
-				out[k] = plugin.String(v)
-			}
-		}
-	}
-	return out
 }
 
 // encodeParams 将参数编码成 form 表单字符串。

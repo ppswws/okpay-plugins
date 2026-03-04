@@ -25,20 +25,22 @@ type huifuConfig struct {
 	Biztypes      []string
 }
 
-func readConfig(req *plugin.CallRequest) (*huifuConfig, error) {
-	cfg := plugin.DecodeConfig(req)
+func readConfig(req *plugin.InvokeRequestV2) (*huifuConfig, error) {
+	cfg := plugin.ChannelConfig(req)
+	mp, _ := cfg["mp"].(map[string]any)
+	mini, _ := cfg["mini"].(map[string]any)
 	out := &huifuConfig{
-		AppID:         plugin.String(cfg["appid"]),
-		ProductID:     plugin.String(cfg["product_id"]),
-		AppKey:        plugin.String(cfg["appkey"]),
-		AppPem:        plugin.String(cfg["apppem"]),
-		AppMchID:      plugin.String(cfg["appmchid"]),
-		ProjectID:     plugin.String(cfg["project_id"]),
-		SeqID:         plugin.String(cfg["seq_id"]),
-		MPAppID:       plugin.String(cfg["mp_appid"]),
-		MPAppSecret:   plugin.String(cfg["mp_appsecret"]),
-		MiniAppID:     plugin.String(cfg["mini_appid"]),
-		MiniAppSecret: plugin.String(cfg["mini_appsecret"]),
+		AppID:         plugin.MapString(cfg, "appid"),
+		ProductID:     plugin.MapString(cfg, "product_id"),
+		AppKey:        plugin.MapString(cfg, "appkey"),
+		AppPem:        plugin.MapString(cfg, "apppem"),
+		AppMchID:      plugin.MapString(cfg, "appmchid"),
+		ProjectID:     plugin.MapString(cfg, "project_id"),
+		SeqID:         plugin.MapString(cfg, "seq_id"),
+		MPAppID:       plugin.MapString(mp, "appid"),
+		MPAppSecret:   plugin.MapString(mp, "appsecret"),
+		MiniAppID:     plugin.MapString(mini, "appid"),
+		MiniAppSecret: plugin.MapString(mini, "appsecret"),
 		Biztypes:      plugin.ReadStringSlice(cfg["biztype"]),
 	}
 	if out.AppID == "" || out.ProductID == "" || out.AppKey == "" || out.AppPem == "" {
@@ -47,10 +49,11 @@ func readConfig(req *plugin.CallRequest) (*huifuConfig, error) {
 	return out, nil
 }
 
-func addOrder(ctx context.Context, client *huifuClient, req *plugin.CallRequest, cfg *huifuConfig, order *plugin.OrderPayload, tradeType, subOpenID string) (string, plugin.RequestStats, error) {
-	notifyDomain := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/")
-	siteDomain := strings.TrimRight(plugin.String(req.Config["sitedomain"]), "/")
-	productName := plugin.String(req.Config["goodsname"])
+func addOrder(ctx context.Context, client *huifuClient, req *plugin.InvokeRequestV2, cfg *huifuConfig, order *plugin.OrderPayload, tradeType, subOpenID string) (string, plugin.RequestStats, error) {
+	globalCfg := plugin.GlobalConfig(req)
+	notifyDomain := strings.TrimRight(plugin.MapString(globalCfg, "notifydomain"), "/")
+	siteDomain := strings.TrimRight(plugin.MapString(globalCfg, "sitedomain"), "/")
+	productName := plugin.MapString(globalCfg, "goodsname")
 	ip := order.IPBuyer
 	huifuID := cfg.AppID
 	if cfg.AppMchID != "" {
@@ -102,11 +105,11 @@ func addOrder(ctx context.Context, client *huifuClient, req *plugin.CallRequest,
 	if err != nil {
 		return "", stats, err
 	}
-	code := plugin.String(resp["resp_code"])
+	code := plugin.MapString(resp, "resp_code")
 	if code != "00000100" {
-		msg := plugin.String(resp["resp_desc"])
+		msg := plugin.MapString(resp, "resp_desc")
 		if msg == "" {
-			msg = plugin.String(resp["bank_message"])
+			msg = plugin.MapString(resp, "bank_message")
 		}
 		if msg == "" {
 			msg = "接口返回失败"
@@ -114,15 +117,16 @@ func addOrder(ctx context.Context, client *huifuClient, req *plugin.CallRequest,
 		return "", stats, fmt.Errorf("%s", msg)
 	}
 	if tradeType == "T_JSAPI" || tradeType == "T_MINIAPP" || tradeType == "A_JSAPI" || tradeType == "U_JSAPI" {
-		return plugin.String(resp["pay_info"]), stats, nil
+		return plugin.MapString(resp, "pay_info"), stats, nil
 	}
-	return plugin.String(resp["qr_code"]), stats, nil
+	return plugin.MapString(resp, "qr_code"), stats, nil
 }
 
-func hostingOrder(ctx context.Context, client *huifuClient, req *plugin.CallRequest, cfg *huifuConfig, order *plugin.OrderPayload, transType, requestType string) (string, error) {
-	notifyDomain := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/")
-	siteName := plugin.String(req.Config["sitename"])
-	productName := plugin.String(req.Config["goodsname"])
+func hostingOrder(ctx context.Context, client *huifuClient, req *plugin.InvokeRequestV2, cfg *huifuConfig, order *plugin.OrderPayload, transType, requestType string) (string, error) {
+	globalCfg := plugin.GlobalConfig(req)
+	notifyDomain := strings.TrimRight(plugin.MapString(globalCfg, "notifydomain"), "/")
+	siteName := plugin.MapString(globalCfg, "sitename")
+	productName := plugin.MapString(globalCfg, "goodsname")
 	huifuID := cfg.AppID
 	if cfg.AppMchID != "" {
 		huifuID = cfg.AppMchID
@@ -147,23 +151,24 @@ func hostingOrder(ctx context.Context, client *huifuClient, req *plugin.CallRequ
 	if err != nil {
 		return "", err
 	}
-	code := plugin.String(resp["resp_code"])
+	code := plugin.MapString(resp, "resp_code")
 	if code != "00000000" {
-		msg := plugin.String(resp["resp_desc"])
+		msg := plugin.MapString(resp, "resp_desc")
 		if msg == "" {
-			msg = plugin.String(resp["bank_message"])
+			msg = plugin.MapString(resp, "bank_message")
 		}
 		if msg == "" {
 			msg = "接口返回失败"
 		}
 		return "", fmt.Errorf("%s", msg)
 	}
-	return plugin.String(resp["jump_url"]), nil
+	return plugin.MapString(resp, "jump_url"), nil
 }
 
-func wxappHosting(ctx context.Context, client *huifuClient, req *plugin.CallRequest, cfg *huifuConfig, order *plugin.OrderPayload, needScheme string) (map[string]any, error) {
-	notifyDomain := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/")
-	productName := plugin.String(req.Config["goodsname"])
+func wxappHosting(ctx context.Context, client *huifuClient, req *plugin.InvokeRequestV2, cfg *huifuConfig, order *plugin.OrderPayload, needScheme string) (map[string]any, error) {
+	globalCfg := plugin.GlobalConfig(req)
+	notifyDomain := strings.TrimRight(plugin.MapString(globalCfg, "notifydomain"), "/")
+	productName := plugin.MapString(globalCfg, "goodsname")
 	huifuID := cfg.AppID
 	if cfg.AppMchID != "" {
 		huifuID = cfg.AppMchID
@@ -186,28 +191,29 @@ func wxappHosting(ctx context.Context, client *huifuClient, req *plugin.CallRequ
 	if err != nil {
 		return nil, err
 	}
-	code := plugin.String(resp["resp_code"])
+	code := plugin.MapString(resp, "resp_code")
 	if code != "00000000" {
-		msg := plugin.String(resp["resp_desc"])
+		msg := plugin.MapString(resp, "resp_desc")
 		if msg == "" {
-			msg = plugin.String(resp["bank_message"])
+			msg = plugin.MapString(resp, "bank_message")
 		}
 		if msg == "" {
 			msg = "接口返回失败"
 		}
 		return nil, fmt.Errorf("%s", msg)
 	}
-	raw := plugin.String(resp["miniapp_data"])
-	out, err := plugin.DecodeJSONMap(raw)
+	raw := plugin.MapString(resp, "miniapp_data")
+	out, err := decodeJSONAnyMap(raw)
 	if err != nil {
 		return nil, fmt.Errorf("返回数据解析失败")
 	}
 	return out, nil
 }
 
-func aliappHosting(ctx context.Context, client *huifuClient, req *plugin.CallRequest, cfg *huifuConfig, order *plugin.OrderPayload) (string, error) {
-	notifyDomain := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/")
-	productName := plugin.String(req.Config["goodsname"])
+func aliappHosting(ctx context.Context, client *huifuClient, req *plugin.InvokeRequestV2, cfg *huifuConfig, order *plugin.OrderPayload) (string, error) {
+	globalCfg := plugin.GlobalConfig(req)
+	notifyDomain := strings.TrimRight(plugin.MapString(globalCfg, "notifydomain"), "/")
+	productName := plugin.MapString(globalCfg, "goodsname")
 	huifuID := cfg.AppID
 	if cfg.AppMchID != "" {
 		huifuID = cfg.AppMchID
@@ -228,23 +234,24 @@ func aliappHosting(ctx context.Context, client *huifuClient, req *plugin.CallReq
 	if err != nil {
 		return "", err
 	}
-	code := plugin.String(resp["resp_code"])
+	code := plugin.MapString(resp, "resp_code")
 	if code != "00000000" {
-		msg := plugin.String(resp["resp_desc"])
+		msg := plugin.MapString(resp, "resp_desc")
 		if msg == "" {
-			msg = plugin.String(resp["bank_message"])
+			msg = plugin.MapString(resp, "bank_message")
 		}
 		if msg == "" {
 			msg = "接口返回失败"
 		}
 		return "", fmt.Errorf("%s", msg)
 	}
-	return plugin.String(resp["jump_url"]), nil
+	return plugin.MapString(resp, "jump_url"), nil
 }
 
-func quickpayOrder(ctx context.Context, client *huifuClient, req *plugin.CallRequest, cfg *huifuConfig, order *plugin.OrderPayload, requestType string, gwType string, deviceType string) (string, error) {
-	notifyDomain := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/")
-	productName := plugin.String(req.Config["goodsname"])
+func quickpayOrder(ctx context.Context, client *huifuClient, req *plugin.InvokeRequestV2, cfg *huifuConfig, order *plugin.OrderPayload, requestType string, gwType string, deviceType string) (string, error) {
+	globalCfg := plugin.GlobalConfig(req)
+	notifyDomain := strings.TrimRight(plugin.MapString(globalCfg, "notifydomain"), "/")
+	productName := plugin.MapString(globalCfg, "goodsname")
 	huifuID := cfg.AppID
 	if cfg.AppMchID != "" {
 		huifuID = cfg.AppMchID
@@ -275,23 +282,24 @@ func quickpayOrder(ctx context.Context, client *huifuClient, req *plugin.CallReq
 	if err != nil {
 		return "", err
 	}
-	code := plugin.String(resp["resp_code"])
+	code := plugin.MapString(resp, "resp_code")
 	if code != "00000000" && code != "00000100" {
-		msg := plugin.String(resp["resp_desc"])
+		msg := plugin.MapString(resp, "resp_desc")
 		if msg == "" {
-			msg = plugin.String(resp["bank_message"])
+			msg = plugin.MapString(resp, "bank_message")
 		}
 		if msg == "" {
 			msg = "接口返回失败"
 		}
 		return "", fmt.Errorf("%s", msg)
 	}
-	return plugin.String(resp["form_url"]), nil
+	return plugin.MapString(resp, "form_url"), nil
 }
 
-func bankOrder(ctx context.Context, client *huifuClient, req *plugin.CallRequest, cfg *huifuConfig, order *plugin.OrderPayload, gwType string, deviceType string) (string, error) {
-	notifyDomain := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/")
-	productName := plugin.String(req.Config["goodsname"])
+func bankOrder(ctx context.Context, client *huifuClient, req *plugin.InvokeRequestV2, cfg *huifuConfig, order *plugin.OrderPayload, gwType string, deviceType string) (string, error) {
+	globalCfg := plugin.GlobalConfig(req)
+	notifyDomain := strings.TrimRight(plugin.MapString(globalCfg, "notifydomain"), "/")
+	productName := plugin.MapString(globalCfg, "goodsname")
 	huifuID := cfg.AppID
 	if cfg.AppMchID != "" {
 		huifuID = cfg.AppMchID
@@ -321,18 +329,18 @@ func bankOrder(ctx context.Context, client *huifuClient, req *plugin.CallRequest
 	if err != nil {
 		return "", err
 	}
-	code := plugin.String(resp["resp_code"])
+	code := plugin.MapString(resp, "resp_code")
 	if code != "00000000" && code != "00000100" {
-		msg := plugin.String(resp["resp_desc"])
+		msg := plugin.MapString(resp, "resp_desc")
 		if msg == "" {
-			msg = plugin.String(resp["bank_message"])
+			msg = plugin.MapString(resp, "bank_message")
 		}
 		if msg == "" {
 			msg = "接口返回失败"
 		}
 		return "", fmt.Errorf("%s", msg)
 	}
-	return plugin.String(resp["form_url"]), nil
+	return plugin.MapString(resp, "form_url"), nil
 }
 
 func refundOrder(ctx context.Context, client *huifuClient, cfg *huifuConfig, order *plugin.OrderPayload, refund *plugin.RefundPayload) (map[string]any, error) {

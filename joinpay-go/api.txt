@@ -536,3 +536,83 @@ fee	手续费	计算受理成功的订单所需额外支付的费用	BigDecimal	
 202	处理中	批次正在处理中状态
 203	处理完成	批次中的每笔明细都明确了代付结果
 204	批次不存在	汇聚未受理该批次的请求，找不到该批次，明确失败
+
+
+
+9.可取余额查询
+
+请求交易入口
+
+https://www.joinpay.com/payment/pay/accountBalanceQuery
+
+
+请求参数列表
+
+参数名称	中文名称	说明	数据类型	是否必填	签名顺序
+userNo	商户编号	商户在支付平台系统的唯一身份标识。	String	是	1
+hmac	签名数据	参考签名机制	String	是	
+
+请求报文案例：
+
+{
+        "userNo": "888100000000002",
+        "hmac": "484F1C01DED2A9176B17C6AFC11DA219"
+     }
+
+
+注：以上案例仅限于格式的参考，并不能作为真实数据发起请求。
+
+ 
+应答参数列表
+
+
+参数名称	中文名称	说明	数据类型	是否必填	签名顺序
+statusCode	应答码	请求响应的应答码（详情请查阅附录）	String	是	1
+message	应答信息	请求响应的应答码信息描述	String	是	2
+data	应答数据	
+数据见应答信息域
+
+（应答信息域对象转成json字符串）
+
+json字符串	是	
+应答数据域（data）
+userNo	商户号	商户在支付平台系统的唯一身份标识。	String	是	3
+userName	商户名称	商户在支付平台系统注册的名称	String	是	4
+currency	币种	余额账户统一记录的币种 人民币：201	Integer	是	5
+useAbleSettAmount	可取金额	除去风控冻结金额剩余的可结算金额	BigDecimal	是	6
+availableSettAmountFrozen	可结算冻结金额	代付处理中的金额	BigDecimal	是	7
+errorCode	错误码	
+受理失败、受理中会在应答中返回错误
+
+码（详情请查阅附录）
+
+String	否	8
+errorDesc	错误描述	
+受理失败、受理中会在应答中返回错误信
+
+息（详情请查阅附录）
+
+String	否	9
+hmac	签名数据	参考签名机制	String	是	
+
+应答报文案例：
+
+
+
+{
+       "data": {
+         "userNo": "888100000004182",
+         "userName": "汇聚支付",
+         "currency": 201,
+         "useAbleSettAmount": 29233.05,
+         "availableSettAmountFrozen": 82982.81,
+         "errorCode": "",
+         "errorDesc": "",
+        "hmac": "484F1C01DED2A9176B17C6AFC11DA219"
+       },
+     "statusCode": 2001,
+     "message": "查询成功"
+    }
+
+
+注：响应数据的顺序不代表签名的顺序，签名顺序请查阅文档的表格所对应的顺序

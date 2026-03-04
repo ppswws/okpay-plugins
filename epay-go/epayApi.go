@@ -66,11 +66,11 @@ func (s intStr) String() string {
 	return strings.TrimSpace(string(s))
 }
 
-func readConfig(req *plugin.CallRequest) (*epayConfig, error) {
-	cfg := plugin.DecodeConfig(req)
-	appurl := strings.TrimRight(plugin.String(cfg["appurl"]), "/") + "/"
-	appid := plugin.String(cfg["appid"])
-	appkey := plugin.String(cfg["appkey"])
+func readConfig(req *plugin.InvokeRequestV2) (*epayConfig, error) {
+	cfg := plugin.ChannelConfig(req)
+	appurl := strings.TrimRight(plugin.MapString(cfg, "appurl"), "/") + "/"
+	appid := plugin.MapString(cfg, "appid")
+	appkey := plugin.MapString(cfg, "appkey")
 	if appurl == "" || appid == "" || appkey == "" {
 		return nil, fmt.Errorf("通道配置不完整")
 	}
@@ -83,10 +83,11 @@ func readConfig(req *plugin.CallRequest) (*epayConfig, error) {
 	}, nil
 }
 
-func createOrder(ctx context.Context, req *plugin.CallRequest, cfg *epayConfig, order *plugin.OrderPayload) (*epayCreateResp, plugin.RequestStats, error) {
+func createOrder(ctx context.Context, req *plugin.InvokeRequestV2, cfg *epayConfig, order *plugin.OrderPayload) (*epayCreateResp, plugin.RequestStats, error) {
 	createUrl := cfg.AppURL + "mapi.php"
-	notifyDomain := strings.TrimRight(plugin.String(req.Config["notifydomain"]), "/")
-	siteDomain := strings.TrimRight(plugin.String(req.Config["sitedomain"]), "/")
+	globalCfg := plugin.GlobalConfig(req)
+	notifyDomain := strings.TrimRight(plugin.MapString(globalCfg, "notifydomain"), "/")
+	siteDomain := strings.TrimRight(plugin.MapString(globalCfg, "sitedomain"), "/")
 
 	params := map[string]string{
 		"pid":          cfg.AppID,
@@ -94,7 +95,7 @@ func createOrder(ctx context.Context, req *plugin.CallRequest, cfg *epayConfig, 
 		"out_trade_no": order.TradeNo,
 		"notify_url":   notifyDomain + "/pay/notify/" + order.TradeNo,
 		"return_url":   siteDomain + "/pay/" + order.Type + "/" + order.TradeNo,
-		"name":         plugin.String(req.Config["goodsname"]),
+		"name":         plugin.MapString(globalCfg, "goodsname"),
 		"money":        toYuan(order.Real),
 		"clientip":     order.IPBuyer,
 		"device":       reqDevice(req),

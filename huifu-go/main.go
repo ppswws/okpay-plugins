@@ -25,7 +25,7 @@ func main() {
 	})
 }
 
-func info(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+func info(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
 	return map[string]any{
 		"id":       "huifu",
 		"name":     "汇付斗拱平台",
@@ -103,7 +103,7 @@ func info(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 	}, nil
 }
 
-func create(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
+func create(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
 	return plugin.CreateWithHandlers(ctx, req, map[string]plugin.HandlerFunc{
 		"alipay": alipay,
 		"wxpay":  wxpay,
@@ -112,8 +112,8 @@ func create(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	})
 }
 
-func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func alipay(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
@@ -138,17 +138,17 @@ func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 
 	if allowHosting {
 		requestType := "P"
-		if plugin.IsMobile(req.Request.UA) {
+		if plugin.IsMobile(req.Raw.UserAgent) {
 			requestType = "M"
 		}
 		jumpURL, err := hostingOrder(ctx, client, req, cfg, order, "A_JSAPI", requestType)
 		if err != nil {
 			return plugin.RespError(err.Error()), nil
 		}
-		if plugin.IsAlipay(req.Request.UA) {
+		if plugin.IsAlipay(req.Raw.UserAgent) {
 			return plugin.RespJump(jumpURL), nil
 		}
-		if plugin.IsMobile(req.Request.UA) {
+		if plugin.IsMobile(req.Raw.UserAgent) {
 			return plugin.RespPageURL("alipay_h5", jumpURL), nil
 		}
 		return plugin.RespPageURL("alipay_qrcode", jumpURL), nil
@@ -159,18 +159,18 @@ func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 		if buyerID == "" {
 			return plugin.RespError("缺少支付宝用户标识"), nil
 		}
-			result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
-				payInfo, stats, err := addOrder(ctx, client, req, cfg, order, "A_JSAPI", buyerID)
-				if err != nil {
-					return nil, stats, err
-				}
-				out, err := plugin.DecodeJSONMap(payInfo)
-				if err != nil {
-					return nil, stats, err
-				}
-				tradeNo := plugin.String(out["tradeNO"])
-				return plugin.RespPageData("alipay_jspay", map[string]any{"alipay_trade_no": tradeNo, "redirect_url": "data.backurl"}), stats, nil
-			})
+		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+			payInfo, stats, err := addOrder(ctx, client, req, cfg, order, "A_JSAPI", buyerID)
+			if err != nil {
+				return nil, stats, err
+			}
+			out, err := decodeJSONAnyMap(payInfo)
+			if err != nil {
+				return nil, stats, err
+			}
+			tradeNo := plugin.MapString(out, "tradeNO")
+			return plugin.RespPageData("alipay_jspay", map[string]any{"alipay_trade_no": tradeNo, "redirect_url": "data.backurl"}), stats, nil
+		})
 		if err != nil {
 			return plugin.RespError(err.Error()), nil
 		}
@@ -194,8 +194,8 @@ func alipay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	return plugin.RespError("当前通道未开启支付宝支付方式"), nil
 }
 
-func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func wxpay(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
@@ -215,16 +215,19 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 			return plugin.RespError(err.Error()), nil
 		}
 		if scheme, ok := mini["scheme_code"]; ok {
-			return plugin.RespPageURL("wxpay_h5", plugin.String(scheme)), nil
+			if s, ok := scheme.(string); ok {
+				return plugin.RespPageURL("wxpay_h5", s), nil
+			}
+			return plugin.RespError("托管小程序返回异常"), nil
 		}
 		return plugin.RespError("托管小程序返回异常"), nil
 	}
 
-	if allowSelf && plugin.IsWeChat(req.Request.UA) {
+	if allowSelf && plugin.IsWeChat(req.Raw.UserAgent) {
 		if cfg.MPAppID == "" || cfg.MPAppSecret == "" {
 			return plugin.RespError("支付通道未绑定微信公众号"), nil
 		}
-		code := reqQueryValue(req, "code")
+		code := plugin.QueryParam(req, "code")
 		redirectURL := buildPayURL(req, order, map[string]string{"t": fmt.Sprintf("%d", time.Now().Unix())})
 		openID, authURL, err := wechatpay.GetOpenid(ctx, wechatpay.MPAuthParams{
 			AppID:       cfg.MPAppID,
@@ -239,17 +242,17 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 		if authURL != "" {
 			return plugin.RespJump(authURL), nil
 		}
-			result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
-				payInfo, stats, err := addOrder(ctx, client, req, cfg, order, "T_JSAPI", openID)
-				if err != nil {
-					return nil, stats, err
-				}
-				jsParams, err := plugin.DecodeJSONMap(payInfo)
-				if err != nil {
-					return nil, stats, err
-				}
-				return plugin.RespPageData("wxpay_jspay", map[string]any{"js_api_parameters": jsParams}), stats, nil
-			})
+		result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+			payInfo, stats, err := addOrder(ctx, client, req, cfg, order, "T_JSAPI", openID)
+			if err != nil {
+				return nil, stats, err
+			}
+			jsParams, err := decodeJSONAnyMap(payInfo)
+			if err != nil {
+				return nil, stats, err
+			}
+			return plugin.RespPageData("wxpay_jspay", map[string]any{"js_api_parameters": jsParams}), stats, nil
+		})
 		if err != nil {
 			return plugin.RespError(err.Error()), nil
 		}
@@ -257,7 +260,7 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 	}
 
 	if allowSelf {
-		code := reqQueryValue(req, "code")
+		code := plugin.QueryParam(req, "code")
 		if code != "" {
 			if cfg.MiniAppID == "" || cfg.MiniAppSecret == "" {
 				return plugin.RespJSON(map[string]any{"code": 1, "message": "支付通道未配置微信小程序"}), nil
@@ -270,17 +273,17 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 			if err != nil {
 				return plugin.RespJSON(map[string]any{"code": 1, "message": err.Error()}), nil
 			}
-				result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
-					payInfo, stats, err := addOrder(ctx, client, req, cfg, order, "T_MINIAPP", openID)
-					if err != nil {
-						return nil, stats, err
-					}
-					jsParams, err := plugin.DecodeJSONMap(payInfo)
-					if err != nil {
-						return nil, stats, err
-					}
-					return plugin.RespJSON(map[string]any{"code": 0, "js_api_parameters": jsParams}), stats, nil
-				})
+			result, err := plugin.LockOrderExt(ctx, req, order.TradeNo, func() (any, plugin.RequestStats, error) {
+				payInfo, stats, err := addOrder(ctx, client, req, cfg, order, "T_MINIAPP", openID)
+				if err != nil {
+					return nil, stats, err
+				}
+				jsParams, err := decodeJSONAnyMap(payInfo)
+				if err != nil {
+					return nil, stats, err
+				}
+				return plugin.RespJSON(map[string]any{"code": 0, "js_api_parameters": jsParams}), stats, nil
+			})
 			if err != nil {
 				return plugin.RespJSON(map[string]any{"code": 1, "message": err.Error()}), nil
 			}
@@ -302,7 +305,7 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 
 	if allowHosting {
 		requestType := "P"
-		if plugin.IsMobile(req.Request.UA) {
+		if plugin.IsMobile(req.Raw.UserAgent) {
 			requestType = "M"
 		}
 		jumpURL, err := hostingOrder(ctx, client, req, cfg, order, "T_JSAPI", requestType)
@@ -325,8 +328,8 @@ func wxpay(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 	return result, nil
 }
 
-func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func bank(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
@@ -345,7 +348,7 @@ func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 		requestType := "P"
 		gwType := "01"
 		deviceType := "4"
-		if plugin.IsMobile(req.Request.UA) {
+		if plugin.IsMobile(req.Raw.UserAgent) {
 			requestType = "M"
 			gwType = "02"
 			deviceType = "1"
@@ -360,7 +363,7 @@ func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 	if allowBank {
 		gwType := "01"
 		deviceType := "4"
-		if plugin.IsMobile(req.Request.UA) {
+		if plugin.IsMobile(req.Raw.UserAgent) {
 			gwType = "02"
 			deviceType = "1"
 		}
@@ -406,8 +409,8 @@ func bank(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 	return plugin.RespError("当前通道未开启银联支付方式"), nil
 }
 
-func ecny(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func ecny(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
@@ -429,8 +432,8 @@ func ecny(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) 
 	return result, nil
 }
 
-func query(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func query(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
@@ -444,13 +447,13 @@ func query(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 		return nil, err
 	}
 	state := 0
-	switch plugin.String(resp["trans_stat"]) {
+	switch plugin.MapString(resp, "trans_stat") {
 	case "S":
 		state = 1
 	case "F":
 		state = -1
 	}
-	apiTradeNo := plugin.String(resp["org_hf_seq_id"])
+	apiTradeNo := plugin.MapString(resp, "org_hf_seq_id")
 	queryResp := plugin.QueryStateResponse{
 		State:      state,
 		APITradeNo: apiTradeNo,
@@ -458,8 +461,8 @@ func query(ctx context.Context, req *plugin.CallRequest) (map[string]any, error)
 	return plugin.RespQuery(queryResp), nil
 }
 
-func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
+func notify(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
@@ -474,7 +477,7 @@ func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 			Result:  plugin.RespHTML("fail"),
 		})
 	}
-	params := reqParams(req)
+	params := plugin.ParseRequestParams(req)
 	respData := params["resp_data"]
 	sign := params["sign"]
 	if respData == "" {
@@ -489,7 +492,7 @@ func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 			Result:  plugin.RespHTML("sign fail"),
 		})
 	}
-	data, err := plugin.DecodeJSONMap(respData)
+	data, err := decodeJSONAnyMap(respData)
 	if err != nil {
 		return plugin.RespNotify(ctx, req, plugin.NotifyResponse{
 			BizType: plugin.BizTypeOrder,
@@ -500,11 +503,11 @@ func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	if order != nil {
 		tradeNo = order.TradeNo
 	} else {
-		tradeNo = plugin.String(data["req_seq_id"])
+		tradeNo = plugin.MapString(data, "req_seq_id")
 	}
-	if plugin.String(data["trans_stat"]) == "S" {
-		if order != nil && plugin.String(data["req_seq_id"]) == order.TradeNo {
-			apiTradeNo := plugin.String(data["hf_seq_id"])
+	if plugin.MapString(data, "trans_stat") == "S" {
+		if order != nil && plugin.MapString(data, "req_seq_id") == order.TradeNo {
+			apiTradeNo := plugin.MapString(data, "hf_seq_id")
 			buyer := ""
 			if v, ok := data["alipay_response"]; ok {
 				buyer = extractBuyerFromResp(v, "buyer_id")
@@ -529,9 +532,9 @@ func notify(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	})
 }
 
-func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error) {
-	order := plugin.DecodeOrder(req.Order)
-	refund := plugin.DecodeRefund(req.Refund)
+func refund(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
+	refund := plugin.Refund(req)
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
@@ -559,9 +562,9 @@ func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 		}
 		return plugin.RespRefund(refundResp), nil
 	}
-	code := plugin.String(resp["resp_code"])
+	code := plugin.MapString(resp, "resp_code")
 	if code != "00000000" && code != "00000100" {
-		msg := plugin.String(resp["resp_desc"])
+		msg := plugin.MapString(resp, "resp_desc")
 		if msg == "" {
 			msg = "退款失败"
 		}
@@ -581,7 +584,7 @@ func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 	}
 	refundResp := plugin.RefundStateResponse{
 		State:       state,
-		APIRefundNo: plugin.String(resp["hf_seq_id"]),
+		APIRefundNo: plugin.MapString(resp, "hf_seq_id"),
 		ReqBody:     "",
 		RespBody:    "",
 		Result:      "",
@@ -593,11 +596,10 @@ func refund(ctx context.Context, req *plugin.CallRequest) (map[string]any, error
 func extractBuyerFromResp(value any, key string) string {
 	switch v := value.(type) {
 	case map[string]any:
-		return plugin.String(v[key])
+		return plugin.MapString(v, key)
 	case string:
-		out, err := plugin.DecodeJSONMap(v)
-		if err == nil {
-			return plugin.String(out[key])
+		if out, err := decodeJSONAnyMap(v); err == nil {
+			return plugin.MapString(out, key)
 		}
 	}
 	return ""

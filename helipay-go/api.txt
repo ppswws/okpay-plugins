@@ -123,3 +123,36 @@
 0086	撤销失败,超过有效期	**新增码
 0087	上游无明确终态,请重试撤销	**新增码
 0101	该时段禁止交易	**新增码
+
+5.1商户余额查询
+测试请求地址：
+http://test.trx.helipay.com/trx/merchant/interface.action
+生产请求地址：
+http://pay.trx.helipay.com/trx/merchant/interface.action
+
+请求参数列表
+字段名	变量名	必填	类型	实例值	说明
+交易类型	P1_bizType	是	String (20)	MerchantAccountQuery	商户账户查询接口
+商户编号	P2_customerNumber	是	String (15)	C1800000002	商户号由合利宝分配
+时间戳	P3_timestamp	是	String (15)	20170708155310	格式：yyyyMMddHHmmss;14位 数字，精确到秒
+签名	sign	是	String (40)	0533368B60E9D826B066 105AFFCCF7BC	MD5签名结果，详见“第4章数 字签名”
+签名方式	signatureType	否	String(30)	MD5或者SM3WITHSM2	不参与签名(不传默认是MD5)
+返回参数列表
+字段名	变量名	必填	类型	实例值	说明
+交易类型	rt1_bizType	是	String (20)	MerchantAccountQuery	确认支付接口
+返回码	rt2_retCode	是	String (20)	0000	返回0000即为成功,只有当成 功时，才会有账户信息
+返回信息	rt3_retMsg	否	String (200)	成功	返回信息
+商户编号	rt4_customerNumber	是	String (15)	C1800000002	商户号由合利宝分配
+账户状态	rt5_accountStatus	是	String (50)	AVAILABLE	AVAILABLE(“正常”,1),FROZ EN(“冻结”,2),FREEZE_DEBI T(“冻结出帐”,3),FREEZE_C REDIT(“冻结入账”,4),;CAN CELLED(“已注销”,5);
+账户余额	rt6_balance	是	String (50)	0.01	订单金额，以元为单位，最 小金额为0.01；
+冻结余额	rt7_frozenBalance	否	String (15)	0.01	订单金额，以元为单位，最 小金额为0.01；;因触犯风控 规则而进行冻结的金额；
+D0余额	rt8_d0Balance	是	Number (10,2)	0.01	订单金额，以元为单位，最 小金额为0.01
+T1余额	rt9_T1Balance	是	String (20)	0.01	订单金额，以元为单位，最 小金额为0.01
+币种	rt10_currency	是	String (20)	xxxxxxxx	CNY
+创建时间	rt11_createDate	是	Date	2017-06-2014:02:17	格式：yyyy-MM-ddHH:mm:ss
+备注	rt12_desc	否	String (255)	备注信息	备注信息
+D1余额	rt13_d1Balance	是	Number (10,2)	0.01	D1余额,不参与签名
+充值金额	rt14_rechargeBalance	是	Number (10,2)	xxxxxxxx	充值金额，根据结算周期清 0（T1则次工作日清0，D1则 次日清0）不参与签名
+可结算金额	rt15_amountToBeSettled	是	Number	0.01	商户可出款金额；计算公式 ：可结算金额（D1结算周期 ）=D1余额+充值金额-冻结余 额；可结算金额（T1结算周 期）=T1余额+充值金额-冻 结余额；可结算金额（D0结 算周期）=账户余额–冻结余 额；不参与签名
+签名	sign	是	String (40)	0533368B60E9D826B066 105AFFCCF7BC	MD5签名结果，详见“第4章数 字签名”
+签名方式	signatureType	否	String(30)	MD5或者SM3WITHSM2	不参与签名(有传才有值)

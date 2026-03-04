@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -23,11 +25,12 @@ func reqDate(tradeNo string) string {
 	return ""
 }
 
-func buildPayURL(req *plugin.CallRequest, order *plugin.OrderPayload, query map[string]string) string {
+func buildPayURL(req *plugin.InvokeRequestV2, order *plugin.OrderPayload, query map[string]string) string {
 	if order == nil {
 		return ""
 	}
-	siteDomain := strings.TrimRight(plugin.String(req.Config["sitedomain"]), "/")
+	globalCfg := plugin.GlobalConfig(req)
+	siteDomain := strings.TrimRight(plugin.MapString(globalCfg, "sitedomain"), "/")
 	payURL := siteDomain + "/pay/" + order.Type + "/" + order.TradeNo
 	if len(query) == 0 {
 		return payURL
@@ -49,56 +52,25 @@ func buildPayURL(req *plugin.CallRequest, order *plugin.OrderPayload, query map[
 	return payURL + "?" + qs
 }
 
-func reqParams(req *plugin.CallRequest) map[string]string {
-	out := map[string]string{}
-	if req == nil {
-		return out
-	}
-	if raw := req.Request.Query; raw != "" {
-		if values, err := url.ParseQuery(raw); err == nil && len(values) > 0 {
-			for k, vals := range values {
-				if len(vals) > 0 {
-					out[k] = vals[0]
-				}
-			}
-		}
-	}
-	if raw := req.Request.Body; raw != "" {
-		if values, err := url.ParseQuery(raw); err == nil && len(values) > 0 {
-			for k, vals := range values {
-				if len(vals) > 0 {
-					out[k] = vals[0]
-				}
-			}
-		} else if jsonMap, err := plugin.DecodeJSONMap(raw); err == nil {
-			for k, v := range jsonMap {
-				out[k] = plugin.String(v)
-			}
-		}
-	}
-	return out
-}
-
-func reqQueryValue(req *plugin.CallRequest, key string) string {
-	if req == nil || key == "" {
-		return ""
-	}
-	if raw := req.Request.Query; raw != "" {
-		if values, err := url.ParseQuery(raw); err == nil && len(values) > 0 {
-			if vals, ok := values[key]; ok && len(vals) > 0 {
-				return vals[0]
-			}
-		}
-	}
-	return ""
-}
-
-func pickBuyerID(order *plugin.OrderPayload, req *plugin.CallRequest) string {
+func pickBuyerID(order *plugin.OrderPayload, req *plugin.InvokeRequestV2) string {
 	if order != nil && strings.TrimSpace(order.Buyer) != "" {
 		return strings.TrimSpace(order.Buyer)
 	}
 	if req != nil {
-		return reqQueryValue(req, "buyer_id")
+		return plugin.QueryParam(req, "buyer_id")
 	}
 	return ""
+}
+
+func decodeJSONAnyMap(raw string) (map[string]any, error) {
+	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	dec.UseNumber()
+	var out map[string]any
+	if err := dec.Decode(&out); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return nil, fmt.Errorf("empty json object")
+	}
+	return out, nil
 }
