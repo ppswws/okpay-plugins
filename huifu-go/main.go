@@ -553,7 +553,7 @@ func refund(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, e
 	}
 	if err != nil {
 		refundResp := plugin.RefundStateResponse{
-			State:       0,
+			State:       -1,
 			APIRefundNo: "",
 			ReqBody:     "",
 			RespBody:    "",
@@ -569,7 +569,7 @@ func refund(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, e
 			msg = "退款失败"
 		}
 		refundResp := plugin.RefundStateResponse{
-			State:       0,
+			State:       -1,
 			APIRefundNo: "",
 			ReqBody:     "",
 			RespBody:    "",

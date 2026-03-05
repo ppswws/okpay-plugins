@@ -245,6 +245,35 @@ func queryBalance(ctx context.Context, cfg *helipayConfig) (string, plugin.Reque
 	return balance, stats, nil
 }
 
+func queryOrder(ctx context.Context, cfg *helipayConfig, order *plugin.OrderPayload) (map[string]string, error) {
+	if order == nil {
+		return nil, errors.New("order 为空")
+	}
+	if strings.TrimSpace(order.TradeNo) == "" && strings.TrimSpace(order.APITradeNo) == "" {
+		return nil, errors.New("tradeNo/apiTradeNo 不能为空")
+	}
+	params := map[string]string{
+		"P1_bizType":        "AppPayQuery",
+		"P2_orderId":        strings.TrimSpace(order.TradeNo),
+		"P3_customerNumber": cfg.AppID,
+	}
+	if apiTradeNo := strings.TrimSpace(order.APITradeNo); apiTradeNo != "" {
+		params["P4_serialNumber"] = apiTradeNo
+	}
+	resp, _, err := sendRequest(ctx, params, cfg.AppKey)
+	if err != nil {
+		return nil, err
+	}
+	if resp["rt2_retCode"] != "0000" {
+		msg := resp["rt3_retMsg"]
+		if msg == "" {
+			msg = resp["rt2_retCode"]
+		}
+		return nil, errors.New(msg)
+	}
+	return resp, nil
+}
+
 func createOrder(ctx context.Context, params map[string]string, apiKey string) (string, plugin.RequestStats, error) {
 	resp, stats, err := sendRequest(ctx, params, apiKey)
 	if err != nil {
@@ -369,6 +398,8 @@ func requestOrderByBizType(bizType string) []string {
 		return []string{"P1_bizType", "P2_orderId", "P3_customerNumber", "P4_amount", "P5_bankCode", "P6_bankAccountNo", "P7_bankAccountName", "P8_biz", "P9_bankUnionCode", "P10_feeType", "P11_urgency", "P12_summary", "notifyUrl", "payerName", "payerShowName", "payerAccountNo"}
 	case "MerchantAccountQuery":
 		return []string{"P1_bizType", "P2_customerNumber", "P3_timestamp"}
+	case "AppPayQuery":
+		return []string{"P1_bizType", "P2_orderId", "P3_customerNumber"}
 	default:
 		return []string{}
 	}
@@ -390,6 +421,8 @@ func responseOrderByBizType(bizType string) []string {
 		return []string{"rt1_bizType", "rt2_retCode", "rt4_customerNumber", "rt5_orderId", "rt6_serialNumber"}
 	case "MerchantAccountQuery":
 		return []string{"rt1_bizType", "rt2_retCode", "rt3_retMsg", "rt4_customerNumber", "rt5_accountStatus", "rt6_balance", "rt7_frozenBalance", "rt8_d0Balance", "rt9_T1Balance", "rt10_currency", "rt11_createDate", "rt12_desc"}
+	case "AppPayQuery":
+		return []string{"rt1_bizType", "rt2_retCode", "rt4_customerNumber", "rt5_orderId", "rt6_serialNumber", "rt7_orderStatus", "rt8_orderAmount", "rt9_currency"}
 	default:
 		return []string{}
 	}

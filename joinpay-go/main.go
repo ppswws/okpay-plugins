@@ -344,11 +344,7 @@ func query(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, er
 	}
 	resp, _, err := queryOrder(ctx, cfg, order)
 	if err != nil {
-		queryResp := plugin.QueryStateResponse{
-			State:      -1,
-			APITradeNo: "",
-		}
-		return plugin.RespQuery(queryResp), nil
+		return nil, err
 	}
 	state := 0
 	switch resp["ra_Status"] {
@@ -422,7 +418,7 @@ func refund(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, e
 	resp, stats, err := refundOrder(ctx, req, cfg, order, refund)
 	if err != nil {
 		refundResp := plugin.RefundStateResponse{
-			State:       0,
+			State:       -1,
 			APIRefundNo: "",
 			ReqBody:     stats.ReqBody,
 			RespBody:    stats.RespBody,
@@ -571,7 +567,7 @@ func transfer(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any,
 	resp, stats, err := transferOrder(ctx, cfg, params)
 	if err != nil {
 		transferResp := plugin.TransferStateResponse{
-			State:      0,
+			State:      -1,
 			APITradeNo: "",
 			ReqBody:    stats.ReqBody,
 			RespBody:   stats.RespBody,

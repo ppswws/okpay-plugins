@@ -17,6 +17,7 @@ func main() {
 		"alipay":         alipay,
 		"wxpay":          wxpay,
 		"bank":           bank,
+		"query":          query,
 		"notify":         notify,
 		"refund":         refund,
 		"balance":        balance,
@@ -291,6 +292,30 @@ func bank(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, err
 		return result, nil
 	}
 	return plugin.RespError("当前通道未开启银联支付方式"), nil
+}
+
+func query(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
+	order := plugin.Order(req)
+	cfg, err := readConfig(req)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := queryOrder(ctx, cfg, order)
+	if err != nil {
+		return nil, err
+	}
+	state := 0
+	switch strings.ToUpper(resp["rt7_orderStatus"]) {
+	case "SUCCESS":
+		state = 1
+	case "FAIL", "CLOSE", "CANCEL":
+		state = -1
+	}
+	queryResp := plugin.QueryStateResponse{
+		State:      state,
+		APITradeNo: firstNotEmpty(resp["rt6_serialNumber"], resp["rt18_outTransactionOrderId"]),
+	}
+	return plugin.RespQuery(queryResp), nil
 }
 
 func notify(ctx context.Context, req *plugin.InvokeRequestV2) (map[string]any, error) {
