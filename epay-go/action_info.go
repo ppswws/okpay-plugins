@@ -11,7 +11,7 @@ func info(ctx context.Context) (*proto.PluginInfoResponse, error) {
 	return plugin.BuildInfoResponse(plugin.Manifest{
 		ID:       "epay",
 		Name:     "彩虹易支付",
-		Link:     "https://www.epay.com",
+		Link:     "https://pay.cccyun.cc/",
 		Paytypes: []string{"alipay", "wxpay", "bank"},
 		Inputs: map[string]plugin.InputSpec{
 			"appurl": {

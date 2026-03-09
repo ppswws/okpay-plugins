@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"okpay/payment/plugin"
 	"okpay/payment/plugin/proto"
@@ -57,22 +58,22 @@ func parseEpayNotify(req *proto.InvokeContext) (*epayNotifyParams, error) {
 	if req == nil || req.GetRequest() == nil {
 		return nil, fmt.Errorf("request is nil")
 	}
-	q := req.GetRequest().GetQuery()
-	if len(q) == 0 {
+	values, err := url.ParseQuery(req.GetRequest().GetQuery())
+	if err != nil || len(values) == 0 {
 		return nil, fmt.Errorf("query is empty")
 	}
 	out := &epayNotifyParams{
-		PID:         q["pid"],
-		TradeNo:     q["trade_no"],
-		OutTradeNo:  q["out_trade_no"],
-		Type:        q["type"],
-		Name:        q["name"],
-		Money:       q["money"],
-		TradeStatus: q["trade_status"],
-		Param:       q["param"],
-		Sign:        q["sign"],
-		SignType:    q["sign_type"],
-		Buyer:       q["buyer"],
+		PID:         values.Get("pid"),
+		TradeNo:     values.Get("trade_no"),
+		OutTradeNo:  values.Get("out_trade_no"),
+		Type:        values.Get("type"),
+		Name:        values.Get("name"),
+		Money:       values.Get("money"),
+		TradeStatus: values.Get("trade_status"),
+		Param:       values.Get("param"),
+		Sign:        values.Get("sign"),
+		SignType:    values.Get("sign_type"),
+		Buyer:       values.Get("buyer"),
 	}
 	if out.PID == "" || out.TradeNo == "" || out.OutTradeNo == "" || out.Type == "" || out.Name == "" ||
 		out.Money == "" || out.TradeStatus == "" || out.Sign == "" || out.SignType == "" {
