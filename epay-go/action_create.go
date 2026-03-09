@@ -159,9 +159,9 @@ func pageToMap(page *proto.PageResponse) map[string]any {
 		return map[string]any{"type": "error", "msg": "empty page response"}
 	}
 	out := map[string]any{
-		"type":   page.GetType(),
-		"page":   page.GetPage(),
-		"url":    page.GetUrl(),
+		"type": page.GetType(),
+		"page": page.GetPage(),
+		"url":  page.GetUrl(),
 	}
 	if len(page.GetDataJsonRaw()) > 0 {
 		var data any

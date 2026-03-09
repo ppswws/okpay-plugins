@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -99,7 +101,15 @@ func wxpay(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, 
 		if cfg.MiniAppSecret != "" {
 			code := queryParam(req, "code")
 			if code == "" {
-				return plugin.RespJSON(map[string]any{"code": 1, "message": "缺少code，无法发起原生小程序支付"}), nil
+				payURL := buildPayURL(req, order, nil)
+				values := url.Values{}
+				values.Set("real", strconv.FormatInt(order.GetReal(), 10))
+				values.Set("url", payURL)
+				scheme, err := wechatpay.GenerateScheme(ctx, cfg.MiniAppID, cfg.MiniAppSecret, "page/pay", values.Encode())
+				if err != nil {
+					return plugin.RespError(err.Error()), nil
+				}
+				return plugin.RespPageURL("wxpay_h5", scheme), nil
 			}
 			openID, err := wechatpay.AppGetOpenid(ctx, wechatpay.MiniAuthParams{
 				AppID:     cfg.MiniAppID,
