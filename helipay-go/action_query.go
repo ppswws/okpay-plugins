@@ -30,7 +30,7 @@ func query(ctx context.Context, req *proto.InvokeContext) (*proto.QueryResponse,
 	case "FAIL", "CLOSE", "CANCEL":
 		state = -1
 	}
-	return plugin.RespQuery(state, firstNotEmpty(resp["rt6_serialNumber"], resp["rt18_outTransactionOrderId"])), nil
+	return plugin.RespQuery(state, resp["rt6_serialNumber"]), nil
 }
 
 func queryOrder(ctx context.Context, cfg *helipayConfig, order *proto.OrderSnapshot) (map[string]string, error) {

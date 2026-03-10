@@ -31,14 +31,15 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferRes
 		"receiverAccountNoEnc":  transfer.GetCardNo(),
 		"receiverNameEnc":       transfer.GetCardName(),
 		"receiverAccountType":   "201",
-		"receiverBankChannelNo": cfg.ReceiverBankChannelNo,
 		"paidAmount":            toYuan(transfer.GetAmount()),
 		"currency":              "201",
 		"isChecked":             "202",
 		"paidDesc":              "工资发放",
 		"paidUse":               "201",
 		"callbackUrl":           notifyDomain + "/pay/transfernotify/" + transfer.GetTradeNo(),
-		"firstProductCode":      "",
+	}
+	if receiverBankChannelNo := strings.TrimSpace(transfer.GetBranchName()); receiverBankChannelNo != "" {
+		params["receiverBankChannelNo"] = receiverBankChannelNo
 	}
 	if cfg.AppMchID != "" {
 		params["tradeMerchantNo"] = cfg.AppMchID

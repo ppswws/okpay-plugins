@@ -83,7 +83,7 @@ func refundNotify(ctx context.Context, req *proto.InvokeContext) (*proto.PageRes
 		if err := plugin.CompleteRefund(ctx, plugin.CompleteRefundInput{
 			RefundNo:    refund.GetRefundNo(),
 			Status:      completeStatus,
-			APIRefundNo: firstNotEmpty(n.Rt4SystemSerial, n.Rt10RefundChannelOrderNum),
+			APIRefundNo: n.Rt4SystemSerial,
 			RespBody:    respBody,
 		}); err != nil {
 			return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("fail")), nil

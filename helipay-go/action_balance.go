@@ -38,7 +38,7 @@ func queryBalance(ctx context.Context, cfg *helipayConfig) (string, plugin.Reque
 		}
 		return "", stats, errors.New(msg)
 	}
-	balance := firstNotEmpty(resp["rt15_amountToBeSettled"], resp["rt6_balance"])
+	balance := resp["rt15_amountToBeSettled"]
 	if balance == "" {
 		return "", stats, errors.New("余额为空")
 	}

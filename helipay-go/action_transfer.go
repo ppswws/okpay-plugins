@@ -18,6 +18,10 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferRes
 	if err != nil {
 		return nil, err
 	}
+	bankCode, err := inferHelipayBankCode(transfer.GetBankName())
+	if err != nil {
+		return plugin.RespTransfer(-1, "", "", "", err.Error(), 0), nil
+	}
 	globalCfg := readGlobalConfig(req)
 	notifyDomain := strings.TrimRight(globalCfg.NotifyDomain, "/")
 	params := map[string]string{
@@ -25,18 +29,16 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferRes
 		"P2_orderId":         transfer.GetTradeNo(),
 		"P3_customerNumber":  cfg.AppID,
 		"P4_amount":          toYuan(transfer.GetAmount()),
-		"P5_bankCode":        transfer.GetBankName(),
+		"P5_bankCode":        bankCode,
 		"P6_bankAccountNo":   transfer.GetCardNo(),
 		"P7_bankAccountName": transfer.GetCardName(),
 		"P8_biz":             "B2C",
-		"P9_bankUnionCode":   transfer.GetBranchName(),
 		"P10_feeType":        "PAYER",
 		"P11_urgency":        "true",
-		"P12_summary":        "",
 		"notifyUrl":          notifyDomain + "/pay/transfernotify/" + transfer.GetTradeNo(),
-		"payerName":          "",
-		"payerShowName":      "",
-		"payerAccountNo":     "",
+	}
+	if bankUnionCode := strings.TrimSpace(transfer.GetBranchName()); bankUnionCode != "" {
+		params["P9_bankUnionCode"] = bankUnionCode
 	}
 	resp, stats, err := transferOrder(ctx, cfg, params)
 	if err != nil {

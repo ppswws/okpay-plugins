@@ -30,15 +30,15 @@ func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse,
 		result = "order_mismatch"
 	} else if cfg, err := readConfig(req); err != nil {
 		result = "config_error"
-	} else if notifyParams, err := parseEpayNotify(req); err != nil {
+	} else if n, err := parseEpayNotify(req); err != nil {
 		result = "invalid_notify_params"
-	} else if !verifyMD5(notifyParams.toSignMap(), cfg.AppKey) {
+	} else if !verifyMD5(n.toSignMap(), cfg.AppKey) {
 		result = "sign_error"
-	} else if notifyParams.TradeStatus != "TRADE_SUCCESS" {
+	} else if n.TradeStatus != "TRADE_SUCCESS" {
 		result = "trade_status_invalid"
-	} else if notifyParams.OutTradeNo != order.GetTradeNo() {
+	} else if n.OutTradeNo != order.GetTradeNo() {
 		result = "order_mismatch"
-	} else if order.GetReal() != toCents(notifyParams.Money) {
+	} else if order.GetReal() != toCents(n.Money) {
 		result = "amount_mismatch"
 	} else if queryResp, err := epayQuery(ctx, cfg, order); err != nil {
 		result = "query_error"
@@ -46,8 +46,8 @@ func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse,
 		result = "query_unpaid"
 	} else if err := plugin.CompleteOrder(ctx, plugin.CompleteOrderInput{
 		TradeNo:    order.GetTradeNo(),
-		APITradeNo: queryResp.APITradeNo,
-		Buyer:      notifyParams.Buyer,
+		APITradeNo: n.TradeNo,
+		Buyer:      n.Buyer,
 	}); err != nil {
 		result = "complete_error"
 	}
