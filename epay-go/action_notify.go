@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net/url"
 
-	"okpay/payment/plugin"
-	"okpay/payment/plugin/proto"
+	"github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
 type epayNotifyParams struct {

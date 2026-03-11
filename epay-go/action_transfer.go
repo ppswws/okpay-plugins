@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"okpay/payment/plugin/proto"
+	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
 func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferResponse, error) {

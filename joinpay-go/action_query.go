@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"okpay/payment/plugin"
-	"okpay/payment/plugin/proto"
+	"github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
 func query(ctx context.Context, req *proto.InvokeContext) (*proto.QueryResponse, error) {

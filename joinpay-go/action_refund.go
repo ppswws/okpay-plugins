@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"okpay/payment/plugin"
-	"okpay/payment/plugin/proto"
+	"github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
 func refund(ctx context.Context, req *proto.InvokeContext) (*proto.RefundResponse, error) {

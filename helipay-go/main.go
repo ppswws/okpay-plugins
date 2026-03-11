@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	"okpay/payment/plugin"
-	"okpay/payment/plugin/proto"
+	"github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
 type helipayService struct{}

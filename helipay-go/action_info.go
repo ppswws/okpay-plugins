@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 
-	"okpay/payment/plugin"
-	"okpay/payment/plugin/proto"
+	"github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
 func info(ctx context.Context) (*proto.PluginInfoResponse, error) {

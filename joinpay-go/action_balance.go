@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"okpay/payment/plugin"
-	"okpay/payment/plugin/proto"
+	"github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
 func balance(ctx context.Context, req *proto.InvokeContext) (*proto.BalanceResponse, error) {

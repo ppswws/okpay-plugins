@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"okpay/payment/plugin/proto"
+	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
 func refund(ctx context.Context, req *proto.InvokeContext) (*proto.RefundResponse, error) {

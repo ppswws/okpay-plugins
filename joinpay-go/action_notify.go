@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"okpay/payment/plugin"
-	"okpay/payment/plugin/proto"
+	"github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
 func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {

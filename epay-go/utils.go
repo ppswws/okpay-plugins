@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"okpay/payment/plugin"
-	"okpay/payment/plugin/proto"
+	"github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
 var httpClient = plugin.NewHTTPClient(plugin.HTTPClientConfig{})
