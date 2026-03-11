@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/go-pay/gopay"
 	"github.com/ppswws/okpay-plugin-sdk"
@@ -24,12 +23,12 @@ func query(ctx context.Context, req *proto.InvokeContext) (*proto.QueryResponse,
 		return nil, err
 	}
 	bm := make(gopay.BodyMap)
-	if strings.TrimSpace(order.GetApiTradeNo()) != "" {
-		bm.Set("trade_no", strings.TrimSpace(order.GetApiTradeNo()))
+	if order.GetApiTradeNo() != "" {
+		bm.Set("trade_no", order.GetApiTradeNo())
 	} else {
 		bm.Set("out_trade_no", order.GetTradeNo())
 	}
-	applyModeBizParams(req, bm, "")
+	applyModeBizParams(cfg, bm, "")
 	resp, err := client.TradeQuery(ctx, bm)
 	if err != nil {
 		return nil, err
@@ -38,7 +37,7 @@ func query(ctx context.Context, req *proto.InvokeContext) (*proto.QueryResponse,
 		return plugin.RespQuery(0, ""), nil
 	}
 	state := 0
-	switch strings.ToUpper(strings.TrimSpace(resp.Response.TradeStatus)) {
+	switch resp.Response.TradeStatus {
 	case "TRADE_SUCCESS", "TRADE_FINISHED":
 		state = 1
 	case "TRADE_CLOSED":
@@ -46,5 +45,5 @@ func query(ctx context.Context, req *proto.InvokeContext) (*proto.QueryResponse,
 	default:
 		state = 0
 	}
-	return plugin.RespQuery(state, strings.TrimSpace(resp.Response.TradeNo)), nil
+	return plugin.RespQuery(state, resp.Response.TradeNo), nil
 }

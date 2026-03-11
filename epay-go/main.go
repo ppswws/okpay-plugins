@@ -44,9 +44,6 @@ func (s *epayService) InvokeFunc(ctx context.Context, req *proto.InvokeFuncReque
 	invoke := req.GetCtx()
 	action := strings.TrimSpace(invoke.GetFuncName())
 	if action == "" {
-		action = strings.TrimSpace(invoke.GetAction())
-	}
-	if action == "" {
 		return nil, fmt.Errorf("func_name 不能为空")
 	}
 	var (

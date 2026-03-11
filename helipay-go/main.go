@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/ppswws/okpay-plugin-sdk"
 	"github.com/ppswws/okpay-plugin-sdk/proto"
@@ -41,10 +42,7 @@ func (s *helipayService) Balance(ctx context.Context, req *proto.BalanceRequest)
 
 func (s *helipayService) InvokeFunc(ctx context.Context, req *proto.InvokeFuncRequest) (*proto.InvokeFuncResponse, error) {
 	invoke := req.GetCtx()
-	action := invoke.GetFuncName()
-	if action == "" {
-		action = invoke.GetAction()
-	}
+	action := strings.TrimSpace(invoke.GetFuncName())
 	if action == "" {
 		return nil, fmt.Errorf("func_name 不能为空")
 	}

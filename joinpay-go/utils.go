@@ -32,38 +32,19 @@ func readGlobalConfig(req *proto.InvokeContext) globalConfig {
 	}
 }
 
-func readStringSlice(v any) []string {
-	if v == nil {
+func splitCSV(v string) []string {
+	if strings.TrimSpace(v) == "" {
 		return nil
 	}
-	switch vv := v.(type) {
-	case []string:
-		out := make([]string, 0, len(vv))
-		for _, s := range vv {
-			s = strings.TrimSpace(s)
-			if s != "" {
-				out = append(out, s)
-			}
+	raw := strings.Split(v, ",")
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		s := strings.TrimSpace(item)
+		if s != "" {
+			out = append(out, s)
 		}
-		return out
-	case []any:
-		out := make([]string, 0, len(vv))
-		for _, item := range vv {
-			s := strings.TrimSpace(fmt.Sprint(item))
-			if s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	case string:
-		s := strings.TrimSpace(vv)
-		if s == "" {
-			return nil
-		}
-		return []string{s}
-	default:
-		return nil
 	}
+	return out
 }
 
 func modeSet(values []string) map[string]struct{} {
@@ -110,7 +91,16 @@ func pageToMap(page *proto.PageResponse) map[string]any {
 	if page == nil {
 		return map[string]any{"type": "error", "msg": "empty page response"}
 	}
-	out := map[string]any{"type": page.GetType(), "page": page.GetPage(), "url": page.GetUrl(), "msg": page.GetMsg()}
+	out := map[string]any{"type": page.GetType()}
+	if page.GetPage() != "" {
+		out["page"] = page.GetPage()
+	}
+	if page.GetUrl() != "" {
+		out["url"] = page.GetUrl()
+	}
+	if page.GetMsg() != "" {
+		out["msg"] = page.GetMsg()
+	}
 	if len(page.GetDataJsonRaw()) > 0 {
 		var data any
 		if err := json.Unmarshal(page.GetDataJsonRaw(), &data); err == nil {
@@ -335,9 +325,6 @@ func buildDirectResponse(result map[string]string) (*proto.PageResponse, error) 
 	}
 	lower := strings.ToLower(payload)
 	if strings.Contains(lower, "<form") || strings.Contains(lower, "<html") {
-		if strings.HasPrefix(lower, "<form") {
-			payload = plugin.BuildSubmitHTML(payload)
-		}
 		return plugin.RespHTML(payload), nil
 	}
 	return plugin.RespJump(payload), nil
@@ -350,9 +337,6 @@ func buildH5Response(result map[string]string, page string) (*proto.PageResponse
 	}
 	lower := strings.ToLower(payload)
 	if strings.Contains(lower, "<form") || strings.Contains(lower, "<html") {
-		if strings.HasPrefix(lower, "<form") {
-			payload = plugin.BuildSubmitHTML(payload)
-		}
 		return plugin.RespHTML(payload), nil
 	}
 	return plugin.RespPageURL(page, payload), nil

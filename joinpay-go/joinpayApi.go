@@ -67,7 +67,7 @@ func readConfig(req *proto.InvokeContext) (*joinpayConfig, error) {
 		AppID                 string `json:"appid"`
 		AppKey                string `json:"appkey"`
 		AppMchID              string `json:"appmchid"`
-		Biztype               any    `json:"biztype"`
+		Biztype               string `json:"biztype"`
 		ReceiverBankChannelNo string `json:"receiverBankChannelNo"`
 		MP                    struct {
 			AppID     string `json:"appid"`
@@ -92,7 +92,7 @@ func readConfig(req *proto.InvokeContext) (*joinpayConfig, error) {
 		MPAppSecret:           raw.MP.AppSecret,
 		MiniAppID:             raw.Mini.AppID,
 		MiniAppSecret:         raw.Mini.AppSecret,
-		Biztypes:              readStringSlice(raw.Biztype),
+		Biztypes:              splitCSV(raw.Biztype),
 		ReceiverBankChannelNo: raw.ReceiverBankChannelNo,
 	}, nil
 }

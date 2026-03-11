@@ -47,7 +47,7 @@ func readConfig(req *proto.InvokeContext) (*helipayConfig, error) {
 		AppKey  string `json:"appkey"`
 		SM4Key  string `json:"sm4_key"`
 		AppMch  string `json:"appmchid"`
-		Biztype any    `json:"biztype"`
+		Biztype string `json:"biztype"`
 		MP      struct {
 			AppID     string `json:"appid"`
 			AppSecret string `json:"appsecret"`
@@ -72,7 +72,7 @@ func readConfig(req *proto.InvokeContext) (*helipayConfig, error) {
 		MPAppSecret:   raw.MP.AppSecret,
 		MiniAppID:     raw.Mini.AppID,
 		MiniAppSecret: raw.Mini.AppSecret,
-		Biztypes:      readStringSlice(raw.Biztype),
+		Biztypes:      splitCSV(raw.Biztype),
 	}, nil
 }
 

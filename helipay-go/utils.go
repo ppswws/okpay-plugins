@@ -31,38 +31,19 @@ func readGlobalConfig(req *proto.InvokeContext) globalConfig {
 	}
 }
 
-func readStringSlice(v any) []string {
-	if v == nil {
+func splitCSV(v string) []string {
+	if strings.TrimSpace(v) == "" {
 		return nil
 	}
-	switch vv := v.(type) {
-	case []string:
-		out := make([]string, 0, len(vv))
-		for _, s := range vv {
-			s = strings.TrimSpace(s)
-			if s != "" {
-				out = append(out, s)
-			}
+	raw := strings.Split(v, ",")
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		s := strings.TrimSpace(item)
+		if s != "" {
+			out = append(out, s)
 		}
-		return out
-	case []any:
-		out := make([]string, 0, len(vv))
-		for _, item := range vv {
-			s := strings.TrimSpace(fmt.Sprint(item))
-			if s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	case string:
-		s := strings.TrimSpace(vv)
-		if s == "" {
-			return nil
-		}
-		return []string{s}
-	default:
-		return nil
 	}
+	return out
 }
 
 func modeSet(values []string) map[string]struct{} {

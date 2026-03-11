@@ -58,11 +58,5 @@ func refundOrder(ctx context.Context, req *proto.InvokeContext, cfg *helipayConf
 		return refundResult{ReqBody: stats.ReqBody, RespBody: stats.RespBody, ReqMs: stats.ReqMs}, errors.New(msg)
 	}
 	apiRefundNo := resp["rt7_serialNumber"]
-	if apiRefundNo == "" {
-		apiRefundNo = resp["rt6_refundOrderNum"]
-	}
-	if apiRefundNo == "" {
-		apiRefundNo = refundOrderID
-	}
 	return refundResult{APIRefundNo: apiRefundNo, RetCode: retCode, ReqBody: stats.ReqBody, RespBody: stats.RespBody, ReqMs: stats.ReqMs}, nil
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/go-pay/gopay"
@@ -11,16 +12,25 @@ import (
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
+type alipayNotifyParams struct {
+	OutTradeNo  string
+	TradeNo     string
+	TotalAmount string
+	TradeStatus string
+	BuyerID     string
+	BuyerOpenID string
+}
+
 func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
-	payload := notifyBodyMap(req)
-	if len(payload) == 0 {
+	notifyParams, payload, err := parseAlipayNotify(req)
+	if err != nil || notifyParams == nil || len(payload) == 0 {
 		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
 	}
 	cfg, err := readConfig(req)
 	if err != nil {
 		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
 	}
-	ok, err := alipay.VerifySign(strings.TrimSpace(cfg.AppKey), payload)
+	ok, err := alipay.VerifySign(cfg.AppKey, payload)
 	if err != nil || !ok {
 		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
 	}
@@ -28,23 +38,23 @@ func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse,
 	if order == nil || order.GetTradeNo() == "" {
 		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
 	}
-	if strings.TrimSpace(payload.GetString("out_trade_no")) != order.GetTradeNo() {
+	if notifyParams.OutTradeNo != order.GetTradeNo() {
 		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
 	}
-	if toCents(payload.GetString("total_amount")) != order.GetReal() {
+	if toCents(notifyParams.TotalAmount) != order.GetReal() {
 		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
 	}
-	status := strings.ToUpper(strings.TrimSpace(payload.GetString("trade_status")))
+	status := strings.ToUpper(notifyParams.TradeStatus)
 	if status != "TRADE_SUCCESS" && status != "TRADE_FINISHED" {
 		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("success")), nil
 	}
-	buyer := strings.TrimSpace(payload.GetString("buyer_id"))
+	buyer := notifyParams.BuyerID
 	if buyer == "" {
-		buyer = strings.TrimSpace(payload.GetString("buyer_open_id"))
+		buyer = notifyParams.BuyerOpenID
 	}
 	if err := plugin.CompleteOrder(ctx, plugin.CompleteOrderInput{
 		TradeNo:    order.GetTradeNo(),
-		APITradeNo: strings.TrimSpace(payload.GetString("trade_no")),
+		APITradeNo: notifyParams.TradeNo,
 		Buyer:      buyer,
 	}); err != nil {
 		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
@@ -52,49 +62,46 @@ func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse,
 	return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("success")), nil
 }
 
-func pageReturn(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
-	cfg, err := readConfig(req)
-	if err != nil {
-		return plugin.RespError(err.Error()), nil
+func parseAlipayNotify(req *proto.InvokeContext) (*alipayNotifyParams, gopay.BodyMap, error) {
+	if req == nil || req.GetRequest() == nil {
+		return nil, nil, fmt.Errorf("request is nil")
 	}
-	payload := notifyBodyMap(req)
-	if len(payload) == 0 {
-		return plugin.RespError("回跳参数为空"), nil
+	values := url.Values{}
+	appendQueryValues(values, req.GetRequest().GetQuery())
+	appendQueryValues(values, string(req.GetRequest().GetBody()))
+	if len(values) == 0 {
+		return nil, nil, fmt.Errorf("notify payload is empty")
 	}
-	ok, err := alipay.VerifySign(strings.TrimSpace(cfg.AppKey), payload)
-	if err != nil || !ok {
-		return plugin.RespError("支付宝返回验签失败"), nil
+	payload := make(gopay.BodyMap, len(values))
+	for k := range values {
+		payload.Set(k, values.Get(k))
 	}
-	order := req.GetOrder()
-	if order == nil {
-		return plugin.RespError("订单不存在"), nil
+	out := &alipayNotifyParams{
+		OutTradeNo:  values.Get("out_trade_no"),
+		TradeNo:     values.Get("trade_no"),
+		TotalAmount: values.Get("total_amount"),
+		TradeStatus: values.Get("trade_status"),
+		BuyerID:     values.Get("buyer_id"),
+		BuyerOpenID: values.Get("buyer_open_id"),
 	}
-	if strings.TrimSpace(payload.GetString("out_trade_no")) != order.GetTradeNo() {
-		return plugin.RespError("订单号校验失败"), nil
+	if out.OutTradeNo == "" || out.TotalAmount == "" || out.TradeStatus == "" || values.Get("sign") == "" {
+		return nil, nil, fmt.Errorf("missing required notify fields")
 	}
-	if toCents(payload.GetString("total_amount")) != order.GetReal() {
-		return plugin.RespError("订单金额校验失败"), nil
-	}
-	site := strings.TrimRight(req.GetConfig().GetSiteDomain(), "/")
-	if site == "" {
-		return plugin.RespPage("ok"), nil
-	}
-	return plugin.RespJump(fmt.Sprintf("%s/pay/ok/%s", site, order.GetTradeNo())), nil
+	return out, payload, nil
 }
 
-func notifyBodyMap(req *proto.InvokeContext) gopay.BodyMap {
-	out := make(gopay.BodyMap)
-	if req == nil || req.GetRequest() == nil {
-		return out
+func appendQueryValues(dst url.Values, raw string) {
+	if raw == "" {
+		return
 	}
-	for k, v := range parseQueryString(req.GetRequest().GetQuery()) {
-		out.Set(k, v)
+	parsed, err := url.ParseQuery(raw)
+	if err != nil {
+		return
 	}
-	body := strings.TrimSpace(string(req.GetRequest().GetBody()))
-	if body != "" {
-		for k, v := range parseQueryString(body) {
-			out.Set(k, v)
+	for k, vals := range parsed {
+		if len(vals) == 0 {
+			continue
 		}
+		dst.Set(k, vals[len(vals)-1])
 	}
-	return out
 }

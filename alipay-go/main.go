@@ -44,9 +44,6 @@ func (s *alipayService) InvokeFunc(ctx context.Context, req *proto.InvokeFuncReq
 	invoke := req.GetCtx()
 	action := strings.TrimSpace(invoke.GetFuncName())
 	if action == "" {
-		action = strings.TrimSpace(invoke.GetAction())
-	}
-	if action == "" {
 		return nil, fmt.Errorf("func_name 不能为空")
 	}
 	var (
@@ -58,8 +55,6 @@ func (s *alipayService) InvokeFunc(ctx context.Context, req *proto.InvokeFuncReq
 		page, err = alipayHandler(ctx, invoke)
 	case "notify":
 		page, err = notify(ctx, invoke)
-	case "return":
-		page, err = pageReturn(ctx, invoke)
 	case "ok":
 		page = plugin.RespPage("ok")
 	default:

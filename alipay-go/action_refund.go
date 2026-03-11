@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
+	"time"
 
 	"github.com/go-pay/gopay"
 	"github.com/ppswws/okpay-plugin-sdk"
@@ -25,8 +25,8 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.RefundRespons
 		return nil, err
 	}
 	bm := make(gopay.BodyMap)
-	if order != nil && strings.TrimSpace(order.GetApiTradeNo()) != "" {
-		bm.Set("trade_no", strings.TrimSpace(order.GetApiTradeNo()))
+	if order != nil && order.GetApiTradeNo() != "" {
+		bm.Set("trade_no", order.GetApiTradeNo())
 	} else if refund.GetTradeNo() != "" {
 		bm.Set("out_trade_no", refund.GetTradeNo())
 	} else {
@@ -34,21 +34,41 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.RefundRespons
 	}
 	bm.Set("refund_amount", toYuan(refund.GetAmount()))
 	bm.Set("out_request_no", refund.GetRefundNo())
-	applyModeBizParams(req, bm, "")
+	applyModeBizParams(cfg, bm, "")
+	reqBody := bm.JsonBody()
+	start := time.Now()
 	resp, err := client.TradeRefund(ctx, bm)
+	reqMs := int32(time.Since(start).Milliseconds())
+	respBody := marshalJSON(resp)
 	if err != nil {
-		return plugin.RespRefund(-1, "", bm.JsonBody(), "", err.Error(), 0), nil
+		if respBody == "" {
+			respBody = err.Error()
+		}
+		return plugin.RespRefund(-1, "", reqBody, respBody, err.Error(), reqMs), nil
 	}
 	if resp == nil || resp.Response == nil {
-		return plugin.RespRefund(0, "", bm.JsonBody(), "", "", 0), nil
+		if respBody == "" {
+			respBody = "{}"
+		}
+		return plugin.RespRefund(0, "", reqBody, respBody, "", reqMs), nil
 	}
-	apiRefundNo := strings.TrimSpace(resp.Response.TradeNo)
+	apiRefundNo := resp.Response.TradeNo
 	if apiRefundNo == "" {
 		apiRefundNo = refund.GetRefundNo()
 	}
-	state := 0
-	if strings.EqualFold(strings.TrimSpace(resp.Response.FundChange), "Y") {
-		state = 1
+	state := -1
+	if resp.Response.Code == "10000" {
+		state = 0
+		if resp.Response.FundChange == "Y" {
+			state = 1
+		}
 	}
-	return plugin.RespRefund(state, apiRefundNo, bm.JsonBody(), "", strings.TrimSpace(resp.Response.Msg), 0), nil
+	result := resp.Response.SubMsg
+	if result == "" {
+		result = resp.Response.Msg
+	}
+	if state == -1 && resp.Response.SubCode != "" {
+		result = resp.Response.SubCode + ":" + result
+	}
+	return plugin.RespRefund(state, apiRefundNo, reqBody, respBody, result, reqMs), nil
 }

@@ -7,11 +7,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-pay/gopay"
 	"github.com/go-pay/gopay/alipay"
-	"github.com/ppswws/okpay-plugin-sdk"
+	plugin "github.com/ppswws/okpay-plugin-sdk"
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
@@ -32,20 +31,48 @@ type aliConfig struct {
 	IsProd    bool
 }
 
+type aliChannelConfig struct {
+	AppID     string `json:"appid"`
+	AppKey    string `json:"appkey"`
+	AppSecret string `json:"appsecret"`
+	AppMchID  string `json:"appmchid"`
+	Biztype   string `json:"biztype"`
+	IsProd    string `json:"is_prod"`
+	Gateway   string `json:"gateway"`
+}
+
+type globalConfig struct {
+	SiteDomain   string
+	NotifyDomain string
+	GoodsName    string
+}
+
+func readGlobalConfig(req *proto.InvokeContext) globalConfig {
+	if req == nil || req.GetConfig() == nil {
+		return globalConfig{}
+	}
+	cfg := req.GetConfig()
+	return globalConfig{
+		SiteDomain:   cfg.GetSiteDomain(),
+		NotifyDomain: cfg.GetNotifyDomain(),
+		GoodsName:    cfg.GetGoodsName(),
+	}
+}
+
 func readConfig(req *proto.InvokeContext) (*aliConfig, error) {
 	if req == nil || req.GetChannel() == nil || len(req.GetChannel().GetConfigJsonRaw()) == 0 {
 		return nil, fmt.Errorf("通道配置不完整")
 	}
-	raw := map[string]any{}
+	raw := aliChannelConfig{}
 	if err := json.Unmarshal(req.GetChannel().GetConfigJsonRaw(), &raw); err != nil {
 		return nil, fmt.Errorf("通道配置解析失败: %w", err)
 	}
 	cfg := &aliConfig{
-		AppID:     strings.TrimSpace(toString(raw["appid"])),
-		AppKey:    strings.TrimSpace(toString(raw["appkey"])),
-		AppSecret: strings.TrimSpace(toString(raw["appsecret"])),
-		AppMchID:  strings.TrimSpace(toString(raw["appmchid"])),
-		Biztypes:  readStringSlice(raw["biztype_alipay"]),
+		AppID:     raw.AppID,
+		AppKey:    raw.AppKey,
+		AppSecret: raw.AppSecret,
+		AppMchID:  raw.AppMchID,
+		Biztypes:  splitCSV(raw.Biztype),
 		IsProd:    true,
 	}
 	if cfg.AppID == "" || cfg.AppSecret == "" {
@@ -57,13 +84,12 @@ func readConfig(req *proto.InvokeContext) (*aliConfig, error) {
 	if mode == modeDirect && cfg.AppMchID == "" {
 		return nil, fmt.Errorf("子商户SMID不能为空")
 	}
-	if len(cfg.Biztypes) == 0 {
-		cfg.Biztypes = []string{"1", "2", "3"}
-	}
-	if v := strings.ToLower(strings.TrimSpace(toString(raw["is_prod"]))); v != "" {
+	cfg.AppSecret = normalizeKeyBase64(cfg.AppSecret)
+	cfg.AppKey = normalizeKeyBase64(cfg.AppKey)
+	if v := strings.ToLower(raw.IsProd); v != "" {
 		cfg.IsProd = v != "0" && v != "false" && v != "no"
 	}
-	if gw := strings.ToLower(strings.TrimSpace(toString(raw["gateway"]))); strings.Contains(gw, "sandbox") {
+	if gw := strings.ToLower(raw.Gateway); strings.Contains(gw, "sandbox") {
 		cfg.IsProd = false
 	}
 	return cfg, nil
@@ -78,54 +104,39 @@ func newAliClient(cfg *aliConfig, notifyURL, returnURL string) (*alipay.Client, 
 		return nil, err
 	}
 	client.SetCharset(alipay.UTF8).SetSignType(alipay.RSA2)
-	if strings.TrimSpace(notifyURL) != "" {
-		client.SetNotifyUrl(strings.TrimSpace(notifyURL))
+	if notifyURL != "" {
+		client.SetNotifyUrl(notifyURL)
 	}
-	if strings.TrimSpace(returnURL) != "" {
-		client.SetReturnUrl(strings.TrimSpace(returnURL))
+	if returnURL != "" {
+		client.SetReturnUrl(returnURL)
 	}
-	if strings.TrimSpace(cfg.AppKey) != "" {
-		client.AutoVerifySign([]byte(strings.TrimSpace(cfg.AppKey)))
-	}
+	// Keep key format consistent with channel config (raw base64):
+	// do not enable AutoVerifySign here, because it requires PEM/cert content.
 	if mode == modeService {
 		client.SetAppAuthToken(cfg.AppMchID)
 	}
 	return client, nil
 }
 
-func allowModes(values []string) map[string]struct{} {
-	out := make(map[string]struct{}, len(values))
-	for _, v := range values {
-		if s := strings.TrimSpace(v); s != "" {
-			out[s] = struct{}{}
-		}
-	}
-	return out
-}
-
-func allowMode(set map[string]struct{}, mode string) bool {
-	_, ok := set[strings.TrimSpace(mode)]
-	return ok
-}
-
-func applyModeBizParams(req *proto.InvokeContext, bm gopay.BodyMap, totalAmount string) {
+func applyModeBizParams(cfg *aliConfig, bm gopay.BodyMap, totalAmount string) {
 	if bm == nil {
 		return
 	}
-	channel := req.GetChannel()
+	if cfg == nil {
+		return
+	}
 	if mode == modeStandard {
-		if channel != nil && strings.TrimSpace(queryChannelConfig(channel, "appmchid")) != "" {
-			bm.Set("seller_id", strings.TrimSpace(queryChannelConfig(channel, "appmchid")))
+		if cfg.AppMchID != "" {
+			bm.Set("seller_id", cfg.AppMchID)
 		}
 		return
 	}
 	if mode == modeDirect {
-		smid := strings.TrimSpace(queryChannelConfig(channel, "appmchid"))
-		if smid == "" {
+		if cfg.AppMchID == "" {
 			return
 		}
 		bm.SetBodyMap("sub_merchant", func(m gopay.BodyMap) {
-			m.Set("merchant_id", smid)
+			m.Set("merchant_id", cfg.AppMchID)
 		})
 		if totalAmount != "" {
 			bm.SetBodyMap("settle_info", func(m gopay.BodyMap) {
@@ -136,37 +147,40 @@ func applyModeBizParams(req *proto.InvokeContext, bm gopay.BodyMap, totalAmount 
 	}
 }
 
-func queryChannelConfig(channel *proto.ChannelSnapshot, key string) string {
-	if channel == nil || len(channel.GetConfigJsonRaw()) == 0 {
-		return ""
+func modeSet(values []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(values))
+	for _, v := range values {
+		if key := strings.TrimSpace(v); key != "" {
+			out[key] = struct{}{}
+		}
 	}
-	obj := map[string]any{}
-	if err := json.Unmarshal(channel.GetConfigJsonRaw(), &obj); err != nil {
-		return ""
-	}
-	return toString(obj[key])
+	return out
 }
 
-func orderSubject(req *proto.InvokeContext, order *proto.OrderSnapshot) string {
-	if order != nil && strings.TrimSpace(order.GetSubject()) != "" {
-		return limitLength(strings.TrimSpace(order.GetSubject()), 128)
+func allowMode(set map[string]struct{}, mode string) bool {
+	_, ok := set[strings.TrimSpace(mode)]
+	return ok
+}
+
+func splitCSV(v string) []string {
+	if strings.TrimSpace(v) == "" {
+		return nil
 	}
-	if req != nil && req.GetConfig() != nil && strings.TrimSpace(req.GetConfig().GetGoodsName()) != "" {
-		return limitLength(strings.TrimSpace(req.GetConfig().GetGoodsName()), 128)
+	raw := strings.Split(v, ",")
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		s := strings.TrimSpace(item)
+		if s != "" {
+			out = append(out, s)
+		}
 	}
-	if order != nil && strings.TrimSpace(order.GetTradeNo()) != "" {
-		return "订单 " + strings.TrimSpace(order.GetTradeNo())
-	}
-	return "订单支付"
+	return out
 }
 
 func buildOrderURLs(req *proto.InvokeContext, order *proto.OrderSnapshot) (string, string) {
-	notifyDomain := ""
-	siteDomain := ""
-	if req != nil && req.GetConfig() != nil {
-		notifyDomain = strings.TrimRight(strings.TrimSpace(req.GetConfig().GetNotifyDomain()), "/")
-		siteDomain = strings.TrimRight(strings.TrimSpace(req.GetConfig().GetSiteDomain()), "/")
-	}
+	globalCfg := readGlobalConfig(req)
+	notifyDomain := strings.TrimRight(globalCfg.NotifyDomain, "/")
+	siteDomain := strings.TrimRight(globalCfg.SiteDomain, "/")
 	if order == nil {
 		return "", ""
 	}
@@ -176,9 +190,27 @@ func buildOrderURLs(req *proto.InvokeContext, order *proto.OrderSnapshot) (strin
 	}
 	returnURL := ""
 	if siteDomain != "" {
-		returnURL = siteDomain + "/pay/return/" + order.GetTradeNo()
+		returnURL = siteDomain + "/pay/" + order.GetType() + "/" + order.GetTradeNo()
 	}
 	return notifyURL, returnURL
+}
+
+func buildRefundNotifyURL(req *proto.InvokeContext, refund *proto.RefundSnapshot) string {
+	globalCfg := readGlobalConfig(req)
+	notifyDomain := strings.TrimRight(globalCfg.NotifyDomain, "/")
+	if notifyDomain == "" || refund == nil || refund.GetRefundNo() == "" {
+		return ""
+	}
+	return notifyDomain + "/pay/refundnotify/" + refund.GetRefundNo()
+}
+
+func buildTransferNotifyURL(req *proto.InvokeContext, transfer *proto.TransferSnapshot) string {
+	globalCfg := readGlobalConfig(req)
+	notifyDomain := strings.TrimRight(globalCfg.NotifyDomain, "/")
+	if notifyDomain == "" || transfer == nil || transfer.GetTradeNo() == "" {
+		return ""
+	}
+	return notifyDomain + "/pay/transfernotify/" + transfer.GetTradeNo()
 }
 
 func toYuan(cents int64) string {
@@ -191,7 +223,7 @@ func toYuan(cents int64) string {
 }
 
 func toCents(raw string) int64 {
-	s := strings.TrimSpace(raw)
+	s := raw
 	if s == "" || strings.HasPrefix(s, "-") {
 		return 0
 	}
@@ -239,49 +271,19 @@ func isDigits(s string) bool {
 	return true
 }
 
-func readStringSlice(v any) []string {
-	if v == nil {
-		return nil
+func normalizeKeyBase64(raw string) string {
+	key := strings.TrimSpace(raw)
+	if key == "" {
+		return ""
 	}
-	switch vv := v.(type) {
-	case []string:
-		out := make([]string, 0, len(vv))
-		for _, s := range vv {
-			s = strings.TrimSpace(s)
-			if s != "" {
-				out = append(out, s)
-			}
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '\r', '\n', '\t', ' ':
+			return -1
+		default:
+			return r
 		}
-		return out
-	case []any:
-		out := make([]string, 0, len(vv))
-		for _, item := range vv {
-			s := strings.TrimSpace(fmt.Sprint(item))
-			if s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	case string:
-		s := strings.TrimSpace(vv)
-		if s == "" {
-			return nil
-		}
-		if strings.Contains(s, ",") {
-			parts := strings.Split(s, ",")
-			out := make([]string, 0, len(parts))
-			for _, p := range parts {
-				p = strings.TrimSpace(p)
-				if p != "" {
-					out = append(out, p)
-				}
-			}
-			return out
-		}
-		return []string{s}
-	default:
-		return nil
-	}
+	}, key)
 }
 
 func queryParam(req *proto.InvokeContext, key string) string {
@@ -292,43 +294,18 @@ func queryParam(req *proto.InvokeContext, key string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(values.Get(key))
+	return values.Get(key)
 }
 
-func parseQueryString(raw string) map[string]string {
-	values, err := url.ParseQuery(strings.TrimSpace(raw))
+func marshalJSON(v any) string {
+	if v == nil {
+		return ""
+	}
+	raw, err := json.Marshal(v)
 	if err != nil {
-		return map[string]string{}
-	}
-	out := make(map[string]string, len(values))
-	for k := range values {
-		out[k] = values.Get(k)
-	}
-	return out
-}
-
-func toString(v any) string {
-	switch val := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return val
-	case json.Number:
-		return val.String()
-	default:
-		return fmt.Sprint(val)
-	}
-}
-
-func limitLength(value string, length int) string {
-	if value == "" || length <= 0 {
 		return ""
 	}
-	runes := []rune(value)
-	if len(runes) <= length {
-		return value
-	}
-	return string(runes[:length])
+	return string(raw)
 }
 
 func modeNote() string {
@@ -360,7 +337,16 @@ func pageToMap(page *proto.PageResponse) map[string]any {
 	if page == nil {
 		return map[string]any{"type": "error", "msg": "empty page response"}
 	}
-	out := map[string]any{"type": page.GetType(), "page": page.GetPage(), "url": page.GetUrl(), "msg": page.GetMsg()}
+	out := map[string]any{"type": page.GetType()}
+	if page.GetPage() != "" {
+		out["page"] = page.GetPage()
+	}
+	if page.GetUrl() != "" {
+		out["url"] = page.GetUrl()
+	}
+	if page.GetMsg() != "" {
+		out["msg"] = page.GetMsg()
+	}
 	if len(page.GetDataJsonRaw()) > 0 {
 		var data any
 		if err := json.Unmarshal(page.GetDataJsonRaw(), &data); err == nil {
@@ -398,36 +384,4 @@ func mapString(m map[string]any, key string) string {
 		return fmt.Sprint(v)
 	}
 	return ""
-}
-
-func buildPayURL(req *proto.InvokeContext, order *proto.OrderSnapshot, query map[string]string) string {
-	if order == nil {
-		return ""
-	}
-	siteDomain := ""
-	if req != nil && req.GetConfig() != nil {
-		siteDomain = strings.TrimRight(req.GetConfig().GetSiteDomain(), "/")
-	}
-	if siteDomain == "" {
-		return ""
-	}
-	payURL := siteDomain + "/pay/" + order.GetType() + "/" + order.GetTradeNo()
-	if len(query) == 0 {
-		return payURL
-	}
-	q := url.Values{}
-	for k, v := range query {
-		if k == "" || v == "" {
-			continue
-		}
-		q.Set(k, v)
-	}
-	if q.Get("t") == "" {
-		q.Set("t", fmt.Sprintf("%d", time.Now().Unix()))
-	}
-	qs := q.Encode()
-	if qs == "" {
-		return payURL
-	}
-	return payURL + "?" + qs
 }

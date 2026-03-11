@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-pay/gopay"
 	"github.com/ppswws/okpay-plugin-sdk"
@@ -32,23 +33,23 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferRes
 	reqBody.Set("biz_scene", "DIRECT_TRANSFER")
 	reqBody.Set("order_title", transferTitle(tr))
 
-	typeVal := strings.ToLower(strings.TrimSpace(tr.GetType()))
+	typeVal := strings.ToLower(tr.GetType())
 	switch typeVal {
 	case "", "alipay":
 		reqBody.Set("product_code", "TRANS_ACCOUNT_NO_PWD")
 		reqBody.SetBodyMap("payee_info", func(m gopay.BodyMap) {
-			m.Set("identity", strings.TrimSpace(tr.GetCardNo()))
-			m.Set("identity_type", inferAlipayIdentityType(strings.TrimSpace(tr.GetCardNo())))
-			if strings.TrimSpace(tr.GetCardName()) != "" {
-				m.Set("name", strings.TrimSpace(tr.GetCardName()))
+			m.Set("identity", tr.GetCardNo())
+			m.Set("identity_type", inferAlipayIdentityType(tr.GetCardNo()))
+			if tr.GetCardName() != "" {
+				m.Set("name", tr.GetCardName())
 			}
 		})
 	case "bank":
 		reqBody.Set("product_code", "TRANS_BANKCARD_NO_PWD")
 		reqBody.SetBodyMap("payee_info", func(m gopay.BodyMap) {
 			m.Set("identity_type", "BANKCARD_ACCOUNT")
-			m.Set("identity", strings.TrimSpace(tr.GetCardNo()))
-			m.Set("name", strings.TrimSpace(tr.GetCardName()))
+			m.Set("identity", tr.GetCardNo())
+			m.Set("name", tr.GetCardName())
 			m.SetBodyMap("bankcard_ext_info", func(ext gopay.BodyMap) {
 				ext.Set("account_type", "2")
 			})
@@ -57,34 +58,62 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferRes
 		return plugin.RespTransfer(-1, "", reqBody.JsonBody(), "", "不支持的转账类型", 0), nil
 	}
 
-	if strings.TrimSpace(tr.GetCardNo()) == "" {
+	if tr.GetCardNo() == "" {
 		return plugin.RespTransfer(-1, "", reqBody.JsonBody(), "", "收款账户不能为空", 0), nil
 	}
+	body := reqBody.JsonBody()
+	start := time.Now()
 	resp, err := client.FundTransUniTransfer(ctx, reqBody)
+	reqMs := int32(time.Since(start).Milliseconds())
+	respBody := marshalJSON(resp)
 	if err != nil {
-		return plugin.RespTransfer(-1, "", reqBody.JsonBody(), "", err.Error(), 0), nil
+		if respBody == "" {
+			respBody = err.Error()
+		}
+		return plugin.RespTransfer(-1, "", body, respBody, err.Error(), reqMs), nil
 	}
 	if resp == nil || resp.Response == nil {
-		return plugin.RespTransfer(0, "", reqBody.JsonBody(), "", "", 0), nil
+		if respBody == "" {
+			respBody = "{}"
+		}
+		return plugin.RespTransfer(0, "", body, respBody, "", reqMs), nil
 	}
-	state := transferState(strings.TrimSpace(resp.Response.Status))
-	apiTradeNo := strings.TrimSpace(resp.Response.OrderId)
-	if apiTradeNo == "" {
-		apiTradeNo = strings.TrimSpace(resp.Response.PayFundOrderId)
+	state := -1
+	if resp.Response.Code == "10000" {
+		state = 1
+	} else if isTransferRetryable(resp.Response.Code, resp.Response.SubCode) {
+		// 系统繁忙/处理中：结果不确定，交由上游重试或查单。
+		state = 0
 	}
-	result := strings.TrimSpace(resp.Response.SubMsg)
+	apiTradeNo := resp.Response.OrderId
+	if state != 1 && apiTradeNo == "" {
+		apiTradeNo = resp.Response.PayFundOrderId
+	}
+	result := resp.Response.SubMsg
 	if result == "" {
-		result = strings.TrimSpace(resp.Response.Msg)
+		result = resp.Response.Msg
 	}
-	return plugin.RespTransfer(state, apiTradeNo, reqBody.JsonBody(), "", result, 0), nil
+	if state != 1 && resp.Response.SubCode != "" {
+		result = resp.Response.SubCode + ":" + result
+	}
+	return plugin.RespTransfer(state, apiTradeNo, body, respBody, result, reqMs), nil
+}
+
+func isTransferRetryable(code, subCode string) bool {
+	_ = code
+	switch strings.ToUpper(subCode) {
+	case "SYSTEM_ERROR", "REQUEST_PROCESSING":
+		return true
+	default:
+		return false
+	}
 }
 
 func inferAlipayIdentityType(account string) string {
-	account = strings.TrimSpace(account)
 	if account == "" {
 		return "ALIPAY_LOGON_ID"
 	}
-	if isDigits(account) && strings.HasPrefix(account, "2088") {
+	if isAlipayUserID(account) {
 		return "ALIPAY_USER_ID"
 	}
 	if isDigits(account) {
@@ -96,15 +125,15 @@ func inferAlipayIdentityType(account string) string {
 	return "ALIPAY_OPEN_ID"
 }
 
-func transferState(status string) int {
-	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case "SUCCESS":
-		return 1
-	case "DEALING", "WAIT_PAY":
-		return 0
-	default:
-		return -1
+func isAlipayUserID(account string) bool {
+	if !isDigits(account) {
+		return false
 	}
+	// 支付宝 uid：纯数字、2088 开头、16 位。
+	if !strings.HasPrefix(account, "2088") {
+		return false
+	}
+	return len(account) == 16
 }
 
 func transferTitle(tr *proto.TransferSnapshot) string {
