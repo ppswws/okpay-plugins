@@ -13,13 +13,13 @@ import (
 
 func create(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	return plugin.CreateWithHandlers(ctx, req, map[string]plugin.CreateHandlerFunc{
-		"alipay": alipay,
-		"wxpay":  wxpay,
-		"bank":   bank,
+		"alipay": alipayHandler,
+		"wxpay":  wxpayHandler,
+		"bank":   bankHandler,
 	})
 }
 
-func alipay(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
+func alipayHandler(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	return handleCreatePay(ctx, req, func(method, url string) *proto.PageResponse {
 		switch method {
 		case "jump":
@@ -32,7 +32,7 @@ func alipay(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse,
 	})
 }
 
-func wxpay(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
+func wxpayHandler(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	return handleCreatePay(ctx, req, func(method, url string) *proto.PageResponse {
 		switch method {
 		case "jump":
@@ -47,7 +47,7 @@ func wxpay(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, 
 	})
 }
 
-func bank(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
+func bankHandler(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	return handleCreatePay(ctx, req, func(method, url string) *proto.PageResponse {
 		switch method {
 		case "jump":

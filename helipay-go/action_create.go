@@ -11,18 +11,17 @@ import (
 
 	"okpay/payment/plugin"
 	"okpay/payment/plugin/proto"
-	"okpay/payment/plugin/sdk/wechatpay"
 )
 
 func create(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	return plugin.CreateWithHandlers(ctx, req, map[string]plugin.CreateHandlerFunc{
-		"alipay": alipay,
-		"wxpay":  wxpay,
-		"bank":   bank,
+		"alipay": alipayHandler,
+		"wxpay":  wxpayHandler,
+		"bank":   bankHandler,
 	})
 }
 
-func alipay(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
+func alipayHandler(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	order := req.GetOrder()
 	if order == nil || order.GetTradeNo() == "" {
 		return nil, fmt.Errorf("订单为空")
@@ -76,7 +75,7 @@ func alipay(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse,
 	return plugin.RespError("当前通道未开启支付宝支付方式"), nil
 }
 
-func wxpay(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
+func wxpayHandler(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	order := req.GetOrder()
 	if order == nil || order.GetTradeNo() == "" {
 		return nil, fmt.Errorf("订单为空")
@@ -105,17 +104,13 @@ func wxpay(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, 
 				values := url.Values{}
 				values.Set("real", strconv.FormatInt(order.GetReal(), 10))
 				values.Set("url", payURL)
-				scheme, err := wechatpay.GenerateScheme(ctx, cfg.MiniAppID, cfg.MiniAppSecret, "page/pay", values.Encode())
+				scheme, err := plugin.GetMiniScheme(ctx, cfg.MiniAppID, cfg.MiniAppSecret, "page/pay", values.Encode())
 				if err != nil {
 					return plugin.RespError(err.Error()), nil
 				}
 				return plugin.RespPageURL("wxpay_h5", scheme), nil
 			}
-			openID, err := wechatpay.AppGetOpenid(ctx, wechatpay.MiniAuthParams{
-				AppID:     cfg.MiniAppID,
-				AppSecret: cfg.MiniAppSecret,
-				Code:      code,
-			})
+			openID, err := plugin.GetMiniOpenid(ctx, cfg.MiniAppID, cfg.MiniAppSecret, code)
 			if err != nil {
 				return plugin.RespJSON(map[string]any{"code": 1, "message": err.Error()}), nil
 			}
@@ -159,12 +154,16 @@ func wxpay(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, 
 			}
 			code := queryParam(req, "code")
 			redirectURL := buildPayURL(req, order, map[string]string{"t": fmt.Sprintf("%d", time.Now().Unix())})
-			openID, authURL, err := wechatpay.GetOpenid(ctx, wechatpay.MPAuthParams{AppID: cfg.MPAppID, AppSecret: cfg.MPAppSecret, Code: code, RedirectURL: redirectURL, State: order.GetTradeNo()})
+			if code == "" {
+				authURL := plugin.BuildMPOAuthURL(cfg.MPAppID, redirectURL, order.GetTradeNo())
+				if authURL == "" {
+					return plugin.RespError("公众号参数缺失"), nil
+				}
+				return plugin.RespJump(authURL), nil
+			}
+			openID, err := plugin.GetMPOpenid(ctx, cfg.MPAppID, cfg.MPAppSecret, code)
 			if err != nil {
 				return plugin.RespError(err.Error()), nil
-			}
-			if authURL != "" {
-				return plugin.RespJump(authURL), nil
 			}
 			return lockOrderPage(ctx, order.GetTradeNo(), func() (*proto.PageResponse, plugin.RequestStats, error) {
 				payInfo, stats, err := createPublicOrder(ctx, req, cfg, order, "wxpay", cfg.MPAppID, "1", openID)
@@ -193,7 +192,7 @@ func wxpay(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, 
 	return plugin.RespError("当前通道未开启微信支付方式"), nil
 }
 
-func bank(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
+func bankHandler(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	order := req.GetOrder()
 	if order == nil || order.GetTradeNo() == "" {
 		return nil, fmt.Errorf("订单为空")

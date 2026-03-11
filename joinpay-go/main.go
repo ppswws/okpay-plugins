@@ -56,11 +56,11 @@ func (s *joinpayService) InvokeFunc(ctx context.Context, req *proto.InvokeFuncRe
 	case "create":
 		page, err = create(ctx, invoke)
 	case "alipay":
-		page, err = alipay(ctx, invoke)
+		page, err = alipayHandler(ctx, invoke)
 	case "wxpay":
-		page, err = wxpay(ctx, invoke)
+		page, err = wxpayHandler(ctx, invoke)
 	case "bank":
-		page, err = bank(ctx, invoke)
+		page, err = bankHandler(ctx, invoke)
 	case "notify":
 		page, err = notify(ctx, invoke)
 	case "refundnotify":

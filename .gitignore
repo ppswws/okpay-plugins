@@ -1,0 +1,8 @@
+# Keep source plugin folders and notes only.
+*
+!*.md
+!.gitignore
+!*/*-go/
+!*/*-go/**
+!*-go/
+!*-go/**

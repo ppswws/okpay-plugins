@@ -24,19 +24,19 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferRes
 	globalCfg := readGlobalConfig(req)
 	notifyDomain := strings.TrimRight(globalCfg.NotifyDomain, "/")
 	params := map[string]string{
-		"userNo":                cfg.AppID,
-		"productCode":           "BANK_PAY_DAILY_ORDER",
-		"requestTime":           time.Now().Format("2006-01-02 15:04:05"),
-		"merchantOrderNo":       transfer.GetTradeNo(),
-		"receiverAccountNoEnc":  transfer.GetCardNo(),
-		"receiverNameEnc":       transfer.GetCardName(),
-		"receiverAccountType":   "201",
-		"paidAmount":            toYuan(transfer.GetAmount()),
-		"currency":              "201",
-		"isChecked":             "202",
-		"paidDesc":              "工资发放",
-		"paidUse":               "201",
-		"callbackUrl":           notifyDomain + "/pay/transfernotify/" + transfer.GetTradeNo(),
+		"userNo":               cfg.AppID,
+		"productCode":          "BANK_PAY_DAILY_ORDER",
+		"requestTime":          time.Now().Format("2006-01-02 15:04:05"),
+		"merchantOrderNo":      transfer.GetTradeNo(),
+		"receiverAccountNoEnc": transfer.GetCardNo(),
+		"receiverNameEnc":      transfer.GetCardName(),
+		"receiverAccountType":  "201",
+		"paidAmount":           toYuan(transfer.GetAmount()),
+		"currency":             "201",
+		"isChecked":            "202",
+		"paidDesc":             "工资发放",
+		"paidUse":              "201",
+		"callbackUrl":          notifyDomain + "/pay/transfernotify/" + transfer.GetTradeNo(),
 	}
 	if receiverBankChannelNo := strings.TrimSpace(transfer.GetBranchName()); receiverBankChannelNo != "" {
 		params["receiverBankChannelNo"] = receiverBankChannelNo
