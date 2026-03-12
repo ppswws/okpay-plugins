@@ -616,3 +616,205 @@ hmac	签名数据	参考签名机制	String	是
 
 
 注：响应数据的顺序不代表签名的顺序，签名顺序请查阅文档的表格所对应的顺序
+
+
+
+------新增--------
+
+退款查询接口文档
+1. 接口说明
+
+用于查询指定退款订单的退款状态。
+
+请求地址
+
+https://trade.joinpay.com/tradeRt/queryRefund
+
+请求方式
+
+POST
+
+返回格式
+
+JSON
+2. 请求参数
+参数名称	参数含义	参数说明	必填	长度	签名顺序
+p0_Version	版本号	当前版本号：2.3	是	D(3,1)	1
+p1_MerchantNo	商户编号	商户在支付平台系统中的唯一身份标识	是	X(15)	2
+p2_RefundOrderNo	商户退款订单号	商户业务平台生成的退款订单号（不可重复）	是	X(30)	3
+hmac	签名数据	按签名机制生成	是	X(4000)	-
+3. 返回参数（JSON）
+
+接口返回 JSON 数据流。
+
+参数名称	参数含义	参数说明	必填	长度	签名顺序
+r0_Version	版本号	固定值：2.3	是	D(3,1)	1
+r1_MerchantNo	商户编号	商户在支付平台中的唯一标识	是	X(15)	2
+r2_RefundOrderNo	商户退款订单号	商户系统生成的退款订单号	是	X(50)	3
+r3_RefundAmount	退款金额	单位：元，精确到分，保留两位小数，例如：10.23	是	D(16,2)	4
+r4_RefundTrxNo	退款流水号	支付系统生成的退款流水号	否	X(50)	5
+r5_RefundCompleteTime	退款完成时间	格式：YYYY-MM-DD HH:mm:ss	否	X(20)	6
+r8_RefundWay	退款渠道	微信退款方式	否	X(16)	7
+r9_ReceiveAccountNo	退款入账账户	退款到账账户信息	否	X(64)	8
+ra_Status	退款状态	100：成功 / 101：失败 / 102：处理中	否	X(20)	9
+rb_Code	响应码	见响应码表	是	X(10)	10
+rc_CodeMsg	响应码描述	失败时返回失败原因	是	X(20)	11
+rd_MarketRefAmount	营销退款金额	当前未使用，验签时仍需拼接	是	D(16,2)	12
+re_FundsAccount	退款资金账户	SETTLED：可结算账户 / ADVANCE：收款账户	否	X(10)	13
+hmac	签名数据	返回签名	是	X(4000)	-
+4. 退款状态说明
+状态值	含义
+100	退款成功
+101	退款失败
+102	退款处理中
+5. 退款渠道说明（r8_RefundWay）
+值	说明
+ORIGINAL	原路退款
+BALANCE	退回余额
+OTHER_BALANCE	原账户异常退到其他余额账户
+OTHER_BANKCARD	原银行卡异常退到其他银行卡
+6. 退款入账账户说明（r9_ReceiveAccountNo）
+
+微信退款：
+
+退回银行卡
+
+{银行名称}{卡类型}{卡尾号}
+
+示例
+
+中国银行储蓄卡1234
+
+退回用户零钱
+
+支付用户零钱
+
+退回用户零钱通
+
+支付用户零钱通
+7. 响应码说明
+ra_Status	rb_Code	rc_CodeMsg
+100	100	空
+102	100	空
+101	具体业务码	失败原因
+8. 返回示例
+{
+  "r0_Version": "2.3",
+  "r1_MerchantNo": "10001123",
+  "r2_RefundOrderNo": "REF202403120001",
+  "r3_RefundAmount": "10.23",
+  "r4_RefundTrxNo": "20240312123456789",
+  "r5_RefundCompleteTime": "2024-03-12 18:05:17",
+  "r8_RefundWay": "ORIGINAL",
+  "r9_ReceiveAccountNo": "支付用户零钱",
+  "ra_Status": "100",
+  "rb_Code": "100",
+  "rc_CodeMsg": "",
+  "rd_MarketRefAmount": "0.00",
+  "re_FundsAccount": "SETTLED",
+  "hmac": "签名值"
+}
+
+
+
+
+单笔代付查询接口
+1. 接口说明
+
+用于查询单笔代付订单的交易状态。
+
+注意事项
+
+当请求返回 交易状态未知 时，需要调用此接口核实订单状态。
+
+仅支持查询 15天内的订单。
+
+2. 请求信息
+请求地址
+https://www.joinpay.com/payment/pay/singlePayQuery
+请求方式
+POST
+请求格式
+JSON
+3. 请求参数
+参数名称	中文名称	说明	数据类型	必填	签名顺序
+userNo	商户编号	商户在支付平台系统中的唯一身份标识	String	是	1
+merchantOrderNo	商户订单号	全局唯一，由数字或字母组成，长度12-25位	String	是	2
+hmac	签名数据	参考签名机制生成	String	是	-
+4. 请求报文示例
+{
+  "userNo": "888100000004182",
+  "merchantOrderNo": "990000000001",
+  "hmac": "80D58D396DDA37B8FA74C8E9E00899FD"
+}
+
+注：示例数据仅用于格式参考，不能作为真实请求数据。
+
+5. 返回参数
+参数名称	中文名称	说明	数据类型	必填	签名顺序
+statusCode	应答码	请求响应的状态码	String	是	1
+message	应答信息	状态码描述	String	是	2
+data	应答数据	交易信息对象(JSON字符串)	JSON	是	-
+6. 应答信息域（data）
+参数名称	中文名称	说明	数据类型	必填	签名顺序
+status	交易状态	单笔代付交易状态	Integer	是	3
+errorCode	错误码	交易失败返回错误码	String	否	4
+errorDesc	错误描述	受理失败或处理中返回说明	String	否	5
+userNo	商户号	商户在支付平台中的唯一标识	String	是	6
+tradeMerchantNo	报备商户号	报备商户号	String	否	7
+merchantOrderNo	商户订单号	商户生成的订单号	String	是	8
+platformSerialNo	平台流水号	支付平台生成的流水号	String	是	9
+receiverAccountNoEnc	收款账户号	收款账户信息	String	是	10
+receiverNameEnc	收款人	收款人姓名	String	是	11
+paidAmount	交易金额	实际交易金额	BigDecimal	是	12
+fee	手续费	本次代付交易手续费	BigDecimal	否	13
+hmac	签名数据	返回签名	String	是	-
+7. 成功返回示例
+{
+  "statusCode": "2001",
+  "message": "查询成功",
+  "data": {
+    "status": 203,
+    "errorCode": "",
+    "errorDesc": "",
+    "userNo": "888100000004182",
+    "merchantOrderNo": "880000000001",
+    "platformSerialNo": "30032018052900031237",
+    "receiverAccountNoEnc": "6225882010007926",
+    "receiverNameEnc": "汇聚支付",
+    "paidAmount": 1.00,
+    "fee": 0.11,
+    "hmac": "81D3430BF3E4A1D05958FE99FB5434A4"
+  }
+}
+8. 订单不存在示例
+{
+  "statusCode": "2001",
+  "message": "查询成功",
+  "data": {
+    "status": "214",
+    "errorCode": "300002014",
+    "errorDesc": "订单记录不存在",
+    "userNo": "888100000002720",
+    "merchantOrderNo": "8800eee00000001",
+    "platformSerialNo": "",
+    "receiverAccountNoEnc": "",
+    "receiverNameEnc": "",
+    "paidAmount": "",
+    "fee": "",
+    "hmac": "57396ca5bc0c1b6834f61bcb04bf0af2"
+  }
+}
+9. 注意事项
+
+签名顺序必须按照表格顺序进行拼接。
+
+响应JSON字段顺序不代表签名顺序。
+
+查询限制：
+
+仅能查询 15天以内订单
+
+如果支付请求返回 交易状态未知：
+
+必须调用此接口进行订单状态确认。

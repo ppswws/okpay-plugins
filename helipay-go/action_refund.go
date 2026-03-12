@@ -10,7 +10,7 @@ import (
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
-func refund(ctx context.Context, req *proto.InvokeContext) (*proto.RefundResponse, error) {
+func refund(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, error) {
 	refund := req.GetRefund()
 	if refund == nil || refund.GetRefundNo() == "" {
 		return nil, fmt.Errorf("退款单为空")
@@ -21,13 +21,34 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.RefundRespons
 	}
 	result, err := refundOrder(ctx, req, cfg, refund)
 	if err != nil {
-		return plugin.RespRefund(-1, "", result.ReqBody, result.RespBody, err.Error(), result.ReqMs), nil
+		return plugin.ResultFail(plugin.BizResultInput{
+			ChannelMsg: err.Error(),
+			Stats:      plugin.RequestStats{ReqMs: result.ReqMs, ReqBody: result.ReqBody, RespBody: result.RespBody},
+		}), nil
 	}
 	state := 1
 	if result.RetCode == "0001" || result.RetCode == "0002" {
 		state = 0
 	}
-	return plugin.RespRefund(state, result.APIRefundNo, result.ReqBody, result.RespBody, "", result.ReqMs), nil
+	resultText := result.RetMsg
+	if resultText == "" {
+		resultText = result.RetCode
+	}
+	stats := plugin.RequestStats{ReqMs: result.ReqMs, ReqBody: result.ReqBody, RespBody: result.RespBody}
+	if state == 1 {
+		return plugin.ResultOK(plugin.BizResultInput{
+			APIBizNo:    result.APIRefundNo,
+			ChannelCode: result.RetCode,
+			ChannelMsg:  resultText,
+			Stats:       stats,
+		}), nil
+	}
+	return plugin.ResultPending(plugin.BizResultInput{
+		APIBizNo:    result.APIRefundNo,
+		ChannelCode: result.RetCode,
+		ChannelMsg:  resultText,
+		Stats:       stats,
+	}), nil
 }
 
 func refundOrder(ctx context.Context, req *proto.InvokeContext, cfg *helipayConfig, refund *proto.RefundSnapshot) (refundResult, error) {
@@ -58,5 +79,12 @@ func refundOrder(ctx context.Context, req *proto.InvokeContext, cfg *helipayConf
 		return refundResult{ReqBody: stats.ReqBody, RespBody: stats.RespBody, ReqMs: stats.ReqMs}, errors.New(msg)
 	}
 	apiRefundNo := resp["rt7_serialNumber"]
-	return refundResult{APIRefundNo: apiRefundNo, RetCode: retCode, ReqBody: stats.ReqBody, RespBody: stats.RespBody, ReqMs: stats.ReqMs}, nil
+	return refundResult{
+		APIRefundNo: apiRefundNo,
+		RetCode:     retCode,
+		RetMsg:      resp["rt3_retMsg"],
+		ReqBody:     stats.ReqBody,
+		RespBody:    stats.RespBody,
+		ReqMs:       stats.ReqMs,
+	}, nil
 }

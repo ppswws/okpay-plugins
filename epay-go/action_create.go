@@ -21,42 +21,42 @@ func create(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse,
 
 func alipayHandler(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	return handleCreatePay(ctx, req, func(method, url string) *proto.PageResponse {
+		page := plugin.RespError("渠道未返回可用支付地址")
 		switch method {
 		case "jump":
-			return plugin.RespJump(url)
+			page = plugin.RespJump(url)
 		case "qrcode":
-			return plugin.RespPageURL("alipay_qrcode", url)
-		default:
-			return plugin.RespError("渠道未返回可用支付地址")
+			page = plugin.RespPageURL("alipay_qrcode", url)
 		}
+		return page
 	})
 }
 
 func wxpayHandler(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	return handleCreatePay(ctx, req, func(method, url string) *proto.PageResponse {
+		page := plugin.RespError("渠道未返回可用支付地址")
 		switch method {
 		case "jump":
-			return plugin.RespJump(url)
+			page = plugin.RespJump(url)
 		case "scheme":
-			return plugin.RespPageURL("wxpay_h5", url)
+			page = plugin.RespPageURL("wxpay_h5", url)
 		case "qrcode":
-			return plugin.RespPageURL("wxpay_qrcode", url)
-		default:
-			return plugin.RespError("渠道未返回可用支付地址")
+			page = plugin.RespPageURL("wxpay_qrcode", url)
 		}
+		return page
 	})
 }
 
 func bankHandler(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	return handleCreatePay(ctx, req, func(method, url string) *proto.PageResponse {
+		page := plugin.RespError("渠道未返回可用支付地址")
 		switch method {
 		case "jump":
-			return plugin.RespJump(url)
+			page = plugin.RespJump(url)
 		case "scheme", "qrcode":
-			return plugin.RespPageURL("bank_qrcode", url)
-		default:
-			return plugin.RespError("渠道未返回可用支付地址")
+			page = plugin.RespPageURL("bank_qrcode", url)
 		}
+		return page
 	})
 }
 
@@ -80,14 +80,14 @@ func handleCreatePay(
 		}
 		method, url, err := resolvePayMethod(resp)
 		if err != nil {
-			return pageToMap(plugin.RespError(err.Error())), stats, nil
+			return plugin.BuildReturnMap(plugin.RespError(err.Error())), stats, nil
 		}
-		return pageToMap(mapper(method, url)), stats, nil
+		return plugin.BuildReturnMap(mapper(method, url)), stats, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return pageFromMap(payload), nil
+	return plugin.BuildReturnPage(payload), nil
 }
 
 func resolvePayMethod(resp *epayCreateResp) (string, string, error) {
@@ -152,56 +152,4 @@ func createOrder(ctx context.Context, req *proto.InvokeContext, cfg *epayConfig,
 		return nil, stats, fmt.Errorf("%s", msg)
 	}
 	return resp, stats, nil
-}
-
-func pageToMap(page *proto.PageResponse) map[string]any {
-	if page == nil {
-		return map[string]any{"type": "error", "msg": "empty page response"}
-	}
-	out := map[string]any{
-		"type": page.GetType(),
-		"page": page.GetPage(),
-		"url":  page.GetUrl(),
-	}
-	if len(page.GetDataJsonRaw()) > 0 {
-		var data any
-		if err := json.Unmarshal(page.GetDataJsonRaw(), &data); err == nil {
-			out["data"] = data
-		}
-	}
-	if page.GetDataText() != "" {
-		out["data"] = page.GetDataText()
-	}
-	return out
-}
-
-func pageFromMap(m map[string]any) *proto.PageResponse {
-	if m == nil {
-		return plugin.RespError("empty page payload")
-	}
-	resp := &proto.PageResponse{Type: mapString(m, "type"), Page: mapString(m, "page"), Url: mapString(m, "url")}
-	if data, ok := m["data"]; ok && data != nil {
-		switch resp.GetType() {
-		case plugin.ResponseTypeHTML:
-			resp.DataText = strings.TrimSpace(fmt.Sprint(data))
-		default:
-			raw, _ := json.Marshal(data)
-			resp.DataJsonRaw = raw
-		}
-	}
-	if resp.GetType() == "" {
-		return plugin.RespError("invalid page payload")
-	}
-	return resp
-}
-
-func mapString(m map[string]any, key string) string {
-	if len(m) == 0 {
-		return ""
-	}
-	v, ok := m[key]
-	if !ok || v == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(v))
 }

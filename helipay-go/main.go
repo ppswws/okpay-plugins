@@ -16,31 +16,7 @@ func (s *helipayService) Info(ctx context.Context, _ *proto.PluginInfoRequest) (
 	return info(ctx)
 }
 
-func (s *helipayService) Create(ctx context.Context, req *proto.CreateRequest) (*proto.CreateResponse, error) {
-	page, err := create(ctx, req.GetCtx())
-	if err != nil {
-		return nil, err
-	}
-	return &proto.CreateResponse{Page: page}, nil
-}
-
-func (s *helipayService) Query(ctx context.Context, req *proto.QueryRequest) (*proto.QueryResponse, error) {
-	return query(ctx, req.GetCtx())
-}
-
-func (s *helipayService) Refund(ctx context.Context, req *proto.RefundRequest) (*proto.RefundResponse, error) {
-	return refund(ctx, req.GetCtx())
-}
-
-func (s *helipayService) Transfer(ctx context.Context, req *proto.TransferRequest) (*proto.TransferResponse, error) {
-	return transfer(ctx, req.GetCtx())
-}
-
-func (s *helipayService) Balance(ctx context.Context, req *proto.BalanceRequest) (*proto.BalanceResponse, error) {
-	return balance(ctx, req.GetCtx())
-}
-
-func (s *helipayService) InvokeFunc(ctx context.Context, req *proto.InvokeFuncRequest) (*proto.InvokeFuncResponse, error) {
+func (s *helipayService) Handle(ctx context.Context, req *proto.HandleRequest) (*proto.HandleResponse, error) {
 	invoke := req.GetCtx()
 	action := strings.TrimSpace(invoke.GetFuncName())
 	if action == "" {
@@ -72,7 +48,43 @@ func (s *helipayService) InvokeFunc(ctx context.Context, req *proto.InvokeFuncRe
 	if err != nil {
 		return nil, err
 	}
-	return &proto.InvokeFuncResponse{Page: page}, nil
+	return &proto.HandleResponse{Page: page}, nil
+}
+
+func (s *helipayService) Submit(ctx context.Context, req *proto.BizRequest) (*proto.BizResult, error) {
+	invoke := req.GetCtx()
+	switch req.GetBizType() {
+	case proto.BizType_BIZ_TYPE_ORDER:
+		return plugin.ResultPending(plugin.BizResultInput{
+			ChannelMsg: "请使用 Handle(create) 获取支付页面",
+			Stats:      plugin.RequestStats{},
+		}), nil
+	case proto.BizType_BIZ_TYPE_REFUND:
+		return refund(ctx, invoke)
+	case proto.BizType_BIZ_TYPE_TRANSFER:
+		return transfer(ctx, invoke)
+	default:
+		return nil, fmt.Errorf("submit 不支持的业务类型: %s", req.GetBizType().String())
+	}
+}
+
+func (s *helipayService) Query(ctx context.Context, req *proto.BizRequest) (*proto.BizResult, error) {
+	invoke := req.GetCtx()
+	switch req.GetBizType() {
+	case proto.BizType_BIZ_TYPE_ORDER:
+		return queryOrder(ctx, invoke)
+	case proto.BizType_BIZ_TYPE_REFUND:
+		return queryRefund(ctx, invoke)
+	case proto.BizType_BIZ_TYPE_TRANSFER:
+		return queryTransfer(ctx, invoke)
+	case proto.BizType_BIZ_TYPE_BALANCE:
+		return balance(ctx, invoke)
+	default:
+		return plugin.ResultPending(plugin.BizResultInput{
+			ChannelMsg: "渠道未实现该业务查询",
+			Stats:      plugin.RequestStats{},
+		}), nil
+	}
 }
 
 func main() {

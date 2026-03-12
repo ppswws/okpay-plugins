@@ -10,19 +10,27 @@ import (
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
-func refund(ctx context.Context, req *proto.InvokeContext) (*proto.RefundResponse, error) {
+func refund(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, error) {
+	result, err := refundByChannel(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return kernelResult(result), nil
+}
+
+func refundByChannel(ctx context.Context, req *proto.InvokeContext) (channelBizResult, error) {
 	refund := req.GetRefund()
 	if refund == nil || refund.GetRefundNo() == "" {
-		return nil, fmt.Errorf("退款单为空")
+		return channelBizResult{}, fmt.Errorf("退款单为空")
 	}
 	order := req.GetOrder()
 	cfg, err := readConfig(req)
 	if err != nil {
-		return nil, err
+		return channelBizResult{}, err
 	}
 	client, err := newAliClient(cfg, "", "")
 	if err != nil {
-		return nil, err
+		return channelBizResult{}, err
 	}
 	bm := make(gopay.BodyMap)
 	if order != nil && order.GetApiTradeNo() != "" {
@@ -30,7 +38,10 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.RefundRespons
 	} else if refund.GetTradeNo() != "" {
 		bm.Set("out_trade_no", refund.GetTradeNo())
 	} else {
-		return plugin.RespRefund(-1, "", "", "", "缺少订单号", 0), nil
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_FAILED,
+			Input: plugin.BizResultInput{Msg: "缺少订单号", Stats: plugin.RequestStats{}},
+		}, nil
 	}
 	bm.Set("refund_amount", toYuan(refund.GetAmount()))
 	bm.Set("out_request_no", refund.GetRefundNo())
@@ -44,13 +55,19 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.RefundRespons
 		if respBody == "" {
 			respBody = err.Error()
 		}
-		return plugin.RespRefund(-1, "", reqBody, respBody, err.Error(), reqMs), nil
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_FAILED,
+			Input: plugin.BizResultInput{Msg: err.Error(), Stats: plugin.RequestStats{ReqMs: reqMs, ReqBody: reqBody, RespBody: respBody}},
+		}, nil
 	}
 	if resp == nil || resp.Response == nil {
 		if respBody == "" {
 			respBody = "{}"
 		}
-		return plugin.RespRefund(0, "", reqBody, respBody, "", reqMs), nil
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_PROCESSING,
+			Input: plugin.BizResultInput{Msg: "退款处理中", Stats: plugin.RequestStats{ReqMs: reqMs, ReqBody: reqBody, RespBody: respBody}},
+		}, nil
 	}
 	apiRefundNo := resp.Response.TradeNo
 	if apiRefundNo == "" {
@@ -70,5 +87,22 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.RefundRespons
 	if state == -1 && resp.Response.SubCode != "" {
 		result = resp.Response.SubCode + ":" + result
 	}
-	return plugin.RespRefund(state, apiRefundNo, reqBody, respBody, result, reqMs), nil
+	stats := plugin.RequestStats{ReqMs: reqMs, ReqBody: reqBody, RespBody: respBody}
+	switch state {
+	case 1:
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_SUCCEEDED,
+			Input: plugin.BizResultInput{ApiNo: apiRefundNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
+		}, nil
+	case -1:
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_FAILED,
+			Input: plugin.BizResultInput{Code: resp.Response.SubCode, Msg: result, Stats: stats},
+		}, nil
+	default:
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_PROCESSING,
+			Input: plugin.BizResultInput{ApiNo: apiRefundNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
+		}, nil
+	}
 }

@@ -11,21 +11,32 @@ import (
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
-func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferResponse, error) {
+func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, error) {
+	result, err := transferByChannel(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return kernelResult(result), nil
+}
+
+func transferByChannel(ctx context.Context, req *proto.InvokeContext) (channelBizResult, error) {
 	if mode != modeStandard {
-		return plugin.RespTransfer(-1, "", "", "", "当前插件模式不支持转账", 0), nil
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_FAILED,
+			Input: plugin.BizResultInput{Msg: "当前插件模式不支持转账", Stats: plugin.RequestStats{}},
+		}, nil
 	}
 	tr := req.GetTransfer()
 	if tr == nil || tr.GetTradeNo() == "" {
-		return nil, fmt.Errorf("代付单为空")
+		return channelBizResult{}, fmt.Errorf("代付单为空")
 	}
 	cfg, err := readConfig(req)
 	if err != nil {
-		return nil, err
+		return channelBizResult{}, err
 	}
 	client, err := newAliClient(cfg, "", "")
 	if err != nil {
-		return nil, err
+		return channelBizResult{}, err
 	}
 	reqBody := make(gopay.BodyMap)
 	reqBody.Set("out_biz_no", tr.GetTradeNo())
@@ -55,11 +66,17 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferRes
 			})
 		})
 	default:
-		return plugin.RespTransfer(-1, "", reqBody.JsonBody(), "", "不支持的转账类型", 0), nil
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_FAILED,
+			Input: plugin.BizResultInput{Msg: "不支持的转账类型", Stats: plugin.RequestStats{ReqBody: reqBody.JsonBody()}},
+		}, nil
 	}
 
 	if tr.GetCardNo() == "" {
-		return plugin.RespTransfer(-1, "", reqBody.JsonBody(), "", "收款账户不能为空", 0), nil
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_FAILED,
+			Input: plugin.BizResultInput{Msg: "收款账户不能为空", Stats: plugin.RequestStats{ReqBody: reqBody.JsonBody()}},
+		}, nil
 	}
 	body := reqBody.JsonBody()
 	start := time.Now()
@@ -70,13 +87,19 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferRes
 		if respBody == "" {
 			respBody = err.Error()
 		}
-		return plugin.RespTransfer(-1, "", body, respBody, err.Error(), reqMs), nil
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_FAILED,
+			Input: plugin.BizResultInput{Msg: err.Error(), Stats: plugin.RequestStats{ReqMs: reqMs, ReqBody: body, RespBody: respBody}},
+		}, nil
 	}
 	if resp == nil || resp.Response == nil {
 		if respBody == "" {
 			respBody = "{}"
 		}
-		return plugin.RespTransfer(0, "", body, respBody, "", reqMs), nil
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_PROCESSING,
+			Input: plugin.BizResultInput{Msg: "代付处理中", Stats: plugin.RequestStats{ReqMs: reqMs, ReqBody: body, RespBody: respBody}},
+		}, nil
 	}
 	state := -1
 	if resp.Response.Code == "10000" {
@@ -96,7 +119,24 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferRes
 	if state != 1 && resp.Response.SubCode != "" {
 		result = resp.Response.SubCode + ":" + result
 	}
-	return plugin.RespTransfer(state, apiTradeNo, body, respBody, result, reqMs), nil
+	stats := plugin.RequestStats{ReqMs: reqMs, ReqBody: body, RespBody: respBody}
+	switch state {
+	case 1:
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_SUCCEEDED,
+			Input: plugin.BizResultInput{ApiNo: apiTradeNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
+		}, nil
+	case -1:
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_FAILED,
+			Input: plugin.BizResultInput{Code: resp.Response.SubCode, Msg: result, Stats: stats},
+		}, nil
+	default:
+		return channelBizResult{
+			State: proto.BizState_BIZ_STATE_PROCESSING,
+			Input: plugin.BizResultInput{ApiNo: apiTradeNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
+		}, nil
+	}
 }
 
 func isTransferRetryable(code, subCode string) bool {

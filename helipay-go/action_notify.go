@@ -11,112 +11,115 @@ import (
 )
 
 func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
+	result := "fail"
 	cfg, err := readConfig(req)
-	if err != nil {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
-	}
-	n, err := parseHelipayOrderNotify(req)
-	if err != nil {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
-	}
-	if !verifyNotify(n.toSignMap(), cfg.AppKey) {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
-	}
-	if n.Rt4Status != "SUCCESS" {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
-	}
-	order := req.GetOrder()
-	if order != nil {
-		if n.Rt2OrderID != order.GetTradeNo() {
-			return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
-		}
-		if order.GetReal() != toCents(n.Rt5OrderAmount) {
-			return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("amount_mismatch")), nil
-		}
-		if err := plugin.CompleteOrder(ctx, plugin.CompleteOrderInput{
-			TradeNo:    order.GetTradeNo(),
-			APITradeNo: n.Rt3SystemSerial,
-			Buyer:      n.Rt10OpenID,
-		}); err != nil {
-			return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
+	if err == nil {
+		n, parseErr := parseHelipayOrderNotify(req)
+		if parseErr == nil && verifyNotify(n.toSignMap(), cfg.AppKey) && n.Rt4Status == "SUCCESS" {
+			order := req.GetOrder()
+			if order != nil {
+				if n.Rt2OrderID != order.GetTradeNo() {
+					result = "fail"
+				} else if order.GetReal() != toCents(n.Rt5OrderAmount) {
+					result = "amount_mismatch"
+				} else if completeErr := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
+					BizType:  proto.BizType_BIZ_TYPE_ORDER,
+					BizNo:    order.GetTradeNo(),
+					State:    proto.BizState_BIZ_STATE_SUCCEEDED,
+					APIBizNo: n.Rt3SystemSerial,
+					Buyer:    n.Rt10OpenID,
+				}); completeErr == nil {
+					result = "success"
+				}
+			} else {
+				result = "success"
+			}
 		}
 	}
-	return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("success")), nil
+	return plugin.RespHTML(result), nil
 }
 
 func refundNotify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
+	result := "fail"
 	cfg, err := readConfig(req)
-	if err != nil {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("fail")), nil
+	if err == nil {
+		n, parseErr := parseHelipayRefundNotify(req)
+		if parseErr == nil && verifyNotify(n.toSignMap(), cfg.AppKey) {
+			result = "success"
+			status := strings.ToUpper(n.Rt5Status)
+			refund := req.GetRefund()
+			if refund != nil && refund.GetRefundNo() != "" {
+				if n.Rt3RefundOrderID != refund.GetRefundNo() {
+					result = "refund_mismatch"
+				} else if n.Rt6Amount != "" && refund.GetAmount() != toCents(n.Rt6Amount) {
+					result = "amount_mismatch"
+				} else {
+					completeStatus := int16(0)
+					switch status {
+					case "SUCCESS":
+						completeStatus = 1
+					case "FAIL", "CLOSE":
+						completeStatus = -1
+					case "INIT", "DOING":
+						completeStatus = 0
+					default:
+						completeStatus = 0
+					}
+					respBody := "status=" + status
+					if raw, e := json.Marshal(n); e == nil {
+						respBody = string(raw)
+					}
+					if completeErr := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
+						BizType:     proto.BizType_BIZ_TYPE_REFUND,
+						BizNo:       refund.GetRefundNo(),
+						State:       mapStatusToBizState(completeStatus),
+						APIBizNo:    n.Rt4SystemSerial,
+						ChannelCode: n.Rt5Status,
+						ChannelMsg:  status,
+						RespBody:    respBody,
+					}); completeErr != nil {
+						result = "fail"
+					}
+				}
+			}
+		}
 	}
-	n, err := parseHelipayRefundNotify(req)
-	if err != nil {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("fail")), nil
-	}
-	if !verifyNotify(n.toSignMap(), cfg.AppKey) {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("fail")), nil
-	}
-	status := strings.ToUpper(n.Rt5Status)
-	refund := req.GetRefund()
-	if refund != nil && refund.GetRefundNo() != "" {
-		if n.Rt3RefundOrderID != refund.GetRefundNo() {
-			return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("refund_mismatch")), nil
-		}
-		if n.Rt6Amount != "" && refund.GetAmount() != toCents(n.Rt6Amount) {
-			return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("amount_mismatch")), nil
-		}
-		completeStatus := int16(0)
-		switch status {
-		case "SUCCESS":
-			completeStatus = 1
-		case "FAIL", "CLOSE":
-			completeStatus = -1
-		case "INIT", "DOING":
-			completeStatus = 0
-		default:
-			completeStatus = 0
-		}
-		respBody := "status=" + status
-		if raw, e := json.Marshal(n); e == nil {
-			respBody = string(raw)
-		}
-		if err := plugin.CompleteRefund(ctx, plugin.CompleteRefundInput{
-			RefundNo:    refund.GetRefundNo(),
-			Status:      completeStatus,
-			APIRefundNo: n.Rt4SystemSerial,
-			RespBody:    respBody,
-		}); err != nil {
-			return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("fail")), nil
-		}
-	}
-	return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("success")), nil
+	return plugin.RespHTML(result), nil
 }
 
 func transferNotify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
+	result := "fail"
 	cfg, err := readConfig(req)
-	if err != nil {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeTransfer, plugin.RespHTML("fail")), nil
-	}
-	n, err := parseHelipayTransferNotify(req)
-	if err != nil {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeTransfer, plugin.RespHTML("fail")), nil
-	}
-	if !verifyNotify(n.toSignMap(), cfg.AppKey) {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeTransfer, plugin.RespHTML("fail")), nil
-	}
-	status := strings.ToUpper(n.Rt7OrderStatus)
-	transfer := req.GetTransfer()
-	if transfer != nil && transfer.GetTradeNo() != "" {
-		switch status {
-		case "SUCCESS":
-			_ = plugin.CompleteTransfer(ctx, plugin.CompleteTransferInput{TradeNo: transfer.GetTradeNo(), Status: 1, APITradeNo: n.Rt6SerialNumber, Result: n.Rt9Reason})
-		case "FAIL", "REFUND":
-			_ = plugin.CompleteTransfer(ctx, plugin.CompleteTransferInput{TradeNo: transfer.GetTradeNo(), Status: -1, APITradeNo: n.Rt6SerialNumber, Result: n.Rt9Reason})
-		case "RECEIVE", "INIT", "DOING":
-			_ = plugin.CompleteTransfer(ctx, plugin.CompleteTransferInput{TradeNo: transfer.GetTradeNo(), Status: 0, APITradeNo: n.Rt6SerialNumber, Result: n.Rt9Reason})
+	if err == nil {
+		n, parseErr := parseHelipayTransferNotify(req)
+		if parseErr == nil && verifyNotify(n.toSignMap(), cfg.AppKey) {
+			result = "success"
+			status := strings.ToUpper(n.Rt7OrderStatus)
+			transfer := req.GetTransfer()
+			if transfer != nil && transfer.GetTradeNo() != "" {
+				switch status {
+				case "SUCCESS":
+					_ = plugin.CompleteBiz(ctx, plugin.CompleteBizInput{BizType: proto.BizType_BIZ_TYPE_TRANSFER, BizNo: transfer.GetTradeNo(), State: proto.BizState_BIZ_STATE_SUCCEEDED, APIBizNo: n.Rt6SerialNumber, ChannelCode: n.Rt2RetCode, ChannelMsg: n.Rt9Reason})
+				case "FAIL", "REFUND":
+					_ = plugin.CompleteBiz(ctx, plugin.CompleteBizInput{BizType: proto.BizType_BIZ_TYPE_TRANSFER, BizNo: transfer.GetTradeNo(), State: proto.BizState_BIZ_STATE_FAILED, APIBizNo: n.Rt6SerialNumber, ChannelCode: n.Rt2RetCode, ChannelMsg: n.Rt9Reason})
+				case "RECEIVE", "INIT", "DOING":
+					_ = plugin.CompleteBiz(ctx, plugin.CompleteBizInput{BizType: proto.BizType_BIZ_TYPE_TRANSFER, BizNo: transfer.GetTradeNo(), State: proto.BizState_BIZ_STATE_PROCESSING, APIBizNo: n.Rt6SerialNumber, ChannelCode: n.Rt2RetCode, ChannelMsg: n.Rt9Reason})
+				}
+			}
 		}
 	}
-	return plugin.RecordNotify(ctx, req, plugin.BizTypeTransfer, plugin.RespHTML("success")), nil
+	return plugin.RespHTML(result), nil
+}
+
+func mapStatusToBizState(status int16) proto.BizState {
+	switch status {
+	case 1:
+		return proto.BizState_BIZ_STATE_SUCCEEDED
+	case -1:
+		return proto.BizState_BIZ_STATE_FAILED
+	default:
+		return proto.BizState_BIZ_STATE_PROCESSING
+	}
 }
 
 type helipayOrderNotify struct {

@@ -10,104 +10,141 @@ import (
 )
 
 func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
+	result := "fail"
 	order := req.GetOrder()
 	cfg, err := readConfig(req)
-	if err != nil {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
-	}
-	n, err := parseJoinpayOrderNotify(req)
-	if err != nil {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("fail")), nil
-	}
-	if !verifyJoinpay(n.toSignMap(), joinpayNotifyFields, cfg.AppKey) {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("sign_error")), nil
-	}
-	if n.R6Status != "100" {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("status="+n.R6Status)), nil
-	}
-	if order != nil {
-		if n.R2OrderNo != order.GetTradeNo() {
-			return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("order_mismatch")), nil
+	if err == nil {
+		n, parseErr := parseJoinpayOrderNotify(req)
+		if parseErr == nil {
+			if !verifyJoinpay(n.toSignMap(), joinpayNotifyFields, cfg.AppKey) {
+				result = "sign_error"
+			} else if n.R6Status != "100" {
+				result = "status=" + n.R6Status
+			} else if order != nil {
+				if n.R2OrderNo != order.GetTradeNo() {
+					result = "order_mismatch"
+				} else if order.GetReal() != toCents(n.R3Amount) {
+					result = "amount_mismatch"
+				} else if completeErr := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
+					BizType:  proto.BizType_BIZ_TYPE_ORDER,
+					BizNo:    order.GetTradeNo(),
+					State:    proto.BizState_BIZ_STATE_SUCCEEDED,
+					APIBizNo: n.R7TrxNo,
+					Buyer:    n.RdOpenId,
+				}); completeErr == nil {
+					result = "success"
+				}
+			} else {
+				result = "success"
+			}
 		}
-		if order.GetReal() != toCents(n.R3Amount) {
-			return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("amount_mismatch")), nil
-		}
-		_ = plugin.CompleteOrder(ctx, plugin.CompleteOrderInput{TradeNo: order.GetTradeNo(), APITradeNo: n.R7TrxNo, Buyer: n.RdOpenId})
 	}
-	return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML("success")), nil
+	return plugin.RespHTML(result), nil
 }
 
 func refundNotify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
+	result := "fail"
 	refund := req.GetRefund()
 	cfg, err := readConfig(req)
-	if err != nil {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("fail")), nil
-	}
-	n, err := parseJoinpayRefundNotify(req)
-	if err != nil {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("fail")), nil
-	}
-	if !verifyJoinpay(n.toSignMap(), joinpayRefundResponseFields, cfg.AppKey) {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("sign_error")), nil
-	}
-	status := n.RaStatus
-	if refund == nil {
-		if status == "100" {
-			return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("success")), nil
+	if err == nil {
+		n, parseErr := parseJoinpayRefundNotify(req)
+		if parseErr == nil {
+			if !verifyJoinpay(n.toSignMap(), joinpayRefundResponseFields, cfg.AppKey) {
+				result = "sign_error"
+			} else {
+				status := n.RaStatus
+				if refund == nil {
+					if status == "100" {
+						result = "success"
+					} else {
+						result = "status=" + status
+					}
+				} else if n.R3RefundOrderNo != refund.GetRefundNo() {
+					result = "refund_mismatch"
+				} else if refund.GetAmount() != toCents(n.R4RefundAmount) {
+					result = "amount_mismatch"
+				} else {
+					state := joinpayRefundState(status)
+					if completeErr := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
+						BizType:     proto.BizType_BIZ_TYPE_REFUND,
+						BizNo:       refund.GetRefundNo(),
+						State:       state,
+						APIBizNo:    n.R5RefundTrxNo,
+						ChannelCode: status,
+						ChannelMsg:  n.RcCodeMsg,
+						RespBody:    n.RcCodeMsg,
+					}); completeErr == nil {
+						if status == "100" {
+							result = "success"
+						} else {
+							result = "status=" + status
+						}
+					}
+				}
+			}
 		}
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("status="+status)), nil
 	}
-	if n.R3RefundOrderNo != refund.GetRefundNo() {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("refund_mismatch")), nil
-	}
-	if refund.GetAmount() != toCents(n.R4RefundAmount) {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("amount_mismatch")), nil
-	}
-	if status == "100" {
-		_ = plugin.CompleteRefund(ctx, plugin.CompleteRefundInput{RefundNo: refund.GetRefundNo(), Status: 1, APIRefundNo: n.R5RefundTrxNo, RespBody: n.RcCodeMsg})
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("success")), nil
-	}
-	if status == "101" {
-		_ = plugin.CompleteRefund(ctx, plugin.CompleteRefundInput{RefundNo: refund.GetRefundNo(), Status: -1, APIRefundNo: n.R5RefundTrxNo, RespBody: n.RcCodeMsg})
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("status="+status)), nil
-	}
-	_ = plugin.CompleteRefund(ctx, plugin.CompleteRefundInput{RefundNo: refund.GetRefundNo(), Status: 0, APIRefundNo: n.R5RefundTrxNo, RespBody: n.RcCodeMsg})
-	return plugin.RecordNotify(ctx, req, plugin.BizTypeRefund, plugin.RespHTML("status="+status)), nil
+	return plugin.RespHTML(result), nil
 }
 
 func transferNotify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
+	result := "fail"
 	transfer := req.GetTransfer()
 	cfg, err := readConfig(req)
-	if err != nil {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeTransfer, plugin.RespHTML("fail")), nil
-	}
-	n, err := parseJoinpayTransferNotify(req)
-	if err != nil {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeTransfer, plugin.RespHTML("fail")), nil
-	}
-	if !verifyJoinpay(n.toSignMap(), joinpayTransferNotifyFields, cfg.AppKey) {
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeTransfer, plugin.RespHTML("sign_error")), nil
-	}
-	status := n.Status
-	successStatus := map[string]bool{"205": true}
-	failStatus := map[string]bool{"204": true, "208": true, "214": true}
-
-	if transfer == nil {
-		if successStatus[status] {
-			return plugin.RecordNotify(ctx, req, plugin.BizTypeTransfer, plugin.RespHTML("success")), nil
+	if err == nil {
+		n, parseErr := parseJoinpayTransferNotify(req)
+		if parseErr == nil {
+			if !verifyJoinpay(n.toSignMap(), joinpayTransferNotifyFields, cfg.AppKey) {
+				result = "sign_error"
+			} else {
+				status := n.Status
+				state := joinpayTransferState(status)
+				if transfer == nil {
+					if state == proto.BizState_BIZ_STATE_SUCCEEDED {
+						result = "success"
+					} else {
+						result = "status=" + status
+					}
+				} else if completeErr := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
+					BizType:     proto.BizType_BIZ_TYPE_TRANSFER,
+					BizNo:       transfer.GetTradeNo(),
+					State:       state,
+					APIBizNo:    n.PlatformSerialNo,
+					ChannelCode: n.ErrorCode,
+					ChannelMsg:  n.ErrorCodeDesc,
+				}); completeErr == nil {
+					if state == proto.BizState_BIZ_STATE_SUCCEEDED {
+						result = "success"
+					} else {
+						result = "status=" + status
+					}
+				}
+			}
 		}
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeTransfer, plugin.RespHTML("status="+status)), nil
 	}
-	if successStatus[status] {
-		_ = plugin.CompleteTransfer(ctx, plugin.CompleteTransferInput{TradeNo: transfer.GetTradeNo(), Status: 1, APITradeNo: n.PlatformSerialNo, Result: n.ErrorCodeDesc})
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeTransfer, plugin.RespHTML("success")), nil
+	return plugin.RespHTML(result), nil
+}
+
+func joinpayRefundState(status string) proto.BizState {
+	switch status {
+	case "100":
+		return proto.BizState_BIZ_STATE_SUCCEEDED
+	case "101":
+		return proto.BizState_BIZ_STATE_FAILED
+	default:
+		return proto.BizState_BIZ_STATE_PROCESSING
 	}
-	if failStatus[status] {
-		_ = plugin.CompleteTransfer(ctx, plugin.CompleteTransferInput{TradeNo: transfer.GetTradeNo(), Status: -1, APITradeNo: n.PlatformSerialNo, Result: n.ErrorCodeDesc})
-		return plugin.RecordNotify(ctx, req, plugin.BizTypeTransfer, plugin.RespHTML("status="+status)), nil
+}
+
+func joinpayTransferState(status string) proto.BizState {
+	switch status {
+	case "205":
+		return proto.BizState_BIZ_STATE_SUCCEEDED
+	case "204", "208", "214":
+		return proto.BizState_BIZ_STATE_FAILED
+	default:
+		return proto.BizState_BIZ_STATE_PROCESSING
 	}
-	_ = plugin.CompleteTransfer(ctx, plugin.CompleteTransferInput{TradeNo: transfer.GetTradeNo(), Status: 0, APITradeNo: n.PlatformSerialNo, Result: n.ErrorCodeDesc})
-	return plugin.RecordNotify(ctx, req, plugin.BizTypeTransfer, plugin.RespHTML("status="+status)), nil
 }
 
 type joinpayOrderNotify struct {

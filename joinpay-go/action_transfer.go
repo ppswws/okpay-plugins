@@ -12,7 +12,7 @@ import (
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
-func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferResponse, error) {
+func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, error) {
 	transfer := req.GetTransfer()
 	if transfer == nil || transfer.GetTradeNo() == "" {
 		return nil, fmt.Errorf("代付单为空")
@@ -46,7 +46,10 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferRes
 	}
 	resp, stats, err := transferOrder(ctx, cfg, params)
 	if err != nil {
-		return plugin.RespTransfer(-1, "", stats.ReqBody, stats.RespBody, err.Error(), stats.ReqMs), nil
+		return plugin.ResultFail(plugin.BizResultInput{
+			ChannelMsg: err.Error(),
+			Stats:      stats,
+		}), nil
 	}
 	statusCode := resp["statusCode"]
 	message := resp["message"]
@@ -54,9 +57,21 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferRes
 		if message == "" {
 			message = "代付受理失败"
 		}
-		return plugin.RespTransfer(-1, "", stats.ReqBody, stats.RespBody, message, stats.ReqMs), nil
+		return plugin.ResultFail(plugin.BizResultInput{
+			ChannelCode: statusCode,
+			ChannelMsg:  message,
+			Stats:       stats,
+		}), nil
 	}
-	return plugin.RespTransfer(0, "", stats.ReqBody, stats.RespBody, "", stats.ReqMs), nil
+	result := message
+	if result == "" {
+		result = statusCode
+	}
+	return plugin.ResultPending(plugin.BizResultInput{
+		ChannelCode: statusCode,
+		ChannelMsg:  result,
+		Stats:       stats,
+	}), nil
 }
 
 func transferOrder(ctx context.Context, cfg *joinpayConfig, params map[string]string) (map[string]string, plugin.RequestStats, error) {

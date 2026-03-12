@@ -79,65 +79,12 @@ func lockOrderPage(ctx context.Context, tradeNo string, fetch func() (*proto.Pag
 		if err != nil {
 			return nil, stats, err
 		}
-		return pageToMap(page), stats, nil
+		return plugin.BuildReturnMap(page), stats, nil
 	})
 	if err != nil {
 		return plugin.RespError(err.Error()), nil
 	}
-	return pageFromMap(payload), nil
-}
-
-func pageToMap(page *proto.PageResponse) map[string]any {
-	if page == nil {
-		return map[string]any{"type": "error", "msg": "empty page response"}
-	}
-	out := map[string]any{"type": page.GetType()}
-	if page.GetPage() != "" {
-		out["page"] = page.GetPage()
-	}
-	if page.GetUrl() != "" {
-		out["url"] = page.GetUrl()
-	}
-	if page.GetMsg() != "" {
-		out["msg"] = page.GetMsg()
-	}
-	if len(page.GetDataJsonRaw()) > 0 {
-		var data any
-		if err := json.Unmarshal(page.GetDataJsonRaw(), &data); err == nil {
-			out["data"] = data
-		}
-	}
-	if page.GetDataText() != "" {
-		out["data"] = page.GetDataText()
-	}
-	return out
-}
-
-func pageFromMap(m map[string]any) *proto.PageResponse {
-	if m == nil {
-		return plugin.RespError("empty page payload")
-	}
-	resp := &proto.PageResponse{Type: mapString(m, "type"), Page: mapString(m, "page"), Url: mapString(m, "url"), Msg: mapString(m, "msg")}
-	if data, ok := m["data"]; ok && data != nil {
-		switch resp.GetType() {
-		case plugin.ResponseTypeHTML:
-			resp.DataText = fmt.Sprint(data)
-		default:
-			raw, _ := json.Marshal(data)
-			resp.DataJsonRaw = raw
-		}
-	}
-	if resp.GetType() == "" {
-		return plugin.RespError("invalid page payload")
-	}
-	return resp
-}
-
-func mapString(m map[string]any, key string) string {
-	if v, ok := m[key]; ok && v != nil {
-		return fmt.Sprint(v)
-	}
-	return ""
+	return plugin.BuildReturnPage(payload), nil
 }
 
 func toString(v any) string {
@@ -324,10 +271,11 @@ func buildDirectResponse(result map[string]string) (*proto.PageResponse, error) 
 		return nil, fmt.Errorf("支付数据为空")
 	}
 	lower := strings.ToLower(payload)
+	page := plugin.RespJump(payload)
 	if strings.Contains(lower, "<form") || strings.Contains(lower, "<html") {
-		return plugin.RespHTML(payload), nil
+		page = plugin.RespHTML(payload)
 	}
-	return plugin.RespJump(payload), nil
+	return page, nil
 }
 
 func buildH5Response(result map[string]string, page string) (*proto.PageResponse, error) {
@@ -336,8 +284,9 @@ func buildH5Response(result map[string]string, page string) (*proto.PageResponse
 		return nil, fmt.Errorf("支付数据为空")
 	}
 	lower := strings.ToLower(payload)
+	resp := plugin.RespPageURL(page, payload)
 	if strings.Contains(lower, "<form") || strings.Contains(lower, "<html") {
-		return plugin.RespHTML(payload), nil
+		resp = plugin.RespHTML(payload)
 	}
-	return plugin.RespPageURL(page, payload), nil
+	return resp, nil
 }

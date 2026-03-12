@@ -44,14 +44,16 @@ func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse,
 		result = "query_error"
 	} else if queryResp.Code != 1 || queryResp.Status != "1" {
 		result = "query_unpaid"
-	} else if err := plugin.CompleteOrder(ctx, plugin.CompleteOrderInput{
-		TradeNo:    order.GetTradeNo(),
-		APITradeNo: n.TradeNo,
-		Buyer:      n.Buyer,
+	} else if err := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
+		BizType:  proto.BizType_BIZ_TYPE_ORDER,
+		BizNo:    order.GetTradeNo(),
+		State:    proto.BizState_BIZ_STATE_SUCCEEDED,
+		APIBizNo: n.TradeNo,
+		Buyer:    n.Buyer,
 	}); err != nil {
 		result = "complete_error"
 	}
-	return plugin.RecordNotify(ctx, req, plugin.BizTypeOrder, plugin.RespHTML(result)), nil
+	return plugin.RespHTML(result), nil
 }
 
 func parseEpayNotify(req *proto.InvokeContext) (*epayNotifyParams, error) {

@@ -9,16 +9,20 @@ import (
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
-func balance(ctx context.Context, req *proto.InvokeContext) (*proto.BalanceResponse, error) {
+func balance(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, error) {
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
 	}
-	balanceValue, _, err := queryBalance(ctx, cfg)
+	balanceValue, stats, err := queryBalance(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return plugin.RespBalance(balanceValue), nil
+	return plugin.ResultBal(plugin.BizResultInput{
+		Balance:    balanceValue,
+		ChannelMsg: "余额查询成功",
+		Stats:      stats,
+	}), nil
 }
 
 func queryBalance(ctx context.Context, cfg *helipayConfig) (string, plugin.RequestStats, error) {

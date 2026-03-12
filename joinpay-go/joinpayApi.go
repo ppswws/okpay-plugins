@@ -9,11 +9,13 @@ import (
 )
 
 const (
-	joinpayPayURL      = "https://trade.joinpay.com/tradeRt/uniPay"
-	joinpayRefundURL   = "https://trade.joinpay.com/tradeRt/refund"
-	joinpayQueryURL    = "https://trade.joinpay.com/tradeRt/queryOrder"
-	joinpayTransferURL = "https://www.joinpay.com/payment/pay/singlePay"
-	joinpayBalanceURL  = "https://www.joinpay.com/payment/pay/accountBalanceQuery"
+	joinpayPayURL           = "https://trade.joinpay.com/tradeRt/uniPay"
+	joinpayRefundURL        = "https://trade.joinpay.com/tradeRt/refund"
+	joinpayRefundQueryURL   = "https://trade.joinpay.com/tradeRt/queryRefund"
+	joinpayQueryURL         = "https://trade.joinpay.com/tradeRt/queryOrder"
+	joinpayTransferURL      = "https://www.joinpay.com/payment/pay/singlePay"
+	joinpayTransferQueryURL = "https://www.joinpay.com/payment/pay/singlePayQuery"
+	joinpayBalanceURL       = "https://www.joinpay.com/payment/pay/accountBalanceQuery"
 )
 
 var httpClient = plugin.NewHTTPClient(plugin.HTTPClientConfig{})
@@ -35,16 +37,20 @@ var (
 		"r8_BankOrderNo", "r9_BankTrxNo", "ra_PayTime", "rb_DealTime", "rc_BankCode", "rd_OpenId",
 		"re_DiscountAmount", "rh_cardType", "rj_Fee", "rk_FrpCode", "rl_ContractId", "rm_SpecialInfo", "ro_SettleAmount",
 	}
-	joinpayRefundRequestFields       = []string{"p0_Version", "p1_MerchantNo", "p2_OrderNo", "p3_RefundOrderNo", "p4_RefundAmount", "p5_RefundReason", "p6_NotifyUrl", "pa_FundsAccount"}
-	joinpayRefundResponseFields      = []string{"r0_Version", "r1_MerchantNo", "r2_OrderNo", "r3_RefundOrderNo", "r4_RefundAmount", "r5_RefundTrxNo", "ra_Status", "rb_Code", "rc_CodeMsg", "re_FundsAccount"}
-	joinpayQueryRequestFields        = []string{"p0_Version", "p1_MerchantNo", "p2_OrderNo"}
-	joinpayQueryResponseFields       = []string{"r0_Version", "r1_MerchantNo", "r2_OrderNo", "r3_Amount", "r4_ProductName", "r5_TrxNo", "r6_BankTrxNo", "r7_Fee", "r8_FrpCode", "ra_Status", "rb_Code", "rc_CodeMsg", "rd_OpenId", "re_DiscountAmount", "rf_PayTime", "rh_cardType", "rj_BankCode", "rl_ContractId", "rm_SpecialInfo", "ro_SettleAmount"}
-	joinpayTransferRequestFields     = []string{"userNo", "tradeMerchantNo", "productCode", "requestTime", "merchantOrderNo", "receiverAccountNoEnc", "receiverNameEnc", "receiverAccountType", "receiverBankChannelNo", "paidAmount", "currency", "isChecked", "paidDesc", "paidUse", "callbackUrl", "firstProductCode"}
-	joinpayTransferResponseFields    = []string{"errorCode", "errorDesc", "userNo", "merchantOrderNo"}
-	joinpayTransferNotifyFields      = []string{"status", "errorCode", "errorCodeDesc", "userNo", "tradeMerchantNo", "merchantOrderNo", "platformSerialNo", "receiverAccountNoEnc", "receiverNameEnc", "paidAmount", "fee"}
-	joinpayBalanceRequestFields      = []string{"userNo"}
-	joinpayBalanceResponseFields     = []string{"userNo", "userName", "currency", "useAbleSettAmount", "availableSettAmountFrozen", "errorCode", "errorDesc"}
-	joinpayBalanceResponseSignFields = []string{"statusCode", "message", "userNo", "userName", "currency", "useAbleSettAmount", "availableSettAmountFrozen", "errorCode", "errorDesc"}
+	joinpayRefundRequestFields         = []string{"p0_Version", "p1_MerchantNo", "p2_OrderNo", "p3_RefundOrderNo", "p4_RefundAmount", "p5_RefundReason", "p6_NotifyUrl", "pa_FundsAccount"}
+	joinpayRefundResponseFields        = []string{"r0_Version", "r1_MerchantNo", "r2_OrderNo", "r3_RefundOrderNo", "r4_RefundAmount", "r5_RefundTrxNo", "ra_Status", "rb_Code", "rc_CodeMsg", "re_FundsAccount"}
+	joinpayRefundQueryRequestFields    = []string{"p0_Version", "p1_MerchantNo", "p2_RefundOrderNo"}
+	joinpayRefundQueryResponseFields   = []string{"r0_Version", "r1_MerchantNo", "r2_RefundOrderNo", "r3_RefundAmount", "r4_RefundTrxNo", "r5_RefundCompleteTime", "r8_RefundWay", "r9_ReceiveAccountNo", "ra_Status", "rb_Code", "rc_CodeMsg", "rd_MarketRefAmount", "re_FundsAccount"}
+	joinpayQueryRequestFields          = []string{"p0_Version", "p1_MerchantNo", "p2_OrderNo"}
+	joinpayQueryResponseFields         = []string{"r0_Version", "r1_MerchantNo", "r2_OrderNo", "r3_Amount", "r4_ProductName", "r5_TrxNo", "r6_BankTrxNo", "r7_Fee", "r8_FrpCode", "ra_Status", "rb_Code", "rc_CodeMsg", "rd_OpenId", "re_DiscountAmount", "rf_PayTime", "rh_cardType", "rj_BankCode", "rl_ContractId", "rm_SpecialInfo", "ro_SettleAmount"}
+	joinpayTransferRequestFields       = []string{"userNo", "tradeMerchantNo", "productCode", "requestTime", "merchantOrderNo", "receiverAccountNoEnc", "receiverNameEnc", "receiverAccountType", "receiverBankChannelNo", "paidAmount", "currency", "isChecked", "paidDesc", "paidUse", "callbackUrl", "firstProductCode"}
+	joinpayTransferResponseFields      = []string{"errorCode", "errorDesc", "userNo", "merchantOrderNo"}
+	joinpayTransferQueryRequestFields  = []string{"userNo", "merchantOrderNo"}
+	joinpayTransferQueryResponseFields = []string{"status", "errorCode", "errorDesc", "userNo", "tradeMerchantNo", "merchantOrderNo", "platformSerialNo", "receiverAccountNoEnc", "receiverNameEnc", "paidAmount", "fee"}
+	joinpayTransferNotifyFields        = []string{"status", "errorCode", "errorCodeDesc", "userNo", "tradeMerchantNo", "merchantOrderNo", "platformSerialNo", "receiverAccountNoEnc", "receiverNameEnc", "paidAmount", "fee"}
+	joinpayBalanceRequestFields        = []string{"userNo"}
+	joinpayBalanceResponseFields       = []string{"userNo", "userName", "currency", "useAbleSettAmount", "availableSettAmountFrozen", "errorCode", "errorDesc"}
+	joinpayBalanceResponseSignFields   = []string{"statusCode", "message", "userNo", "userName", "currency", "useAbleSettAmount", "availableSettAmountFrozen", "errorCode", "errorDesc"}
 )
 
 type joinpayConfig struct {

@@ -5,11 +5,11 @@ import (
 	"strings"
 
 	"github.com/go-pay/gopay"
-	plugin "github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk"
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
-func balance(ctx context.Context, req *proto.InvokeContext) (*proto.BalanceResponse, error) {
+func balance(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, error) {
 	cfg, err := readConfig(req)
 	if err != nil {
 		return nil, err
@@ -30,11 +30,13 @@ func balance(ctx context.Context, req *proto.InvokeContext) (*proto.BalanceRespo
 	if err != nil {
 		return nil, err
 	}
-	if resp == nil || resp.Response == nil {
-		return plugin.RespBalance("0"), nil
+	balance := "0"
+	if resp != nil && resp.Response != nil && resp.Response.AvailableAmount != "" {
+		balance = resp.Response.AvailableAmount
 	}
-	if resp.Response.AvailableAmount == "" {
-		return plugin.RespBalance("0"), nil
-	}
-	return plugin.RespBalance(resp.Response.AvailableAmount), nil
+	return plugin.ResultBal(plugin.BizResultInput{
+		Balance:    balance,
+		ChannelMsg: "余额查询成功",
+		Stats:      plugin.RequestStats{},
+	}), nil
 }

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/ppswws/okpay-plugin-sdk"
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
@@ -38,7 +37,7 @@ func epayQuery(ctx context.Context, cfg *epayConfig, order *proto.OrderSnapshot)
 	return resp, nil
 }
 
-func query(ctx context.Context, req *proto.InvokeContext) (*proto.QueryResponse, error) {
+func query(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, error) {
 	order := req.GetOrder()
 	if order == nil || order.GetTradeNo() == "" {
 		return nil, fmt.Errorf("订单为空")
@@ -51,9 +50,16 @@ func query(ctx context.Context, req *proto.InvokeContext) (*proto.QueryResponse,
 	if err != nil {
 		return nil, err
 	}
-	state := 0
+	state := proto.BizState_BIZ_STATE_PROCESSING
+	msg := "交易处理中"
 	if resp.Code == 1 && resp.Status == "1" {
-		state = 1
+		state = proto.BizState_BIZ_STATE_SUCCEEDED
+		msg = "交易成功"
 	}
-	return plugin.RespQuery(state, resp.APITradeNo), nil
+	return &proto.BizResult{
+		State:       state,
+		ApiBizNo:    resp.APITradeNo,
+		ChannelCode: fmt.Sprintf("%d", resp.Code),
+		ChannelMsg:  msg,
+	}, nil
 }

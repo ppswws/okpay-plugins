@@ -1,0 +1,389 @@
+统一收单交易退款查询
+支持第三方代理调用
+统一收单交易退款查询
+收藏
+
+订阅更新
+我的文档
+设置
+OpenAPI（V3版）服务端Java SDK（alipay-sdk-java）在2.8.0.ALL（含）版本之前存在无法兼容接口新版本的风险，建议参考公告尽快升级。
+接口说明
+接口英文名称：alipay.trade.fastpay.refund.query
+请求url：https://openapi.alipay.com/v3/alipay/trade/fastpay/refund/query
+请求方式：POST
+path指该参数为路径参数
+query指该参数需在请求URL传参
+body指该参数需在请求JSON传参
+通用场景
+商户可使用该接口查询自已通过alipay.trade.refund提交的退款请求是否执行成功。
+注意：
+1. 该接口的返回码10000，仅代表本次查询操作成功，不代表退款成功，当接口返回的refund_status值为REFUND_SUCCESS时表示退款成功，否则表示退款没有执行成功。
+2. 如果退款未成功，商户可以调用退款接口重试，重试时请务必保证退款请求号和退款金额一致，防止重复退款。
+3. 发起退款查询接口的时间不能离退款请求时间太短，建议之间间隔10秒以上。
+公共请求参数
+业务请求参数
+body参数
+out_request_no必选string(64)
+【描述】退款请求号。 请求退款接口时，传入的退款请求号，如果在退款请求时未传入，则该值为创建交易时的商户订单号。
+【示例值】HZ01RF001
+以下参数 二选一 传入
+trade_nostring(64)
+【描述】支付宝交易号。 和商户订单号不能同时为空
+【示例值】2021081722001419121412730660
+out_trade_nostring(64)
+【描述】商户订单号。 订单支付时传入的商户订单号,和支付宝交易号不能同时为空。 trade_no,out_trade_no如果同时存在优先取trade_no
+【示例值】2014112611001004680073956707
+query_options可选string[](1024)
+【描述】查询选项，商户通过上送该参数来定制同步需要额外返回的信息字段，数组格式。枚举支持： refund_detail_item_list：本次退款使用的资金渠道； gmt_refund_pay：退款执行成功的时间； deposit_back_info：银行卡冲退信息；
+【枚举值】
+本次退款使用的资金渠道: refund_detail_item_list
+退款执行成功的时间: gmt_refund_pay
+银行卡冲退信息: deposit_back_info
+更多
+【示例值】["refund_detail_item_list"]
+常见请求示例
+默认示例
+cURLJavaC#PHP
+curl -X POST \
+ "https://openapi.alipay.com/v3/alipay/trade/fastpay/refund/query" \
+ -H "authorization: ALIPAY-SHA256withRSA app_id=${appid},timestamp=${now},nonce=${uuid},expired_seconds=600,sign=${sign}" \
+ -H "alipay-request-id: ${requestid}" \
+ -H "alipay-app-auth-token: ${app_auth_token}" \
+ -H "Content-Type: application/json" \
+ -d '{
+	"trade_no":"2021081722001419121412730660",
+	"out_trade_no":"2014112611001004680073956707",
+	"out_request_no":"HZ01RF001",
+	"query_options":[
+		"refund_detail_item_list"
+	]
+}'
+说明：本示例仅供参考。
+公共响应参数
+业务响应参数
+展开所有属性
+trade_no特殊可选string(64)
+【描述】支付宝交易号
+【示例值】2014112611001004680073956707
+out_trade_no特殊可选string(64)
+【描述】创建交易传入的商户订单号
+【示例值】20150320010101001
+out_request_no特殊可选string(64)
+【描述】本笔退款对应的退款请求号
+【示例值】20150320010101001
+total_amount特殊可选price(11)
+【描述】该笔退款所对应的交易的订单金额。单位：元。
+【示例值】100.20
+refund_amount特殊可选price(11)
+【描述】本次退款请求，对应的退款金额。单位：元。
+【示例值】12.33
+refund_status特殊可选string(32)
+【描述】退款状态。枚举值： REFUND_SUCCESS 退款处理成功； 未返回该字段表示退款请求未收到或者退款失败； 注：如果退款查询发起时间早于退款时间，或者间隔退款发起时间太短，可能出现退款查询时还没处理成功，后面又处理成功的情况，建议商户在退款发起后间隔10秒以上再发起退款查询请求。
+【枚举值】
+退款处理成功: REFUND_SUCCESS
+【示例值】REFUND_SUCCESS
+refund_royaltys特殊可选RefundRoyaltyResult[]
+【描述】退分账明细信息，当前仅在直付通产品中返回。
+gmt_refund_pay特殊可选date(32)
+【描述】退款时间。默认不返回该信息，需要在入参的query_options中指定"gmt_refund_pay"值时才返回该字段信息。
+【示例值】2014-11-27 15:45:57
+refund_detail_item_list特殊可选TradeFundBill[]
+【描述】本次退款使用的资金渠道； 默认不返回该信息，需要在入参的query_options中指定"refund_detail_item_list"值时才返回该字段信息。
+send_back_fee特殊可选string(11)
+【描述】本次商户实际退回金额；单位：元。 默认不返回该信息，需要在入参的query_options中指定"refund_detail_item_list"值时才返回该字段信息。
+【示例值】88
+deposit_back_info特殊可选DepositBackInfo
+【描述】银行卡冲退信息； 默认不返回该信息，需要在入参的query_options中指定"deposit_back_info"值时才返回该字段信息。
+refund_voucher_detail_list特殊可选VoucherDetail[]
+【描述】本交易支付时使用的所有优惠券信息。 只有在query_options中指定refund_voucher_detail_list时才返回该字段信息。
+【必选条件】query_options中包含refund_voucher_detail_list时，才会返回券信息列表
+pre_auth_cancel_fee｜撤销的预授权金额特殊可选string(12)
+【描述】当用户使用芝麻信用先享后付时，且当前的操作为预授权撤销动作时，会返回该字段，代表当前撤销的预授权金额，单位元。
+【必选条件】当用户使用芝麻信用先享后付时，且当前的操作为预授权撤销动作时，会返回该字段。
+【示例值】12.45
+refund_hyb_amount可选string(11)
+【描述】本次退款金额中退惠营宝的金额。单位：元。
+【示例值】10.24
+refund_charge_info_list可选RefundChargeInfo[]
+【描述】退费信息
+deposit_back_info_list可选DepositBackInfo[]
+【描述】银行卡冲退信息列表。 默认不返回该信息，需要在入参的query_options中指定"deposit_back_info_list"值时才返回该字段信息。
+响应示例
+正常示例
+异常示例
+{
+	"trade_no":"2014112611001004680073956707",
+	"out_trade_no":"20150320010101001",
+	"out_request_no":"20150320010101001",
+	"total_amount":"100.20",
+	"refund_amount":"12.33",
+	"refund_status":"REFUND_SUCCESS",
+	"refund_royaltys":[
+		{
+			"refund_amount":"10",
+			"royalty_type":"transfer",
+			"result_code":"SUCCESS",
+			"trans_out":"2088102210397302",
+			"trans_out_email":"alipay-test03@alipay.com",
+			"trans_in":"2088102210397302",
+			"trans_in_email":"zen_gwen@hotmail.com",
+			"ori_trans_out":"2088111111111111",
+			"ori_trans_in":"2088111111111111"
+		}
+	],
+	"gmt_refund_pay":"2014-11-27 15:45:57",
+	"refund_detail_item_list":[
+		{
+			"fund_channel":"ALIPAYACCOUNT",
+			"amount":"10",
+			"real_amount":"11.21",
+			"fund_type":"DEBIT_CARD"
+		}
+	],
+	"send_back_fee":"88",
+	"deposit_back_info":{
+		"has_deposit_back":"true",
+		"dback_status":"S",
+		"dback_amount":"1.01",
+		"bank_ack_time":"2020-06-02 14:03:48",
+		"est_bank_receipt_time":"2020-06-02 14:03:48"
+	},
+	"refund_hyb_amount":"10.24",
+	"refund_charge_info_list":[
+		{
+			"refund_charge_fee":"0.01",
+			"switch_fee_rate":"0.01",
+			"charge_type":"trade",
+			"refund_sub_fee_detail_list":[
+				{
+					"refund_charge_fee":"0.10",
+					"switch_fee_rate":"0.01"
+				}
+			]
+		}
+	],
+	"deposit_back_info_list":[
+		{
+			"has_deposit_back":"true",
+			"dback_status":"S",
+			"dback_amount":"1.01",
+			"bank_ack_time":"2020-06-02 14:03:48",
+			"est_bank_receipt_time":"2020-06-02 14:03:48"
+		}
+	],
+	"refund_voucher_detail_list":[
+		{
+			"id":"2015102600073002039000002D5O",
+			"name":"XX超市5折优惠",
+			"type":"ALIPAY_FIX_VOUCHER",
+			"amount":"10.00",
+			"merchant_contribute":"9.00",
+			"other_contribute":"1.00",
+			"memo":"学生专用优惠",
+			"template_id":"20171030000730015359000EMZP0",
+			"other_contribute_detail":[
+				{
+					"contribute_type":"BRAND",
+					"contribute_amount":"8.00"
+				}
+			],
+			"purchase_buyer_contribute":"2.01",
+			"purchase_merchant_contribute":"1.03",
+			"purchase_ant_contribute":"0.82"
+		}
+	],
+	"pre_auth_cancel_fee":"12.45"
+}
+说明：本示例仅供参考。
+公共错误码
+前往查看
+业务错误码
+状态码	错误码	错误描述	解决方案
+400	ACQ.ENTERPRISE_PAY_BIZ_ERROR	因公付业务异常	
+重新发起查询请求，如果多次重试后仍返回同样的错误，请联系支付宝小二处理
+400	ACQ.INVALID_PARAMETER	参数无效	
+请根据接口返回的错误信息，检查请求参数，修改后重新发起请求
+400	ACQ.SYSTEM_ERROR	系统错误	
+重新发起查询请求，如果多次重试后还是返回系统错误，请联系支付宝小二处理
+400	ACQ.TRADE_NOT_EXIST	交易不存在	
+请确认传入的外部订单号或交易号是否正确
+400	TRADE_NOT_EXIST	查询退款的交易不存在	
+确认交易号是否为正确的支付宝交易号，修改后重新查询
+
+
+
+
+转账业务单据查询接口
+转账业务单据查询接口
+收藏
+
+订阅更新
+我的文档
+设置
+OpenAPI（V3版）服务端Java SDK（alipay-sdk-java）在2.8.0.ALL（含）版本之前存在无法兼容接口新版本的风险，建议参考公告尽快升级。
+接口说明
+接口英文名称：alipay.fund.trans.common.query
+请求url：https://openapi.alipay.com/v3/alipay/fund/trans/common/query
+请求方式：GET
+path指该参数为路径参数
+query指该参数需在请求URL传参
+body指该参数需在请求JSON传参
+通用场景
+商户可通过该接口查询转账业务单据的状态，主要应用于统一转账接口(alipay.fund.trans.uni.transfer)、无线转账接口(alipay.fund.trans.app.pay)、单笔转账到支付宝账户接口（alipay.fund.trans.toaccount.transfer）
+公共请求参数
+参数	类型	是否必选	最大长度	描述	示例值
+authorization	String	必选	1024	
+请求身份信息，参考验签规则。在header参数中传递
+content-type	String	可选	32	
+报文内容格式，默认需要使用application/json，加密请求使用text/plain，参考请求规则。在header参数中传递
+application/json
+x-http-method-override	String	可选	16	
+HTTP方法，对于部分不支持PUT、PATCH、DELETE等操作的情况，可以使用POST发送请求，并通过该参数传输实际需要使用的HTTP Method，参考请求规则。在header参数中传递
+PUT
+alipay-request-id	String	可选	32	
+调用方的requestId，用于定位一次请求，需要每次请求保持唯一。排查问题时可以提供该字段，参考请求规则。在header参数中传递。
+0ba7cddb1665744697169391253118
+alipay-encrypt-type	String	可选	16	
+加密算法，请求使用加密能力时，需要指定加密算法，参考加解密规则。在header参数中传递
+AES
+alipay-root-cert-sn	String	可选	128	
+支付宝根证书序列号。证书模式时，可传入该参数，支付宝服务端会校验序列号，确保调用方的证书未被篡改，参考验签规则。在header参数中传递
+687b59193f3f462dd5336e5abf83c5d8_02941eef3187dddf3d3b83462e1dfcf6
+业务请求参数
+query参数
+product_code可选string[13,64]
+【描述】销售产品码，商家和支付宝签约的产品码，如果传递了out_biz_no则该字段为必传。可传值如下： STD_RED_PACKET：现金红包 TRANS_ACCOUNT_NO_PWD：单笔无密转账到支付宝账户 TRANS_BANKCARD_NO_PWD：单笔无密转账到银行卡
+【示例值】STD_RED_PACKET
+biz_scene可选string[6,64]
+【描述】描述特定的业务场景，如果传递了out_biz_no则该字段为必传。可取的业务场景如下： PERSONAL_PAY：C2C现金红包-发红包； PERSONAL_COLLECTION：C2C现金红包-领红包； REFUND：C2C现金红包-红包退回； DIRECT_TRANSFER：B2C现金红包、单笔无密转账
+【示例值】PERSONAL_PAY
+out_biz_no可选string[0,64]
+【描述】商户转账唯一订单号，发起转账来源方定义的转账单据ID。 本参数和order_id（支付宝转账单据号）、pay_fund_order_id（支付宝支付资金流水号）三者不能同时为空。 当三者同时传入时，将用pay_fund_order_id（支付宝支付资金流水号）进行查询，忽略其余两者； 当本参数和支付宝转账单据号同时提供时，将用支付宝转账单据号进行查询，忽略本参数。
+【示例值】201808080001
+order_id可选string[0,32]
+【描述】支付宝转账单据号。 本参数和out_biz_no（商户转账唯一订单号）、pay_fund_order_id（支付宝支付资金流水号）三者不能同时为空。 当三者同时传入时，将用pay_fund_order_id（支付宝支付资金流水号）进行查询，忽略其余两者； 当本参数和pay_fund_order_id（支付宝支付资金流水号）同时提供时，将用支付宝支付资金流水号进行查询，忽略本参数； 当本参数和out_biz_no（商户转账唯一订单号）同时提供时，将用本参数进行查询，忽略商户转账唯一订单号。
+【示例值】20190801110070000006380000250621
+pay_fund_order_id可选string[0,32]
+【描述】支付宝支付资金流水号。本参数和支付宝转账单据号、商户转账唯一订单号三者不能同时为空。 当本参数和out_biz_no（商户转账唯一订单号）、order_id（支付宝转账单据号）同时提供时，将用本参数进行查询，忽略其余两者； 当本参数和order_id（支付宝转账单据号）同时提供时，将用本参数进行查询，忽略支付宝转账单据号； 当本参数和out_biz_no（商户转账唯一订单号）同时提供时，将用本参数进行查询，忽略商户转账唯一订单号。
+【示例值】20190801110070001506380000251556
+常见请求示例
+按转账单据号查询
+按资金流水号查询
+按订单号查询
+默认示例
+cURLJavaC#PHP
+curl -X GET \
+ "https://openapi.alipay.com/v3/alipay/fund/trans/common/query?product_code=STD_RED_PACKET&biz_scene=PERSONAL_PAY&out_biz_no=201808080001&order_id=20190801110070000006380000250621" \
+ -H "authorization: ALIPAY-SHA256withRSA app_id=${appid},timestamp=${now},nonce=${uuid},expired_seconds=600,sign=${sign}" \
+ -H "alipay-request-id: ${requestid}" \
+ -H "Content-Type: application/json" \
+ -d '{}'
+说明：本示例仅供参考。
+公共响应参数
+业务响应参数
+inflow_settle_serial_no｜资金流入网联交易流水号必选string(64)
+【描述】金融机构发起签约类、支付类、差错类业务时，应为每笔业务分配唯一的交易流水号。31位交易流水号组成规则为：“8位日期”+“16位序列号”+“1位预留位”+“6位控制位”，其中： a）“8位日期”为系统当前日期，ISODate格式：“YYYYMMDD” b）“16位序列号”由金融机构生成，金融机构应确保该值在网联当日唯一 c）“1位预留位”由平台分配 d）“6位控制位”由金融机构通过平台获取 例如：2023052993044491260542090100400
+【示例值】2023052993044491260542090100400
+order_id必选string(32)
+【描述】支付宝转账单据号，查询失败不返回。
+【示例值】20190801110070000006380000250621
+out_biz_no必选string(64)
+【描述】商户订单号
+【示例值】201808080001
+status必选string(64)
+【描述】转账单据状态。可能出现的状态如下： SUCCESS：转账成功； WAIT_PAY：等待支付； CLOSED：订单超时关闭； FAIL：失败（适用于"单笔转账到银行卡"）； DEALING：处理中（适用于"单笔转账到银行卡"）； REFUND：退票（适用于"单笔转账到银行卡"）； alipay.fund.trans.app.pay涉及的状态： WAIT_PAY、SUCCESS、CLOSED alipay.fund.trans.refund涉及的状态：SUCCESS alipay.fund.trans.uni.transfer涉及的状态：SUCCESS、FAIL、DEALING、REFUND
+【示例值】SUCCESS
+settle_serial_no｜清算机构流水号必选string(64)
+【描述】金融机构发起签约类、支付类、差错类业务时，应为每笔业务分配唯一的交易流水号。31位交易流水号组成规则为：“8位日期”+“16位序列号”+“1位预留位”+“6位控制位”，其中： a）“8位日期”为系统当前日期，ISODate格式：“YYYYMMDD” b）“16位序列号”由金融机构生成，金融机构应确保该值在网联当日唯一 c）“1位预留位”由平台分配 d）“6位控制位”由金融机构通过平台获取 例如：2023052993044491260542090100400
+【示例值】2023052993044491260542090100400
+以下参数 可选 
+receiver_user_id｜收款方支付宝账号uidstring(64)
+【描述】收款方支付宝账号uid新商户建议使用receiver_open_id替代该字段。对于新商户，receiver_user_id字段未来计划逐步回收，存量商户可继续使用。如使用receiver_open_id，请确认 应用-开发配置-openid配置管理 已启用。无该配置项，可查看openid配置申请。
+【示例值】2088828045603300
+receiver_open_id｜收款方支付宝账号openidstring(256)
+【描述】收款方支付宝账号openid  详情可查看 openid简介
+【示例值】074a1CcTG1LelxKe4xQC0zgNdId0nxi95b5lsNpazWYoCo5
+pay_fund_order_id特殊可选string(32)
+【描述】支付宝支付资金流水号，转账失败不返回。
+【示例值】20190801110070001506380000251556
+trans_amount特殊可选price(16)
+【描述】付款金额，收银台场景下付款成功后的支付金额，订单状态为SUCCESS才返回，其他状态不返回。付款金额，单位为元，精确到小数点后两位。
+【示例值】32.00
+pay_date特殊可选string(20)
+【描述】支付时间，格式为yyyy-MM-dd HH:mm:ss，转账失败不返回。
+【示例值】2013-01-01 08:08:08
+arrival_time_end特殊可选string(20)
+【描述】预计到账时间，转账到银行卡专用，格式为yyyy-MM-dd HH:mm:ss，转账受理失败不返回。 注意： 此参数为预计时间，可能与实际到账时间有较大误差，不能作为实际到账时间使用，仅供参考用途。
+【示例值】2013-01-01 08:08:08
+order_fee特殊可选string(20)
+【描述】预计收费金额（元），转账到银行卡专用，数字格式，精确到小数点后2位，转账失败或转账受理失败不返回。
+【示例值】0.02
+error_code特殊可选string(64)
+【描述】查询到的订单状态为FAIL失败或REFUND退票时，返回错误代码
+【示例值】PAYEE_CARD_INFO_ERROR
+fail_reason特殊可选string(128)
+【描述】查询到的订单状态为FAIL失败或REFUND退票时，返回具体的原因。
+【示例值】收款方银行卡信息有误
+sub_order_error_code特殊可选string(64)
+【描述】特殊场景提供，当子单出现异常导致主单失败或者退款时，会提供此字段，用于透出子单具体的错误场景
+【示例值】MID_ACCOUNT_CARD_INFO_ERROR
+sub_order_fail_reason特殊可选string(128)
+【描述】特殊场景提供，当子单出现异常导致主单失败或者退款时，会提供此字段，用于透出子单具体的错误场景
+【示例值】收款方银行卡信息有误
+sub_order_status特殊可选string(64)
+【描述】退款子单失败状态
+【示例值】FAIL
+fail_inst_reason｜报错银行的错误原因特殊可选string(128)
+【描述】查询到的订单状态为FAIL失败时，返回具体的原因。
+【必选条件】当 status = FAIL 时必选
+【示例值】存款金额超限
+fail_inst_name｜报错银行名称特殊可选string(64)
+【描述】查询到的订单状态为FAIL失败时，返回具体的报错银行名称
+【必选条件】当 status = FAIL 时必选
+【示例值】建设银行
+fail_inst_error_code｜报错银行的错误码特殊可选string(64)
+【描述】查询到的订单状态为FAIL失败时，返回具体报错银行的错误码。
+【必选条件】当 status = FAIL 时必选
+【示例值】01#RB623099
+sub_status｜单据子状态可选string(64)
+【描述】转账单据子状态，SUCCESS：二阶段转账领取成功；REFUNDED：二阶段转账退款
+【示例值】SUCCESS
+响应示例
+正常示例
+异常示例
+{
+	"inflow_settle_serial_no":"2023052993044491260542090100400",
+	"order_id":"20190801110070000006380000250621",
+	"pay_fund_order_id":"20190801110070001506380000251556",
+	"out_biz_no":"201808080001",
+	"trans_amount":"32.00",
+	"status":"SUCCESS",
+	"pay_date":"2013-01-01 08:08:08",
+	"sub_status":"SUCCESS",
+	"arrival_time_end":"2013-01-01 08:08:08",
+	"order_fee":"0.02",
+	"error_code":"PAYEE_CARD_INFO_ERROR",
+	"fail_reason":"收款方银行卡信息有误",
+	"sub_order_error_code":"MID_ACCOUNT_CARD_INFO_ERROR",
+	"sub_order_fail_reason":"收款方银行卡信息有误",
+	"sub_order_status":"FAIL",
+	"settle_serial_no":"2023052993044491260542090100400",
+	"receiver_user_id":"2088828045603300",
+	"receiver_open_id":"074a1CcTG1LelxKe4xQC0zgNdId0nxi95b5lsNpazWYoCo5",
+	"fail_inst_reason":"存款金额超限",
+	"fail_inst_name":"建设银行",
+	"fail_inst_error_code":"01#RB623099"
+}
+说明：本示例仅供参考。
+公共错误码
+前往查看
+业务错误码
+状态码	错误码	错误描述	解决方案
+400	SYSTEM_ERROR	系统繁忙	
+服务器异常 可能发生了网络或者系统异常，导致服务调用失败，商户可以用同样的请求发起重试
+400	INVALID_PARAMETER	参数有误	
+请根据接口返回的参数非法的具体错误信息，修改参数后进行重试
+400	NO_ORDER_PERMISSION	当前操作用户没有该笔单据的操作权限	
+当前操作用户（requestUserId）与单据所属用户（partnerid）需要保持一致
+400	ORDER_NOT_EXIST	转账订单不存在	
+转账订单不存在的原因,可能是转账还在处理中,也可能是转账处理失败,导致转账订单没有落地。商户首先需要检查该订单号是否确实是自己发起的, 如果确认是自己发起的转账订单,请不要直接当作转账失败处理,请隔几分钟再尝试查询,或者通过相同的 out_biz_no 再次发起转账。如果误把还在转账处理中的订单直接当转账失败处理,商户自行承担因此而产生的所有损失。

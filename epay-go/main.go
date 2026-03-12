@@ -16,31 +16,7 @@ func (s *epayService) Info(ctx context.Context, _ *proto.PluginInfoRequest) (*pr
 	return info(ctx)
 }
 
-func (s *epayService) Create(ctx context.Context, req *proto.CreateRequest) (*proto.CreateResponse, error) {
-	page, err := create(ctx, req.GetCtx())
-	if err != nil {
-		return nil, err
-	}
-	return &proto.CreateResponse{Page: page}, nil
-}
-
-func (s *epayService) Query(ctx context.Context, req *proto.QueryRequest) (*proto.QueryResponse, error) {
-	return query(ctx, req.GetCtx())
-}
-
-func (s *epayService) Refund(ctx context.Context, req *proto.RefundRequest) (*proto.RefundResponse, error) {
-	return refund(ctx, req.GetCtx())
-}
-
-func (s *epayService) Transfer(ctx context.Context, req *proto.TransferRequest) (*proto.TransferResponse, error) {
-	return transfer(ctx, req.GetCtx())
-}
-
-func (s *epayService) Balance(ctx context.Context, req *proto.BalanceRequest) (*proto.BalanceResponse, error) {
-	return balance(ctx, req.GetCtx())
-}
-
-func (s *epayService) InvokeFunc(ctx context.Context, req *proto.InvokeFuncRequest) (*proto.InvokeFuncResponse, error) {
+func (s *epayService) Handle(ctx context.Context, req *proto.HandleRequest) (*proto.HandleResponse, error) {
 	invoke := req.GetCtx()
 	action := strings.TrimSpace(invoke.GetFuncName())
 	if action == "" {
@@ -67,7 +43,39 @@ func (s *epayService) InvokeFunc(ctx context.Context, req *proto.InvokeFuncReque
 	if err != nil {
 		return nil, err
 	}
-	return &proto.InvokeFuncResponse{Page: page}, nil
+	return &proto.HandleResponse{Page: page}, nil
+}
+
+func (s *epayService) Submit(ctx context.Context, req *proto.BizRequest) (*proto.BizResult, error) {
+	invoke := req.GetCtx()
+	switch req.GetBizType() {
+	case proto.BizType_BIZ_TYPE_ORDER:
+		return plugin.ResultPending(plugin.BizResultInput{
+			ChannelMsg: "请使用 Handle(create) 获取支付页面",
+			Stats:      plugin.RequestStats{},
+		}), nil
+	case proto.BizType_BIZ_TYPE_REFUND:
+		return refund(ctx, invoke)
+	case proto.BizType_BIZ_TYPE_TRANSFER:
+		return transfer(ctx, invoke)
+	default:
+		return nil, fmt.Errorf("submit 不支持的业务类型: %s", req.GetBizType().String())
+	}
+}
+
+func (s *epayService) Query(ctx context.Context, req *proto.BizRequest) (*proto.BizResult, error) {
+	invoke := req.GetCtx()
+	switch req.GetBizType() {
+	case proto.BizType_BIZ_TYPE_ORDER:
+		return query(ctx, invoke)
+	case proto.BizType_BIZ_TYPE_BALANCE:
+		return balance(ctx, invoke)
+	default:
+		return plugin.ResultPending(plugin.BizResultInput{
+			ChannelMsg: "渠道未实现该业务查询",
+			Stats:      plugin.RequestStats{},
+		}), nil
+	}
 }
 
 func main() {

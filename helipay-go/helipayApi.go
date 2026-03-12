@@ -33,6 +33,7 @@ type helipayConfig struct {
 type refundResult struct {
 	APIRefundNo string
 	RetCode     string
+	RetMsg      string
 	ReqBody     string
 	RespBody    string
 	ReqMs       int32

@@ -9,7 +9,7 @@ import (
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
-func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferResponse, error) {
+func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, error) {
 	transfer := req.GetTransfer()
 	if transfer == nil || transfer.GetTradeNo() == "" {
 		return nil, fmt.Errorf("代付单为空")
@@ -20,7 +20,10 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferRes
 	}
 	bankCode, err := inferHelipayBankCode(transfer.GetBankName())
 	if err != nil {
-		return plugin.RespTransfer(-1, "", "", "", err.Error(), 0), nil
+		return plugin.ResultFail(plugin.BizResultInput{
+			ChannelMsg: err.Error(),
+			Stats:      plugin.RequestStats{},
+		}), nil
 	}
 	globalCfg := readGlobalConfig(req)
 	notifyDomain := strings.TrimRight(globalCfg.NotifyDomain, "/")
@@ -42,16 +45,32 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.TransferRes
 	}
 	resp, stats, err := transferOrder(ctx, cfg, params)
 	if err != nil {
-		return plugin.RespTransfer(-1, "", stats.ReqBody, stats.RespBody, err.Error(), stats.ReqMs), nil
+		return plugin.ResultFail(plugin.BizResultInput{
+			ChannelMsg: err.Error(),
+			Stats:      stats,
+		}), nil
 	}
 	if resp["rt2_retCode"] != "0000" && resp["rt2_retCode"] != "0001" {
 		msg := resp["rt3_retMsg"]
 		if msg == "" {
 			msg = resp["rt2_retCode"]
 		}
-		return plugin.RespTransfer(-1, "", stats.ReqBody, stats.RespBody, msg, stats.ReqMs), nil
+		return plugin.ResultFail(plugin.BizResultInput{
+			ChannelCode: resp["rt2_retCode"],
+			ChannelMsg:  msg,
+			Stats:       stats,
+		}), nil
 	}
-	return plugin.RespTransfer(0, resp["rt6_serialNumber"], stats.ReqBody, stats.RespBody, "", stats.ReqMs), nil
+	result := resp["rt3_retMsg"]
+	if result == "" {
+		result = resp["rt2_retCode"]
+	}
+	return plugin.ResultPending(plugin.BizResultInput{
+		APIBizNo:    resp["rt6_serialNumber"],
+		ChannelCode: resp["rt2_retCode"],
+		ChannelMsg:  result,
+		Stats:       stats,
+	}), nil
 }
 
 func transferOrder(ctx context.Context, cfg *helipayConfig, params map[string]string) (map[string]string, plugin.RequestStats, error) {

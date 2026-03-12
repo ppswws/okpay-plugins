@@ -10,7 +10,7 @@ import (
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
-func refund(ctx context.Context, req *proto.InvokeContext) (*proto.RefundResponse, error) {
+func refund(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, error) {
 	order := req.GetOrder()
 	refund := req.GetRefund()
 	if order == nil || order.GetTradeNo() == "" {
@@ -25,7 +25,10 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.RefundRespons
 	}
 	resp, stats, err := refundOrder(ctx, req, cfg, order, refund)
 	if err != nil {
-		return plugin.RespRefund(-1, "", stats.ReqBody, stats.RespBody, err.Error(), stats.ReqMs), nil
+		return plugin.ResultFail(plugin.BizResultInput{
+			ChannelMsg: err.Error(),
+			Stats:      stats,
+		}), nil
 	}
 	state := 0
 	if resp["ra_Status"] == "100" {
@@ -34,7 +37,32 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.RefundRespons
 	if resp["ra_Status"] == "101" {
 		state = -1
 	}
-	return plugin.RespRefund(state, resp["r5_RefundTrxNo"], stats.ReqBody, stats.RespBody, "", stats.ReqMs), nil
+	result := resp["rc_CodeMsg"]
+	if result == "" {
+		result = resp["ra_Status"]
+	}
+	switch state {
+	case 1:
+		return plugin.ResultOK(plugin.BizResultInput{
+			APIBizNo:    resp["r5_RefundTrxNo"],
+			ChannelCode: resp["rb_Code"],
+			ChannelMsg:  result,
+			Stats:       stats,
+		}), nil
+	case -1:
+		return plugin.ResultFail(plugin.BizResultInput{
+			ChannelCode: resp["rb_Code"],
+			ChannelMsg:  result,
+			Stats:       stats,
+		}), nil
+	default:
+		return plugin.ResultPending(plugin.BizResultInput{
+			APIBizNo:    resp["r5_RefundTrxNo"],
+			ChannelCode: resp["rb_Code"],
+			ChannelMsg:  result,
+			Stats:       stats,
+		}), nil
+	}
 }
 
 func refundOrder(ctx context.Context, req *proto.InvokeContext, cfg *joinpayConfig, order *proto.OrderSnapshot, refund *proto.RefundSnapshot) (map[string]string, plugin.RequestStats, error) {
