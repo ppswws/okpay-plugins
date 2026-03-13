@@ -20,9 +20,9 @@ func balance(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, e
 		return nil, err
 	}
 	return plugin.ResultBal(plugin.BizResultInput{
-		Balance:    balanceValue,
-		ChannelMsg: "余额查询成功",
-		Stats:      stats,
+		Balance: balanceValue,
+		Msg:     "余额查询成功",
+		Stats:   stats,
 	}), nil
 }
 

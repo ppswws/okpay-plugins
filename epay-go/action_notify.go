@@ -24,36 +24,47 @@ type epayNotifyParams struct {
 }
 
 func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
-	result := "success"
 	order := req.GetOrder()
 	if order == nil || order.GetTradeNo() == "" {
-		result = "order_mismatch"
-	} else if cfg, err := readConfig(req); err != nil {
-		result = "config_error"
-	} else if n, err := parseEpayNotify(req); err != nil {
-		result = "invalid_notify_params"
-	} else if !verifyMD5(n.toSignMap(), cfg.AppKey) {
-		result = "sign_error"
-	} else if n.TradeStatus != "TRADE_SUCCESS" {
-		result = "trade_status_invalid"
-	} else if n.OutTradeNo != order.GetTradeNo() {
-		result = "order_mismatch"
-	} else if order.GetReal() != toCents(n.Money) {
-		result = "amount_mismatch"
-	} else if queryResp, err := epayQuery(ctx, cfg, order); err != nil {
-		result = "query_error"
-	} else if queryResp.Code != 1 || queryResp.Status != "1" {
-		result = "query_unpaid"
-	} else if err := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
-		BizType:  proto.BizType_BIZ_TYPE_ORDER,
-		BizNo:    order.GetTradeNo(),
-		State:    proto.BizState_BIZ_STATE_SUCCEEDED,
-		APIBizNo: n.TradeNo,
-		Buyer:    n.Buyer,
-	}); err != nil {
-		result = "complete_error"
+		return plugin.RespHTML("order_mismatch"), nil
 	}
-	return plugin.RespHTML(result), nil
+	cfg, err := readConfig(req)
+	if err != nil {
+		return plugin.RespHTML("config_error"), nil
+	}
+	n, err := parseEpayNotify(req)
+	if err != nil {
+		return plugin.RespHTML("invalid_notify_params"), nil
+	}
+	if !verifyMD5(n.toSignMap(), cfg.AppKey) {
+		return plugin.RespHTML("sign_error"), nil
+	}
+	if n.TradeStatus != "TRADE_SUCCESS" {
+		return plugin.RespHTML("trade_status_invalid"), nil
+	}
+	if n.OutTradeNo != order.GetTradeNo() {
+		return plugin.RespHTML("order_mismatch"), nil
+	}
+	if order.GetReal() != toCents(n.Money) {
+		return plugin.RespHTML("amount_mismatch"), nil
+	}
+	queryResp, err := epayQuery(ctx, cfg, order)
+	if err != nil {
+		return plugin.RespHTML("query_error"), nil
+	}
+	if queryResp.Code != 1 || queryResp.Status != "1" {
+		return plugin.RespHTML("query_unpaid"), nil
+	}
+	if err := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
+		BizType: proto.BizType_BIZ_TYPE_ORDER,
+		BizNo:   order.GetTradeNo(),
+		State:   proto.BizState_BIZ_STATE_SUCCEEDED,
+		ApiNo:   n.TradeNo,
+		Buyer:   n.Buyer,
+	}); err != nil {
+		return plugin.RespHTML("complete_error"), nil
+	}
+	return plugin.RespHTML("success"), nil
 }
 
 func parseEpayNotify(req *proto.InvokeContext) (*epayNotifyParams, error) {

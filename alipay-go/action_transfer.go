@@ -101,42 +101,29 @@ func transferByChannel(ctx context.Context, req *proto.InvokeContext) (channelBi
 			Input: plugin.BizResultInput{Msg: "代付处理中", Stats: plugin.RequestStats{ReqMs: reqMs, ReqBody: body, RespBody: respBody}},
 		}, nil
 	}
-	state := -1
+	state := proto.BizState_BIZ_STATE_FAILED
 	if resp.Response.Code == "10000" {
-		state = 1
+		state = proto.BizState_BIZ_STATE_SUCCEEDED
 	} else if isTransferRetryable(resp.Response.Code, resp.Response.SubCode) {
 		// 系统繁忙/处理中：结果不确定，交由上游重试或查单。
-		state = 0
+		state = proto.BizState_BIZ_STATE_PROCESSING
 	}
 	apiTradeNo := resp.Response.OrderId
-	if state != 1 && apiTradeNo == "" {
+	if state != proto.BizState_BIZ_STATE_SUCCEEDED && apiTradeNo == "" {
 		apiTradeNo = resp.Response.PayFundOrderId
 	}
 	result := resp.Response.SubMsg
 	if result == "" {
 		result = resp.Response.Msg
 	}
-	if state != 1 && resp.Response.SubCode != "" {
+	if state != proto.BizState_BIZ_STATE_SUCCEEDED && resp.Response.SubCode != "" {
 		result = resp.Response.SubCode + ":" + result
 	}
 	stats := plugin.RequestStats{ReqMs: reqMs, ReqBody: body, RespBody: respBody}
-	switch state {
-	case 1:
-		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_SUCCEEDED,
-			Input: plugin.BizResultInput{ApiNo: apiTradeNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
-		}, nil
-	case -1:
-		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
-			Input: plugin.BizResultInput{Code: resp.Response.SubCode, Msg: result, Stats: stats},
-		}, nil
-	default:
-		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_PROCESSING,
-			Input: plugin.BizResultInput{ApiNo: apiTradeNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
-		}, nil
-	}
+	return channelBizResult{
+		State: state,
+		Input: plugin.BizResultInput{ApiNo: apiTradeNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
+	}, nil
 }
 
 func isTransferRetryable(code, subCode string) bool {

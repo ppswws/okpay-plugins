@@ -18,15 +18,18 @@ func (s *epayService) Info(ctx context.Context, _ *proto.PluginInfoRequest) (*pr
 
 func (s *epayService) Handle(ctx context.Context, req *proto.HandleRequest) (*proto.HandleResponse, error) {
 	invoke := req.GetCtx()
-	action := strings.TrimSpace(invoke.GetFuncName())
-	if action == "" {
+	funcName := ""
+	if invoke != nil {
+		funcName = strings.TrimSpace(invoke.GetFuncName())
+	}
+	if funcName == "" {
 		return nil, fmt.Errorf("func_name 不能为空")
 	}
 	var (
 		page *proto.PageResponse
 		err  error
 	)
-	switch action {
+	switch funcName {
 	case "create":
 		page, err = create(ctx, invoke)
 	case "alipay":
@@ -38,7 +41,7 @@ func (s *epayService) Handle(ctx context.Context, req *proto.HandleRequest) (*pr
 	case "notify":
 		page, err = notify(ctx, invoke)
 	default:
-		return nil, fmt.Errorf("未知函数: %s", action)
+		err = fmt.Errorf("未知函数: %s", funcName)
 	}
 	if err != nil {
 		return nil, err
@@ -47,35 +50,45 @@ func (s *epayService) Handle(ctx context.Context, req *proto.HandleRequest) (*pr
 }
 
 func (s *epayService) Submit(ctx context.Context, req *proto.BizRequest) (*proto.BizResult, error) {
+	var (
+		out    *proto.BizResult
+		outErr error
+	)
 	invoke := req.GetCtx()
 	switch req.GetBizType() {
 	case proto.BizType_BIZ_TYPE_ORDER:
-		return plugin.ResultPending(plugin.BizResultInput{
-			ChannelMsg: "请使用 Handle(create) 获取支付页面",
-			Stats:      plugin.RequestStats{},
-		}), nil
+		out = plugin.Result(plugin.BizStateProcessing, plugin.BizResultInput{
+			Msg:   "请使用 Handle(create) 获取支付页面",
+			Stats: plugin.RequestStats{},
+		})
 	case proto.BizType_BIZ_TYPE_REFUND:
-		return refund(ctx, invoke)
+		out, outErr = refund(ctx, invoke)
 	case proto.BizType_BIZ_TYPE_TRANSFER:
-		return transfer(ctx, invoke)
+		out, outErr = transfer(ctx, invoke)
 	default:
-		return nil, fmt.Errorf("submit 不支持的业务类型: %s", req.GetBizType().String())
+		outErr = fmt.Errorf("submit 不支持的业务类型: %s", req.GetBizType().String())
 	}
+	return out, outErr
 }
 
 func (s *epayService) Query(ctx context.Context, req *proto.BizRequest) (*proto.BizResult, error) {
+	var (
+		out    *proto.BizResult
+		outErr error
+	)
 	invoke := req.GetCtx()
 	switch req.GetBizType() {
 	case proto.BizType_BIZ_TYPE_ORDER:
-		return query(ctx, invoke)
+		out, outErr = query(ctx, invoke)
 	case proto.BizType_BIZ_TYPE_BALANCE:
-		return balance(ctx, invoke)
+		out, outErr = balance(ctx, invoke)
 	default:
-		return plugin.ResultPending(plugin.BizResultInput{
-			ChannelMsg: "渠道未实现该业务查询",
-			Stats:      plugin.RequestStats{},
-		}), nil
+		out = plugin.Result(plugin.BizStateProcessing, plugin.BizResultInput{
+			Msg:   "渠道未实现该业务查询",
+			Stats: plugin.RequestStats{},
+		})
 	}
+	return out, outErr
 }
 
 func main() {

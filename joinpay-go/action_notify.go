@@ -10,119 +10,120 @@ import (
 )
 
 func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
-	result := "fail"
-	order := req.GetOrder()
 	cfg, err := readConfig(req)
-	if err == nil {
-		n, parseErr := parseJoinpayOrderNotify(req)
-		if parseErr == nil {
-			if !verifyJoinpay(n.toSignMap(), joinpayNotifyFields, cfg.AppKey) {
-				result = "sign_error"
-			} else if n.R6Status != "100" {
-				result = "status=" + n.R6Status
-			} else if order != nil {
-				if n.R2OrderNo != order.GetTradeNo() {
-					result = "order_mismatch"
-				} else if order.GetReal() != toCents(n.R3Amount) {
-					result = "amount_mismatch"
-				} else if completeErr := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
-					BizType:  proto.BizType_BIZ_TYPE_ORDER,
-					BizNo:    order.GetTradeNo(),
-					State:    proto.BizState_BIZ_STATE_SUCCEEDED,
-					APIBizNo: n.R7TrxNo,
-					Buyer:    n.RdOpenId,
-				}); completeErr == nil {
-					result = "success"
-				}
-			} else {
-				result = "success"
-			}
-		}
+	if err != nil {
+		return plugin.RespHTML("fail"), nil
 	}
-	return plugin.RespHTML(result), nil
+	n, err := parseJoinpayOrderNotify(req)
+	if err != nil {
+		return plugin.RespHTML("fail"), nil
+	}
+	if !verifyJoinpay(n.toSignMap(), joinpayNotifyFields, cfg.AppKey) {
+		return plugin.RespHTML("sign_error"), nil
+	}
+	if n.R6Status != "100" {
+		return plugin.RespHTML("status=" + n.R6Status), nil
+	}
+	order := req.GetOrder()
+	if order == nil {
+		return plugin.RespHTML("success"), nil
+	}
+	if n.R2OrderNo != order.GetTradeNo() {
+		return plugin.RespHTML("order_mismatch"), nil
+	}
+	if order.GetReal() != toCents(n.R3Amount) {
+		return plugin.RespHTML("amount_mismatch"), nil
+	}
+	if err := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
+		BizType: proto.BizType_BIZ_TYPE_ORDER,
+		BizNo:   order.GetTradeNo(),
+		State:   proto.BizState_BIZ_STATE_SUCCEEDED,
+		ApiNo:   n.R7TrxNo,
+		Buyer:   n.RdOpenId,
+	}); err != nil {
+		return plugin.RespHTML("fail"), nil
+	}
+	return plugin.RespHTML("success"), nil
 }
 
 func refundNotify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
-	result := "fail"
-	refund := req.GetRefund()
 	cfg, err := readConfig(req)
-	if err == nil {
-		n, parseErr := parseJoinpayRefundNotify(req)
-		if parseErr == nil {
-			if !verifyJoinpay(n.toSignMap(), joinpayRefundResponseFields, cfg.AppKey) {
-				result = "sign_error"
-			} else {
-				status := n.RaStatus
-				if refund == nil {
-					if status == "100" {
-						result = "success"
-					} else {
-						result = "status=" + status
-					}
-				} else if n.R3RefundOrderNo != refund.GetRefundNo() {
-					result = "refund_mismatch"
-				} else if refund.GetAmount() != toCents(n.R4RefundAmount) {
-					result = "amount_mismatch"
-				} else {
-					state := joinpayRefundState(status)
-					if completeErr := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
-						BizType:     proto.BizType_BIZ_TYPE_REFUND,
-						BizNo:       refund.GetRefundNo(),
-						State:       state,
-						APIBizNo:    n.R5RefundTrxNo,
-						ChannelCode: status,
-						ChannelMsg:  n.RcCodeMsg,
-						RespBody:    n.RcCodeMsg,
-					}); completeErr == nil {
-						if status == "100" {
-							result = "success"
-						} else {
-							result = "status=" + status
-						}
-					}
-				}
-			}
-		}
+	if err != nil {
+		return plugin.RespHTML("fail"), nil
 	}
-	return plugin.RespHTML(result), nil
+	n, err := parseJoinpayRefundNotify(req)
+	if err != nil {
+		return plugin.RespHTML("fail"), nil
+	}
+	if !verifyJoinpay(n.toSignMap(), joinpayRefundResponseFields, cfg.AppKey) {
+		return plugin.RespHTML("sign_error"), nil
+	}
+	status := n.RaStatus
+	refund := req.GetRefund()
+	if refund == nil {
+		if status == "100" {
+			return plugin.RespHTML("success"), nil
+		}
+		return plugin.RespHTML("status=" + status), nil
+	}
+	if n.R3RefundOrderNo != refund.GetRefundNo() {
+		return plugin.RespHTML("refund_mismatch"), nil
+	}
+	if refund.GetAmount() != toCents(n.R4RefundAmount) {
+		return plugin.RespHTML("amount_mismatch"), nil
+	}
+	if err := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
+		BizType:  proto.BizType_BIZ_TYPE_REFUND,
+		BizNo:    refund.GetRefundNo(),
+		State:    joinpayRefundState(status),
+		ApiNo:    n.R5RefundTrxNo,
+		Code:     status,
+		Msg:      n.RcCodeMsg,
+		RespBody: n.RcCodeMsg,
+	}); err != nil {
+		return plugin.RespHTML("fail"), nil
+	}
+	if status == "100" {
+		return plugin.RespHTML("success"), nil
+	}
+	return plugin.RespHTML("status=" + status), nil
 }
 
 func transferNotify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
-	result := "fail"
-	transfer := req.GetTransfer()
 	cfg, err := readConfig(req)
-	if err == nil {
-		n, parseErr := parseJoinpayTransferNotify(req)
-		if parseErr == nil {
-			if !verifyJoinpay(n.toSignMap(), joinpayTransferNotifyFields, cfg.AppKey) {
-				result = "sign_error"
-			} else {
-				status := n.Status
-				state := joinpayTransferState(status)
-				if transfer == nil {
-					if state == proto.BizState_BIZ_STATE_SUCCEEDED {
-						result = "success"
-					} else {
-						result = "status=" + status
-					}
-				} else if completeErr := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
-					BizType:     proto.BizType_BIZ_TYPE_TRANSFER,
-					BizNo:       transfer.GetTradeNo(),
-					State:       state,
-					APIBizNo:    n.PlatformSerialNo,
-					ChannelCode: n.ErrorCode,
-					ChannelMsg:  n.ErrorCodeDesc,
-				}); completeErr == nil {
-					if state == proto.BizState_BIZ_STATE_SUCCEEDED {
-						result = "success"
-					} else {
-						result = "status=" + status
-					}
-				}
-			}
-		}
+	if err != nil {
+		return plugin.RespHTML("fail"), nil
 	}
-	return plugin.RespHTML(result), nil
+	n, err := parseJoinpayTransferNotify(req)
+	if err != nil {
+		return plugin.RespHTML("fail"), nil
+	}
+	if !verifyJoinpay(n.toSignMap(), joinpayTransferNotifyFields, cfg.AppKey) {
+		return plugin.RespHTML("sign_error"), nil
+	}
+	status := n.Status
+	state := joinpayTransferState(status)
+	transfer := req.GetTransfer()
+	if transfer == nil {
+		if state == proto.BizState_BIZ_STATE_SUCCEEDED {
+			return plugin.RespHTML("success"), nil
+		}
+		return plugin.RespHTML("status=" + status), nil
+	}
+	if err := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
+		BizType: proto.BizType_BIZ_TYPE_TRANSFER,
+		BizNo:   transfer.GetTradeNo(),
+		State:   state,
+		ApiNo:   n.PlatformSerialNo,
+		Code:    n.ErrorCode,
+		Msg:     n.ErrorCodeDesc,
+	}); err != nil {
+		return plugin.RespHTML("fail"), nil
+	}
+	if state == proto.BizState_BIZ_STATE_SUCCEEDED {
+		return plugin.RespHTML("success"), nil
+	}
+	return plugin.RespHTML("status=" + status), nil
 }
 
 func joinpayRefundState(status string) proto.BizState {

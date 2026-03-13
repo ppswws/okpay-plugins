@@ -19,9 +19,13 @@ func queryOrder(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult
 	if err != nil {
 		return nil, err
 	}
-	resp, stats, err := queryOrderFromAPI(ctx, cfg, order)
-	if err != nil {
-		return nil, err
+	resp, stats, queryErr := queryOrderFromAPI(ctx, cfg, order)
+	if queryErr != nil {
+		return bizResultByState(proto.BizState_BIZ_STATE_PROCESSING, plugin.BizResultInput{
+			Code:  "QUERY_ERROR",
+			Msg:   queryErr.Error(),
+			Stats: stats,
+		}), nil
 	}
 	state := proto.BizState_BIZ_STATE_PROCESSING
 	msg := "交易处理中"
@@ -50,9 +54,13 @@ func queryRefund(ctx context.Context, req *proto.InvokeContext) (*proto.BizResul
 	if err != nil {
 		return nil, err
 	}
-	resp, stats, err := queryRefundFromAPI(ctx, cfg, refund)
-	if err != nil {
-		return nil, err
+	resp, stats, queryErr := queryRefundFromAPI(ctx, cfg, refund)
+	if queryErr != nil {
+		return bizResultByState(proto.BizState_BIZ_STATE_PROCESSING, plugin.BizResultInput{
+			Code:  "QUERY_ERROR",
+			Msg:   queryErr.Error(),
+			Stats: stats,
+		}), nil
 	}
 	state := proto.BizState_BIZ_STATE_PROCESSING
 	msg := "退款处理中"
@@ -85,9 +93,13 @@ func queryTransfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizRes
 	if err != nil {
 		return nil, err
 	}
-	resp, stats, err := queryTransferFromAPI(ctx, cfg, transfer)
-	if err != nil {
-		return nil, err
+	resp, stats, queryErr := queryTransferFromAPI(ctx, cfg, transfer)
+	if queryErr != nil {
+		return bizResultByState(proto.BizState_BIZ_STATE_PROCESSING, plugin.BizResultInput{
+			Code:  "QUERY_ERROR",
+			Msg:   queryErr.Error(),
+			Stats: stats,
+		}), nil
 	}
 	state := proto.BizState_BIZ_STATE_PROCESSING
 	msg := "代付处理中"
@@ -112,10 +124,10 @@ func queryTransfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizRes
 }
 
 func queryOrderFromAPI(ctx context.Context, cfg *helipayConfig, order *proto.OrderSnapshot) (map[string]string, plugin.RequestStats, error) {
-	if order == nil {
+	switch {
+	case order == nil:
 		return nil, plugin.RequestStats{}, errors.New("order 为空")
-	}
-	if order.GetTradeNo() == "" && order.GetApiTradeNo() == "" {
+	case order.GetTradeNo() == "" && order.GetApiTradeNo() == "":
 		return nil, plugin.RequestStats{}, errors.New("tradeNo/apiTradeNo 不能为空")
 	}
 	params := map[string]string{
@@ -127,17 +139,18 @@ func queryOrderFromAPI(ctx context.Context, cfg *helipayConfig, order *proto.Ord
 		params["P4_serialNumber"] = apiTradeNo
 	}
 	resp, stats, err := sendRequestTo(ctx, helipayAPIURL, params, cfg.AppKey)
-	if err != nil {
+	switch {
+	case err != nil:
 		return nil, stats, err
-	}
-	if resp["rt2_retCode"] != "0000" {
-		msg := resp["rt3_retMsg"]
+	case resp["rt2_retCode"] != "0000":
+		msg := strings.TrimSpace(resp["rt3_retMsg"])
 		if msg == "" {
 			msg = resp["rt2_retCode"]
 		}
 		return nil, stats, errors.New(msg)
+	default:
+		return resp, stats, nil
 	}
-	return resp, stats, nil
 }
 
 func queryRefundFromAPI(ctx context.Context, cfg *helipayConfig, refund *proto.RefundSnapshot) (map[string]string, plugin.RequestStats, error) {
@@ -150,17 +163,18 @@ func queryRefundFromAPI(ctx context.Context, cfg *helipayConfig, refund *proto.R
 		params["P4_serialNumber"] = apiNo
 	}
 	resp, stats, err := sendRequestTo(ctx, helipayAPIURL, params, cfg.AppKey)
-	if err != nil {
+	switch {
+	case err != nil:
 		return nil, stats, err
-	}
-	if resp["rt2_retCode"] != "0000" {
+	case resp["rt2_retCode"] != "0000":
 		msg := strings.TrimSpace(resp["rt3_retMsg"])
 		if msg == "" {
 			msg = resp["rt2_retCode"]
 		}
 		return nil, stats, errors.New(msg)
+	default:
+		return resp, stats, nil
 	}
-	return resp, stats, nil
 }
 
 func queryTransferFromAPI(ctx context.Context, cfg *helipayConfig, transfer *proto.TransferSnapshot) (map[string]string, plugin.RequestStats, error) {
@@ -170,26 +184,20 @@ func queryTransferFromAPI(ctx context.Context, cfg *helipayConfig, transfer *pro
 		"P3_customerNumber": cfg.AppID,
 	}
 	resp, stats, err := sendRequestTo(ctx, helipayAPIURL, params, cfg.AppKey)
-	if err != nil {
+	switch {
+	case err != nil:
 		return nil, stats, err
-	}
-	if resp["rt2_retCode"] != "0000" {
+	case resp["rt2_retCode"] != "0000":
 		msg := strings.TrimSpace(resp["rt3_retMsg"])
 		if msg == "" {
 			msg = resp["rt2_retCode"]
 		}
 		return nil, stats, errors.New(msg)
+	default:
+		return resp, stats, nil
 	}
-	return resp, stats, nil
 }
 
 func bizResultByState(state proto.BizState, input plugin.BizResultInput) *proto.BizResult {
-	switch state {
-	case proto.BizState_BIZ_STATE_SUCCEEDED:
-		return plugin.ResultOK(input)
-	case proto.BizState_BIZ_STATE_FAILED:
-		return plugin.ResultFail(input)
-	default:
-		return plugin.ResultPending(input)
-	}
+	return plugin.Result(state, input)
 }

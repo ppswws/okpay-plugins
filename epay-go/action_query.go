@@ -31,7 +31,7 @@ func epayQuery(ctx context.Context, cfg *epayConfig, order *proto.OrderSnapshot)
 		return nil, err
 	}
 	resp := &epayQueryResp{}
-	if err := json.Unmarshal([]byte(body), resp); err != nil {
+	if err = json.Unmarshal([]byte(body), resp); err != nil {
 		return nil, fmt.Errorf("响应解析失败: %w", err)
 	}
 	return resp, nil
@@ -57,9 +57,9 @@ func query(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, err
 		msg = "交易成功"
 	}
 	return &proto.BizResult{
-		State:       state,
-		ApiBizNo:    resp.APITradeNo,
-		ChannelCode: fmt.Sprintf("%d", resp.Code),
-		ChannelMsg:  msg,
+		State: state,
+		ApiNo: resp.APITradeNo,
+		Code:  fmt.Sprintf("%d", resp.Code),
+		Msg:   msg,
 	}, nil
 }

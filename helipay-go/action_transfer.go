@@ -20,9 +20,9 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 	}
 	bankCode, err := inferHelipayBankCode(transfer.GetBankName())
 	if err != nil {
-		return plugin.ResultFail(plugin.BizResultInput{
-			ChannelMsg: err.Error(),
-			Stats:      plugin.RequestStats{},
+		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+			Msg:   err.Error(),
+			Stats: plugin.RequestStats{},
 		}), nil
 	}
 	globalCfg := readGlobalConfig(req)
@@ -45,9 +45,9 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 	}
 	resp, stats, err := transferOrder(ctx, cfg, params)
 	if err != nil {
-		return plugin.ResultFail(plugin.BizResultInput{
-			ChannelMsg: err.Error(),
-			Stats:      stats,
+		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+			Msg:   err.Error(),
+			Stats: stats,
 		}), nil
 	}
 	if resp["rt2_retCode"] != "0000" && resp["rt2_retCode"] != "0001" {
@@ -55,21 +55,21 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 		if msg == "" {
 			msg = resp["rt2_retCode"]
 		}
-		return plugin.ResultFail(plugin.BizResultInput{
-			ChannelCode: resp["rt2_retCode"],
-			ChannelMsg:  msg,
-			Stats:       stats,
+		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+			Code:  resp["rt2_retCode"],
+			Msg:   msg,
+			Stats: stats,
 		}), nil
 	}
 	result := resp["rt3_retMsg"]
 	if result == "" {
 		result = resp["rt2_retCode"]
 	}
-	return plugin.ResultPending(plugin.BizResultInput{
-		APIBizNo:    resp["rt6_serialNumber"],
-		ChannelCode: resp["rt2_retCode"],
-		ChannelMsg:  result,
-		Stats:       stats,
+	return plugin.Result(plugin.BizStateProcessing, plugin.BizResultInput{
+		ApiNo: resp["rt6_serialNumber"],
+		Code:  resp["rt2_retCode"],
+		Msg:   result,
+		Stats: stats,
 	}), nil
 }
 

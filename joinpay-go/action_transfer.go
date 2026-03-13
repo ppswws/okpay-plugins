@@ -46,9 +46,9 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 	}
 	resp, stats, err := transferOrder(ctx, cfg, params)
 	if err != nil {
-		return plugin.ResultFail(plugin.BizResultInput{
-			ChannelMsg: err.Error(),
-			Stats:      stats,
+		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+			Msg:   err.Error(),
+			Stats: stats,
 		}), nil
 	}
 	statusCode := resp["statusCode"]
@@ -57,20 +57,20 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 		if message == "" {
 			message = "代付受理失败"
 		}
-		return plugin.ResultFail(plugin.BizResultInput{
-			ChannelCode: statusCode,
-			ChannelMsg:  message,
-			Stats:       stats,
+		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+			Code:  statusCode,
+			Msg:   message,
+			Stats: stats,
 		}), nil
 	}
 	result := message
 	if result == "" {
 		result = statusCode
 	}
-	return plugin.ResultPending(plugin.BizResultInput{
-		ChannelCode: statusCode,
-		ChannelMsg:  result,
-		Stats:       stats,
+	return plugin.Result(plugin.BizStateProcessing, plugin.BizResultInput{
+		Code:  statusCode,
+		Msg:   result,
+		Stats: stats,
 	}), nil
 }
 

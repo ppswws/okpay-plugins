@@ -73,36 +73,23 @@ func refundByChannel(ctx context.Context, req *proto.InvokeContext) (channelBizR
 	if apiRefundNo == "" {
 		apiRefundNo = refund.GetRefundNo()
 	}
-	state := -1
+	state := proto.BizState_BIZ_STATE_FAILED
 	if resp.Response.Code == "10000" {
-		state = 0
+		state = proto.BizState_BIZ_STATE_PROCESSING
 		if resp.Response.FundChange == "Y" {
-			state = 1
+			state = proto.BizState_BIZ_STATE_SUCCEEDED
 		}
 	}
 	result := resp.Response.SubMsg
 	if result == "" {
 		result = resp.Response.Msg
 	}
-	if state == -1 && resp.Response.SubCode != "" {
+	if state == proto.BizState_BIZ_STATE_FAILED && resp.Response.SubCode != "" {
 		result = resp.Response.SubCode + ":" + result
 	}
 	stats := plugin.RequestStats{ReqMs: reqMs, ReqBody: reqBody, RespBody: respBody}
-	switch state {
-	case 1:
-		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_SUCCEEDED,
-			Input: plugin.BizResultInput{ApiNo: apiRefundNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
-		}, nil
-	case -1:
-		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
-			Input: plugin.BizResultInput{Code: resp.Response.SubCode, Msg: result, Stats: stats},
-		}, nil
-	default:
-		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_PROCESSING,
-			Input: plugin.BizResultInput{ApiNo: apiRefundNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
-		}, nil
-	}
+	return channelBizResult{
+		State: state,
+		Input: plugin.BizResultInput{ApiNo: apiRefundNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
+	}, nil
 }

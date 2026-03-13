@@ -21,9 +21,9 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, er
 	}
 	result, err := refundOrder(ctx, req, cfg, refund)
 	if err != nil {
-		return plugin.ResultFail(plugin.BizResultInput{
-			ChannelMsg: err.Error(),
-			Stats:      plugin.RequestStats{ReqMs: result.ReqMs, ReqBody: result.ReqBody, RespBody: result.RespBody},
+		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+			Msg:   err.Error(),
+			Stats: plugin.RequestStats{ReqMs: result.ReqMs, ReqBody: result.ReqBody, RespBody: result.RespBody},
 		}), nil
 	}
 	state := 1
@@ -36,18 +36,18 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, er
 	}
 	stats := plugin.RequestStats{ReqMs: result.ReqMs, ReqBody: result.ReqBody, RespBody: result.RespBody}
 	if state == 1 {
-		return plugin.ResultOK(plugin.BizResultInput{
-			APIBizNo:    result.APIRefundNo,
-			ChannelCode: result.RetCode,
-			ChannelMsg:  resultText,
-			Stats:       stats,
+		return plugin.Result(plugin.BizStateSucceeded, plugin.BizResultInput{
+			ApiNo: result.APIRefundNo,
+			Code:  result.RetCode,
+			Msg:   resultText,
+			Stats: stats,
 		}), nil
 	}
-	return plugin.ResultPending(plugin.BizResultInput{
-		APIBizNo:    result.APIRefundNo,
-		ChannelCode: result.RetCode,
-		ChannelMsg:  resultText,
-		Stats:       stats,
+	return plugin.Result(plugin.BizStateProcessing, plugin.BizResultInput{
+		ApiNo: result.APIRefundNo,
+		Code:  result.RetCode,
+		Msg:   resultText,
+		Stats: stats,
 	}), nil
 }
 

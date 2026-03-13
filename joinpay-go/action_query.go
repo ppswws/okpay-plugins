@@ -20,9 +20,13 @@ func queryOrder(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult
 	if err != nil {
 		return nil, err
 	}
-	resp, stats, err := queryOrderFromAPI(ctx, cfg, order)
-	if err != nil {
-		return nil, err
+	resp, stats, queryErr := queryOrderFromAPI(ctx, cfg, order)
+	if queryErr != nil {
+		return bizResultByState(proto.BizState_BIZ_STATE_PROCESSING, plugin.BizResultInput{
+			Code:  "QUERY_ERROR",
+			Msg:   queryErr.Error(),
+			Stats: stats,
+		}), nil
 	}
 	state := proto.BizState_BIZ_STATE_PROCESSING
 	msg := "交易处理中"
@@ -51,9 +55,13 @@ func queryRefund(ctx context.Context, req *proto.InvokeContext) (*proto.BizResul
 	if err != nil {
 		return nil, err
 	}
-	resp, stats, err := queryRefundFromAPI(ctx, cfg, refund)
-	if err != nil {
-		return nil, err
+	resp, stats, queryErr := queryRefundFromAPI(ctx, cfg, refund)
+	if queryErr != nil {
+		return bizResultByState(proto.BizState_BIZ_STATE_PROCESSING, plugin.BizResultInput{
+			Code:  "QUERY_ERROR",
+			Msg:   queryErr.Error(),
+			Stats: stats,
+		}), nil
 	}
 	state := proto.BizState_BIZ_STATE_PROCESSING
 	msg := "退款处理中"
@@ -86,9 +94,13 @@ func queryTransfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizRes
 	if err != nil {
 		return nil, err
 	}
-	resp, stats, err := queryTransferFromAPI(ctx, cfg, transfer)
-	if err != nil {
-		return nil, err
+	resp, stats, queryErr := queryTransferFromAPI(ctx, cfg, transfer)
+	if queryErr != nil {
+		return bizResultByState(proto.BizState_BIZ_STATE_PROCESSING, plugin.BizResultInput{
+			Code:  "QUERY_ERROR",
+			Msg:   queryErr.Error(),
+			Stats: stats,
+		}), nil
 	}
 	state := proto.BizState_BIZ_STATE_PROCESSING
 	msg := "代付处理中"
@@ -122,14 +134,15 @@ func queryOrderFromAPI(ctx context.Context, cfg *joinpayConfig, order *proto.Ord
 	if err != nil {
 		return nil, stats, err
 	}
-	respStr, err := decodeJSONStringMap(body)
-	if err != nil {
-		return nil, stats, fmt.Errorf("响应解析失败: %w", err)
-	}
-	if !verifyJoinpay(respStr, joinpayQueryResponseFields, cfg.AppKey) {
+	respStr, decodeErr := decodeJSONStringMap(body)
+	switch {
+	case decodeErr != nil:
+		return nil, stats, fmt.Errorf("响应解析失败: %w", decodeErr)
+	case !verifyJoinpay(respStr, joinpayQueryResponseFields, cfg.AppKey):
 		return nil, stats, fmt.Errorf("返回验签失败")
+	default:
+		return respStr, stats, nil
 	}
-	return respStr, stats, nil
 }
 
 func queryRefundFromAPI(ctx context.Context, cfg *joinpayConfig, refund *proto.RefundSnapshot) (map[string]string, plugin.RequestStats, error) {
@@ -142,14 +155,15 @@ func queryRefundFromAPI(ctx context.Context, cfg *joinpayConfig, refund *proto.R
 	if err != nil {
 		return nil, stats, err
 	}
-	respStr, err := decodeJSONStringMap(body)
-	if err != nil {
-		return nil, stats, fmt.Errorf("响应解析失败: %w", err)
-	}
-	if !verifyJoinpay(respStr, joinpayRefundQueryResponseFields, cfg.AppKey) {
+	respStr, decodeErr := decodeJSONStringMap(body)
+	switch {
+	case decodeErr != nil:
+		return nil, stats, fmt.Errorf("响应解析失败: %w", decodeErr)
+	case !verifyJoinpay(respStr, joinpayRefundQueryResponseFields, cfg.AppKey):
 		return nil, stats, fmt.Errorf("返回验签失败")
+	default:
+		return respStr, stats, nil
 	}
-	return respStr, stats, nil
 }
 
 func queryTransferFromAPI(ctx context.Context, cfg *joinpayConfig, transfer *proto.TransferSnapshot) (map[string]string, plugin.RequestStats, error) {
@@ -163,18 +177,19 @@ func queryTransferFromAPI(ctx context.Context, cfg *joinpayConfig, transfer *pro
 		return nil, plugin.RequestStats{}, err
 	}
 	reqBody := string(reqBodyBytes)
-	body, reqCount, reqMs, err := httpClient.Do(ctx, http.MethodPost, joinpayTransferQueryURL, reqBody, "application/json")
+	body, reqCount, reqMs, reqErr := httpClient.Do(ctx, http.MethodPost, joinpayTransferQueryURL, reqBody, "application/json")
 	stats := plugin.RequestStats{ReqBody: reqBody, RespBody: body, ReqCount: reqCount, ReqMs: reqMs}
-	if err != nil {
-		return nil, stats, err
+	if reqErr != nil {
+		return nil, stats, reqErr
 	}
-	respMap, err := decodeJSONAnyMap(body)
-	if err != nil {
-		return nil, stats, fmt.Errorf("响应解析失败: %w", err)
+
+	respMap, decodeErr := decodeJSONAnyMap(body)
+	if decodeErr != nil {
+		return nil, stats, fmt.Errorf("响应解析失败: %w", decodeErr)
 	}
-	statusCode, err := requiredStringOrNumber(respMap, "statusCode")
-	if err != nil {
-		return nil, stats, err
+	statusCode, statusErr := requiredStringOrNumber(respMap, "statusCode")
+	if statusErr != nil {
+		return nil, stats, statusErr
 	}
 	if statusCode != "2001" {
 		msg, _ := valueStringOrNumber(respMap, "message")
@@ -183,6 +198,7 @@ func queryTransferFromAPI(ctx context.Context, cfg *joinpayConfig, transfer *pro
 		}
 		return nil, stats, fmt.Errorf("[%s]%s", statusCode, msg)
 	}
+
 	dataObj, ok := respMap["data"].(map[string]any)
 	if !ok || dataObj == nil {
 		return nil, stats, fmt.Errorf("响应解析失败")
@@ -194,22 +210,14 @@ func queryTransferFromAPI(ctx context.Context, cfg *joinpayConfig, transfer *pro
 	if !verifyJoinpay(dataRaw, joinpayTransferQueryResponseFields, cfg.AppKey) {
 		return nil, stats, fmt.Errorf("返回验签失败")
 	}
-	result := map[string]string{
+	return map[string]string{
 		"status":           dataRaw["status"],
 		"errorCode":        dataRaw["errorCode"],
 		"errorDesc":        dataRaw["errorDesc"],
 		"platformSerialNo": dataRaw["platformSerialNo"],
-	}
-	return result, stats, nil
+	}, stats, nil
 }
 
 func bizResultByState(state proto.BizState, input plugin.BizResultInput) *proto.BizResult {
-	switch state {
-	case proto.BizState_BIZ_STATE_SUCCEEDED:
-		return plugin.ResultOK(input)
-	case proto.BizState_BIZ_STATE_FAILED:
-		return plugin.ResultFail(input)
-	default:
-		return plugin.ResultPending(input)
-	}
+	return plugin.Result(state, input)
 }

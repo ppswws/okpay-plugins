@@ -17,14 +17,7 @@ type channelBizResult struct {
 }
 
 func kernelResult(result channelBizResult) *proto.BizResult {
-	switch result.State {
-	case proto.BizState_BIZ_STATE_SUCCEEDED:
-		return plugin.ResultOK(result.Input)
-	case proto.BizState_BIZ_STATE_FAILED:
-		return plugin.ResultFail(result.Input)
-	default:
-		return plugin.ResultPending(result.Input)
-	}
+	return plugin.Result(result.State, result.Input)
 }
 
 func queryOrder(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, error) {
@@ -64,6 +57,7 @@ func queryOrderByChannel(ctx context.Context, req *proto.InvokeContext) (channel
 	if err != nil {
 		return channelBizResult{}, err
 	}
+
 	bm := make(gopay.BodyMap)
 	if order.GetApiTradeNo() != "" {
 		bm.Set("trade_no", order.GetApiTradeNo())
@@ -71,28 +65,30 @@ func queryOrderByChannel(ctx context.Context, req *proto.InvokeContext) (channel
 		bm.Set("out_trade_no", order.GetTradeNo())
 	}
 	applyModeBizParams(cfg, bm, "")
+
 	start := time.Now()
-	resp, err := client.TradeQuery(ctx, bm)
+	resp, queryErr := client.TradeQuery(ctx, bm)
 	stats := plugin.RequestStats{
 		ReqMs:    int32(time.Since(start).Milliseconds()),
 		ReqBody:  bm.JsonBody(),
 		RespBody: marshalJSON(resp),
 	}
-	if err != nil {
+	switch {
+	case queryErr != nil:
 		if stats.RespBody == "" {
-			stats.RespBody = err.Error()
+			stats.RespBody = queryErr.Error()
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
-			Input: plugin.BizResultInput{Msg: err.Error(), Stats: stats},
+			State: proto.BizState_BIZ_STATE_PROCESSING,
+			Input: plugin.BizResultInput{Msg: queryErr.Error(), Stats: stats},
 		}, nil
-	}
-	if resp == nil || resp.Response == nil {
+	case resp == nil || resp.Response == nil:
 		return channelBizResult{
 			State: proto.BizState_BIZ_STATE_PROCESSING,
 			Input: plugin.BizResultInput{Msg: "交易处理中", Stats: stats},
 		}, nil
 	}
+
 	state := proto.BizState_BIZ_STATE_PROCESSING
 	msg := "交易处理中"
 	switch resp.Response.TradeStatus {
@@ -127,6 +123,7 @@ func queryRefundByChannel(ctx context.Context, req *proto.InvokeContext) (channe
 	if err != nil {
 		return channelBizResult{}, err
 	}
+
 	bm := make(gopay.BodyMap)
 	order := req.GetOrder()
 	if order != nil && order.GetApiTradeNo() != "" {
@@ -139,39 +136,41 @@ func queryRefundByChannel(ctx context.Context, req *proto.InvokeContext) (channe
 			Input: plugin.BizResultInput{Msg: "缺少订单号", Stats: plugin.RequestStats{}},
 		}, nil
 	}
+
 	bm.Set("out_request_no", refund.GetRefundNo())
 	start := time.Now()
-	resp, err := client.TradeFastPayRefundQuery(ctx, bm)
+	resp, queryErr := client.TradeFastPayRefundQuery(ctx, bm)
 	stats := plugin.RequestStats{
 		ReqMs:    int32(time.Since(start).Milliseconds()),
 		ReqBody:  bm.JsonBody(),
 		RespBody: marshalJSON(resp),
 	}
-	if err != nil {
+	switch {
+	case queryErr != nil:
 		if stats.RespBody == "" {
-			stats.RespBody = err.Error()
+			stats.RespBody = queryErr.Error()
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
-			Input: plugin.BizResultInput{Msg: err.Error(), Stats: stats},
+			State: proto.BizState_BIZ_STATE_PROCESSING,
+			Input: plugin.BizResultInput{Msg: queryErr.Error(), Stats: stats},
 		}, nil
-	}
-	if resp == nil || resp.Response == nil {
+	case resp == nil || resp.Response == nil:
 		return channelBizResult{
 			State: proto.BizState_BIZ_STATE_PROCESSING,
 			Input: plugin.BizResultInput{Msg: "退款处理中", Stats: stats},
 		}, nil
-	}
-	if resp.Response.Code != "10000" {
+	case resp.Response.Code != "10000":
 		msg := resp.Response.SubMsg
-		if msg == "" {
+		switch msg {
+		case "":
 			msg = resp.Response.Msg
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
+			State: proto.BizState_BIZ_STATE_PROCESSING,
 			Input: plugin.BizResultInput{Code: resp.Response.SubCode, Msg: msg, Stats: stats},
 		}, nil
 	}
+
 	state := proto.BizState_BIZ_STATE_PROCESSING
 	msg := "退款处理中"
 	switch strings.ToUpper(resp.Response.RefundStatus) {
@@ -180,7 +179,8 @@ func queryRefundByChannel(ctx context.Context, req *proto.InvokeContext) (channe
 		msg = "退款成功"
 	}
 	apiNo := resp.Response.TradeNo
-	if apiNo == "" {
+	switch apiNo {
+	case "":
 		apiNo = refund.GetApiRefundNo()
 	}
 	return channelBizResult{
@@ -207,51 +207,53 @@ func queryTransferByChannel(ctx context.Context, req *proto.InvokeContext) (chan
 	if err != nil {
 		return channelBizResult{}, err
 	}
+
 	bm := make(gopay.BodyMap)
 	bm.Set("biz_scene", "DIRECT_TRANSFER")
 	bm.Set("out_biz_no", transfer.GetTradeNo())
 	if transfer.GetApiTradeNo() != "" {
 		bm.Set("order_id", transfer.GetApiTradeNo())
 	}
-	typeVal := strings.ToLower(transfer.GetType())
-	switch typeVal {
+	switch strings.ToLower(transfer.GetType()) {
 	case "bank":
 		bm.Set("product_code", "TRANS_BANKCARD_NO_PWD")
 	default:
 		bm.Set("product_code", "TRANS_ACCOUNT_NO_PWD")
 	}
+
 	start := time.Now()
-	resp, err := client.FundTransCommonQuery(ctx, bm)
+	resp, queryErr := client.FundTransCommonQuery(ctx, bm)
 	stats := plugin.RequestStats{
 		ReqMs:    int32(time.Since(start).Milliseconds()),
 		ReqBody:  bm.JsonBody(),
 		RespBody: marshalJSON(resp),
 	}
-	if err != nil {
+	switch {
+	case queryErr != nil:
 		if stats.RespBody == "" {
-			stats.RespBody = err.Error()
+			stats.RespBody = queryErr.Error()
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
-			Input: plugin.BizResultInput{Msg: err.Error(), Stats: stats},
+			State: proto.BizState_BIZ_STATE_PROCESSING,
+			Input: plugin.BizResultInput{Msg: queryErr.Error(), Stats: stats},
 		}, nil
-	}
-	if resp == nil || resp.Response == nil {
+	case resp == nil || resp.Response == nil:
 		return channelBizResult{
 			State: proto.BizState_BIZ_STATE_PROCESSING,
 			Input: plugin.BizResultInput{Msg: "代付处理中", Stats: stats},
 		}, nil
-	}
-	if resp.Response.Code != "10000" {
+	case resp.Response.Code != "10000":
 		msg := resp.Response.SubMsg
-		if msg == "" {
+		switch msg {
+		case "":
 			msg = resp.Response.Msg
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
+			State: proto.BizState_BIZ_STATE_PROCESSING,
 			Input: plugin.BizResultInput{Code: resp.Response.SubCode, Msg: msg, Stats: stats},
 		}, nil
 	}
+
 	state := proto.BizState_BIZ_STATE_PROCESSING
 	msg := "代付处理中"
 	switch strings.ToUpper(resp.Response.Status) {
@@ -263,9 +265,10 @@ func queryTransferByChannel(ctx context.Context, req *proto.InvokeContext) (chan
 		msg = "代付失败"
 	}
 	if state == proto.BizState_BIZ_STATE_FAILED {
-		if resp.Response.FailReason != "" {
+		switch {
+		case resp.Response.FailReason != "":
 			msg = resp.Response.FailReason
-		} else if resp.Response.SubOrderFailReason != "" {
+		case resp.Response.SubOrderFailReason != "":
 			msg = resp.Response.SubOrderFailReason
 		}
 	}

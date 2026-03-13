@@ -25,44 +25,27 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, er
 	}
 	resp, stats, err := refundOrder(ctx, req, cfg, order, refund)
 	if err != nil {
-		return plugin.ResultFail(plugin.BizResultInput{
-			ChannelMsg: err.Error(),
-			Stats:      stats,
+		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+			Msg:   err.Error(),
+			Stats: stats,
 		}), nil
 	}
-	state := 0
+	state := proto.BizState_BIZ_STATE_PROCESSING
 	if resp["ra_Status"] == "100" {
-		state = 1
-	}
-	if resp["ra_Status"] == "101" {
-		state = -1
+		state = proto.BizState_BIZ_STATE_SUCCEEDED
+	} else if resp["ra_Status"] == "101" {
+		state = proto.BizState_BIZ_STATE_FAILED
 	}
 	result := resp["rc_CodeMsg"]
 	if result == "" {
 		result = resp["ra_Status"]
 	}
-	switch state {
-	case 1:
-		return plugin.ResultOK(plugin.BizResultInput{
-			APIBizNo:    resp["r5_RefundTrxNo"],
-			ChannelCode: resp["rb_Code"],
-			ChannelMsg:  result,
-			Stats:       stats,
-		}), nil
-	case -1:
-		return plugin.ResultFail(plugin.BizResultInput{
-			ChannelCode: resp["rb_Code"],
-			ChannelMsg:  result,
-			Stats:       stats,
-		}), nil
-	default:
-		return plugin.ResultPending(plugin.BizResultInput{
-			APIBizNo:    resp["r5_RefundTrxNo"],
-			ChannelCode: resp["rb_Code"],
-			ChannelMsg:  result,
-			Stats:       stats,
-		}), nil
-	}
+	return plugin.Result(state, plugin.BizResultInput{
+		ApiNo: resp["r5_RefundTrxNo"],
+		Code:  resp["rb_Code"],
+		Msg:   result,
+		Stats: stats,
+	}), nil
 }
 
 func refundOrder(ctx context.Context, req *proto.InvokeContext, cfg *joinpayConfig, order *proto.OrderSnapshot, refund *proto.RefundSnapshot) (map[string]string, plugin.RequestStats, error) {
