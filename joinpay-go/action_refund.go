@@ -25,22 +25,23 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, er
 	}
 	resp, stats, err := refundOrder(ctx, req, cfg, order, refund)
 	if err != nil {
-		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+		return plugin.Result(plugin.BizStateFailed, plugin.BizOut{
 			Msg:   err.Error(),
 			Stats: stats,
 		}), nil
 	}
-	state := proto.BizState_BIZ_STATE_PROCESSING
-	if resp["ra_Status"] == "100" {
-		state = proto.BizState_BIZ_STATE_SUCCEEDED
-	} else if resp["ra_Status"] == "101" {
-		state = proto.BizState_BIZ_STATE_FAILED
+	state := plugin.BizStateProcessing
+	switch resp["ra_Status"] {
+	case "100":
+		state = plugin.BizStateSucceeded
+	case "101":
+		state = plugin.BizStateFailed
 	}
 	result := resp["rc_CodeMsg"]
 	if result == "" {
 		result = resp["ra_Status"]
 	}
-	return plugin.Result(state, plugin.BizResultInput{
+	return plugin.Result(state, plugin.BizOut{
 		ApiNo: resp["r5_RefundTrxNo"],
 		Code:  resp["rb_Code"],
 		Msg:   result,

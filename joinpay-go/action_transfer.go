@@ -46,7 +46,7 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 	}
 	resp, stats, err := transferOrder(ctx, cfg, params)
 	if err != nil {
-		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+		return plugin.Result(plugin.BizStateFailed, plugin.BizOut{
 			Msg:   err.Error(),
 			Stats: stats,
 		}), nil
@@ -57,7 +57,7 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 		if message == "" {
 			message = "代付受理失败"
 		}
-		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+		return plugin.Result(plugin.BizStateFailed, plugin.BizOut{
 			Code:  statusCode,
 			Msg:   message,
 			Stats: stats,
@@ -67,7 +67,7 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 	if result == "" {
 		result = statusCode
 	}
-	return plugin.Result(plugin.BizStateProcessing, plugin.BizResultInput{
+	return plugin.Result(plugin.BizStateProcessing, plugin.BizOut{
 		Code:  statusCode,
 		Msg:   result,
 		Stats: stats,

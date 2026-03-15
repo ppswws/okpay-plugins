@@ -7,19 +7,12 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-pay/gopay"
 	"github.com/go-pay/gopay/alipay"
-	"github.com/ppswws/okpay-plugin-sdk"
+	plugin "github.com/ppswws/okpay-plugin-sdk"
 	"github.com/ppswws/okpay-plugin-sdk/proto"
-)
-
-type pluginMode string
-
-const (
-	modeStandard pluginMode = "standard"
-	modeDirect   pluginMode = "direct"
-	modeService  pluginMode = "service"
 )
 
 type aliConfig struct {
@@ -60,11 +53,11 @@ func readGlobalConfig(req *proto.InvokeContext) globalConfig {
 }
 
 func readConfig(req *proto.InvokeContext) (*aliConfig, error) {
-	if req == nil || req.GetChannel() == nil || len(req.GetChannel().GetConfigJsonRaw()) == 0 {
+	if req == nil || req.GetChannel() == nil || len(req.GetChannel().GetCfgRaw()) == 0 {
 		return nil, fmt.Errorf("通道配置不完整")
 	}
 	raw := aliChannelConfig{}
-	if err := json.Unmarshal(req.GetChannel().GetConfigJsonRaw(), &raw); err != nil {
+	if err := json.Unmarshal(req.GetChannel().GetCfgRaw(), &raw); err != nil {
 		return nil, fmt.Errorf("通道配置解析失败: %w", err)
 	}
 	cfg := &aliConfig{
@@ -77,12 +70,6 @@ func readConfig(req *proto.InvokeContext) (*aliConfig, error) {
 	}
 	if cfg.AppID == "" || cfg.AppSecret == "" {
 		return nil, fmt.Errorf("通道配置不完整")
-	}
-	if mode == modeService && cfg.AppMchID == "" {
-		return nil, fmt.Errorf("商户授权token不能为空")
-	}
-	if mode == modeDirect && cfg.AppMchID == "" {
-		return nil, fmt.Errorf("子商户SMID不能为空")
 	}
 	cfg.AppSecret = normalizeKeyBase64(cfg.AppSecret)
 	cfg.AppKey = normalizeKeyBase64(cfg.AppKey)
@@ -110,40 +97,21 @@ func newAliClient(cfg *aliConfig, notifyURL, returnURL string) (*alipay.Client, 
 	if returnURL != "" {
 		client.SetReturnUrl(returnURL)
 	}
-	// Keep key format consistent with channel config (raw base64):
-	// do not enable AutoVerifySign here, because it requires PEM/cert content.
-	if mode == modeService {
-		client.SetAppAuthToken(cfg.AppMchID)
-	}
+	// 密钥保持与通道配置一致（原始密钥串），这里不启用自动验签，
+	// 因为自动验签需要证书内容。
 	return client, nil
 }
 
 func applyModeBizParams(cfg *aliConfig, bm gopay.BodyMap, totalAmount string) {
+	_ = totalAmount
 	if bm == nil {
 		return
 	}
 	if cfg == nil {
 		return
 	}
-	if mode == modeStandard {
-		if cfg.AppMchID != "" {
-			bm.Set("seller_id", cfg.AppMchID)
-		}
-		return
-	}
-	if mode == modeDirect {
-		if cfg.AppMchID == "" {
-			return
-		}
-		bm.SetBodyMap("sub_merchant", func(m gopay.BodyMap) {
-			m.Set("merchant_id", cfg.AppMchID)
-		})
-		if totalAmount != "" {
-			bm.SetBodyMap("settle_info", func(m gopay.BodyMap) {
-				m.Set("settle_period_time", "1d")
-				m.Set("settle_detail_infos", []map[string]any{{"trans_in_type": "defaultSettle", "amount": totalAmount}})
-			})
-		}
+	if cfg.AppMchID != "" {
+		bm.Set("seller_id", cfg.AppMchID)
 	}
 }
 
@@ -177,6 +145,62 @@ func splitCSV(v string) []string {
 	return out
 }
 
+func queryValue(req *proto.InvokeContext, key string) string {
+	if req == nil || req.GetRequest() == nil {
+		return ""
+	}
+	if strings.TrimSpace(key) == "" {
+		return ""
+	}
+	queryRaw := strings.TrimSpace(req.GetRequest().GetQuery())
+	if queryRaw == "" {
+		return ""
+	}
+	vals, err := url.ParseQuery(queryRaw)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(vals.Get(key))
+}
+
+func buildPayURL(req *proto.InvokeContext, order *proto.OrderSnapshot, query map[string]string) string {
+	if order == nil {
+		return ""
+	}
+	globalCfg := readGlobalConfig(req)
+	siteDomain := strings.TrimRight(globalCfg.SiteDomain, "/")
+	if siteDomain == "" {
+		return ""
+	}
+	payURL := siteDomain + "/pay/" + order.GetType() + "/" + order.GetTradeNo()
+	if len(query) == 0 {
+		return payURL
+	}
+	q := url.Values{}
+	for k, v := range query {
+		if k == "" || v == "" {
+			continue
+		}
+		q.Set(k, v)
+	}
+	if q.Get("t") == "" {
+		q.Set("t", fmt.Sprintf("%d", time.Now().Unix()))
+	}
+	qs := q.Encode()
+	if qs == "" {
+		return payURL
+	}
+	return payURL + "?" + qs
+}
+
+// 将支付宝返回的订单串封装为应用拉起深链，专用于手机拉起支付页流程（应用支付、预授权）。
+// 它不是二维码支付页使用的通用拉起链接；二维码页的拉起链接由二维码地址再构造。
+func baseScheme(orderStr string) string {
+	return "alipays://platformapi/startApp?appId=20000125&orderSuffix=" +
+		url.QueryEscape(orderStr) +
+		"#Intent;scheme=alipays;package=com.eg.android.AlipayGphone;end"
+}
+
 func buildOrderURLs(req *proto.InvokeContext, order *proto.OrderSnapshot) (string, string) {
 	globalCfg := readGlobalConfig(req)
 	notifyDomain := strings.TrimRight(globalCfg.NotifyDomain, "/")
@@ -193,24 +217,6 @@ func buildOrderURLs(req *proto.InvokeContext, order *proto.OrderSnapshot) (strin
 		returnURL = siteDomain + "/pay/" + order.GetType() + "/" + order.GetTradeNo()
 	}
 	return notifyURL, returnURL
-}
-
-func buildRefundNotifyURL(req *proto.InvokeContext, refund *proto.RefundSnapshot) string {
-	globalCfg := readGlobalConfig(req)
-	notifyDomain := strings.TrimRight(globalCfg.NotifyDomain, "/")
-	if notifyDomain == "" || refund == nil || refund.GetRefundNo() == "" {
-		return ""
-	}
-	return notifyDomain + "/pay/refundnotify/" + refund.GetRefundNo()
-}
-
-func buildTransferNotifyURL(req *proto.InvokeContext, transfer *proto.TransferSnapshot) string {
-	globalCfg := readGlobalConfig(req)
-	notifyDomain := strings.TrimRight(globalCfg.NotifyDomain, "/")
-	if notifyDomain == "" || transfer == nil || transfer.GetTradeNo() == "" {
-		return ""
-	}
-	return notifyDomain + "/pay/transfernotify/" + transfer.GetTradeNo()
 }
 
 func toYuan(cents int64) string {
@@ -286,17 +292,6 @@ func normalizeKeyBase64(raw string) string {
 	}, key)
 }
 
-func queryParam(req *proto.InvokeContext, key string) string {
-	if req == nil || req.GetRequest() == nil || key == "" {
-		return ""
-	}
-	values, err := url.ParseQuery(req.GetRequest().GetQuery())
-	if err != nil {
-		return ""
-	}
-	return values.Get(key)
-}
-
 func marshalJSON(v any) string {
 	if v == nil {
 		return ""
@@ -306,17 +301,6 @@ func marshalJSON(v any) string {
 		return ""
 	}
 	return string(raw)
-}
-
-func modeNote() string {
-	switch mode {
-	case modeDirect:
-		return "支付宝直付通插件，提交支付时自动注入 sub_merchant/settle_info 参数。"
-	case modeService:
-		return "支付宝服务商插件，使用 app_auth_token 代表商户发起交易。"
-	default:
-		return "支付宝官方支付插件（RSA2），支持支付、回调、查询、退款、转账与余额查询。"
-	}
 }
 
 func lockOrderPage(ctx context.Context, tradeNo string, fetch func() (*proto.PageResponse, plugin.RequestStats, error)) (*proto.PageResponse, error) {

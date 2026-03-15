@@ -39,8 +39,8 @@ func refundByChannel(ctx context.Context, req *proto.InvokeContext) (channelBizR
 		bm.Set("out_trade_no", refund.GetTradeNo())
 	} else {
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
-			Input: plugin.BizResultInput{Msg: "缺少订单号", Stats: plugin.RequestStats{}},
+			State: plugin.BizStateFailed,
+			Input: plugin.BizOut{Msg: "缺少订单号", Stats: plugin.RequestStats{}},
 		}, nil
 	}
 	bm.Set("refund_amount", toYuan(refund.GetAmount()))
@@ -56,8 +56,8 @@ func refundByChannel(ctx context.Context, req *proto.InvokeContext) (channelBizR
 			respBody = err.Error()
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
-			Input: plugin.BizResultInput{Msg: err.Error(), Stats: plugin.RequestStats{ReqMs: reqMs, ReqBody: reqBody, RespBody: respBody}},
+			State: plugin.BizStateFailed,
+			Input: plugin.BizOut{Msg: err.Error(), Stats: plugin.RequestStats{ReqMs: reqMs, ReqBody: reqBody, RespBody: respBody}},
 		}, nil
 	}
 	if resp == nil || resp.Response == nil {
@@ -65,31 +65,31 @@ func refundByChannel(ctx context.Context, req *proto.InvokeContext) (channelBizR
 			respBody = "{}"
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_PROCESSING,
-			Input: plugin.BizResultInput{Msg: "退款处理中", Stats: plugin.RequestStats{ReqMs: reqMs, ReqBody: reqBody, RespBody: respBody}},
+			State: plugin.BizStateProcessing,
+			Input: plugin.BizOut{Msg: "退款处理中", Stats: plugin.RequestStats{ReqMs: reqMs, ReqBody: reqBody, RespBody: respBody}},
 		}, nil
 	}
 	apiRefundNo := resp.Response.TradeNo
 	if apiRefundNo == "" {
 		apiRefundNo = refund.GetRefundNo()
 	}
-	state := proto.BizState_BIZ_STATE_FAILED
+	state := plugin.BizStateFailed
 	if resp.Response.Code == "10000" {
-		state = proto.BizState_BIZ_STATE_PROCESSING
+		state = plugin.BizStateProcessing
 		if resp.Response.FundChange == "Y" {
-			state = proto.BizState_BIZ_STATE_SUCCEEDED
+			state = plugin.BizStateSucceeded
 		}
 	}
 	result := resp.Response.SubMsg
 	if result == "" {
 		result = resp.Response.Msg
 	}
-	if state == proto.BizState_BIZ_STATE_FAILED && resp.Response.SubCode != "" {
+	if state == plugin.BizStateFailed && resp.Response.SubCode != "" {
 		result = resp.Response.SubCode + ":" + result
 	}
 	stats := plugin.RequestStats{ReqMs: reqMs, ReqBody: reqBody, RespBody: respBody}
 	return channelBizResult{
 		State: state,
-		Input: plugin.BizResultInput{ApiNo: apiRefundNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
+		Input: plugin.BizOut{ApiNo: apiRefundNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
 	}, nil
 }

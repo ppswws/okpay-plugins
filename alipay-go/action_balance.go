@@ -34,9 +34,9 @@ func balance(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, e
 	if resp != nil && resp.Response != nil && resp.Response.AvailableAmount != "" {
 		balance = resp.Response.AvailableAmount
 	}
-	return plugin.ResultBal(plugin.BizResultInput{
-		Balance:    balance,
-		Msg: "余额查询成功",
-		Stats:      plugin.RequestStats{},
+	return plugin.ResultBal(plugin.BizOut{
+		Balance: balance,
+		Msg:     "余额查询成功",
+		Stats:   plugin.RequestStats{},
 	}), nil
 }

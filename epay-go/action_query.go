@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/ppswws/okpay-plugin-sdk"
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
@@ -16,6 +17,7 @@ type epayQueryResp struct {
 	TradeNo    string `json:"trade_no"`
 	OutTradeNo string `json:"out_trade_no"`
 	APITradeNo string `json:"api_trade_no"`
+	Buyer      string `json:"buyer"`
 	Status     string `json:"status"`
 }
 
@@ -50,15 +52,16 @@ func query(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, err
 	if err != nil {
 		return nil, err
 	}
-	state := proto.BizState_BIZ_STATE_PROCESSING
+	state := plugin.BizStateProcessing
 	msg := "交易处理中"
 	if resp.Code == 1 && resp.Status == "1" {
-		state = proto.BizState_BIZ_STATE_SUCCEEDED
+		state = plugin.BizStateSucceeded
 		msg = "交易成功"
 	}
 	return &proto.BizResult{
 		State: state,
 		ApiNo: resp.APITradeNo,
+		Buyer: resp.Buyer,
 		Code:  fmt.Sprintf("%d", resp.Code),
 		Msg:   msg,
 	}, nil

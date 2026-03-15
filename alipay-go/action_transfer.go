@@ -20,12 +20,6 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 }
 
 func transferByChannel(ctx context.Context, req *proto.InvokeContext) (channelBizResult, error) {
-	if mode != modeStandard {
-		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
-			Input: plugin.BizResultInput{Msg: "当前插件模式不支持转账", Stats: plugin.RequestStats{}},
-		}, nil
-	}
 	tr := req.GetTransfer()
 	if tr == nil || tr.GetTradeNo() == "" {
 		return channelBizResult{}, fmt.Errorf("代付单为空")
@@ -67,15 +61,15 @@ func transferByChannel(ctx context.Context, req *proto.InvokeContext) (channelBi
 		})
 	default:
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
-			Input: plugin.BizResultInput{Msg: "不支持的转账类型", Stats: plugin.RequestStats{ReqBody: reqBody.JsonBody()}},
+			State: plugin.BizStateFailed,
+			Input: plugin.BizOut{Msg: "不支持的转账类型", Stats: plugin.RequestStats{ReqBody: reqBody.JsonBody()}},
 		}, nil
 	}
 
 	if tr.GetCardNo() == "" {
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
-			Input: plugin.BizResultInput{Msg: "收款账户不能为空", Stats: plugin.RequestStats{ReqBody: reqBody.JsonBody()}},
+			State: plugin.BizStateFailed,
+			Input: plugin.BizOut{Msg: "收款账户不能为空", Stats: plugin.RequestStats{ReqBody: reqBody.JsonBody()}},
 		}, nil
 	}
 	body := reqBody.JsonBody()
@@ -88,8 +82,8 @@ func transferByChannel(ctx context.Context, req *proto.InvokeContext) (channelBi
 			respBody = err.Error()
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
-			Input: plugin.BizResultInput{Msg: err.Error(), Stats: plugin.RequestStats{ReqMs: reqMs, ReqBody: body, RespBody: respBody}},
+			State: plugin.BizStateFailed,
+			Input: plugin.BizOut{Msg: err.Error(), Stats: plugin.RequestStats{ReqMs: reqMs, ReqBody: body, RespBody: respBody}},
 		}, nil
 	}
 	if resp == nil || resp.Response == nil {
@@ -97,32 +91,32 @@ func transferByChannel(ctx context.Context, req *proto.InvokeContext) (channelBi
 			respBody = "{}"
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_PROCESSING,
-			Input: plugin.BizResultInput{Msg: "代付处理中", Stats: plugin.RequestStats{ReqMs: reqMs, ReqBody: body, RespBody: respBody}},
+			State: plugin.BizStateProcessing,
+			Input: plugin.BizOut{Msg: "代付处理中", Stats: plugin.RequestStats{ReqMs: reqMs, ReqBody: body, RespBody: respBody}},
 		}, nil
 	}
-	state := proto.BizState_BIZ_STATE_FAILED
+	state := plugin.BizStateFailed
 	if resp.Response.Code == "10000" {
-		state = proto.BizState_BIZ_STATE_SUCCEEDED
+		state = plugin.BizStateSucceeded
 	} else if isTransferRetryable(resp.Response.Code, resp.Response.SubCode) {
 		// 系统繁忙/处理中：结果不确定，交由上游重试或查单。
-		state = proto.BizState_BIZ_STATE_PROCESSING
+		state = plugin.BizStateProcessing
 	}
 	apiTradeNo := resp.Response.OrderId
-	if state != proto.BizState_BIZ_STATE_SUCCEEDED && apiTradeNo == "" {
+	if state != plugin.BizStateSucceeded && apiTradeNo == "" {
 		apiTradeNo = resp.Response.PayFundOrderId
 	}
 	result := resp.Response.SubMsg
 	if result == "" {
 		result = resp.Response.Msg
 	}
-	if state != proto.BizState_BIZ_STATE_SUCCEEDED && resp.Response.SubCode != "" {
+	if state != plugin.BizStateSucceeded && resp.Response.SubCode != "" {
 		result = resp.Response.SubCode + ":" + result
 	}
 	stats := plugin.RequestStats{ReqMs: reqMs, ReqBody: body, RespBody: respBody}
 	return channelBizResult{
 		State: state,
-		Input: plugin.BizResultInput{ApiNo: apiTradeNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
+		Input: plugin.BizOut{ApiNo: apiTradeNo, Code: resp.Response.SubCode, Msg: result, Stats: stats},
 	}, nil
 }
 
@@ -146,7 +140,7 @@ func inferAlipayIdentityType(account string) string {
 	if isDigits(account) {
 		return "ALIPAY_LOGON_ID"
 	}
-	if strings.Contains(account, "@") == true {
+	if strings.Contains(account, "@") {
 		return "ALIPAY_LOGON_ID"
 	}
 	return "ALIPAY_OPEN_ID"
@@ -156,7 +150,7 @@ func isAlipayUserID(account string) bool {
 	if !isDigits(account) {
 		return false
 	}
-	// 支付宝 uid：纯数字、2088 开头、16 位。
+	// 支付宝用户号为纯数字、2088 开头、16 位。
 	if !strings.HasPrefix(account, "2088") {
 		return false
 	}

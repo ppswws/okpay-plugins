@@ -24,44 +24,44 @@ type alipayNotifyParams struct {
 func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	notifyParams, payload, err := parseAlipayNotify(req)
 	if err != nil || notifyParams == nil || len(payload) == 0 {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
 	cfg, err := readConfig(req)
 	if err != nil {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
 	ok, err := alipay.VerifySign(cfg.AppKey, payload)
 	if err != nil || !ok {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
 	order := req.GetOrder()
 	if order == nil || order.GetTradeNo() == "" {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
 	if notifyParams.OutTradeNo != order.GetTradeNo() {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
 	if toCents(notifyParams.TotalAmount) != order.GetReal() {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
 	status := strings.ToUpper(notifyParams.TradeStatus)
 	if status != "TRADE_SUCCESS" && status != "TRADE_FINISHED" {
-		return plugin.RespHTML("success"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("success")), nil
 	}
 	buyer := notifyParams.BuyerID
 	if buyer == "" {
 		buyer = notifyParams.BuyerOpenID
 	}
-	if err := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
-		BizType: proto.BizType_BIZ_TYPE_ORDER,
+	if err := plugin.CompleteBiz(ctx, plugin.BizDoneIn{
+		BizType: plugin.BizTypeOrder,
 		BizNo:   order.GetTradeNo(),
-		State:   proto.BizState_BIZ_STATE_SUCCEEDED,
+		State:   plugin.BizStateSucceeded,
 		ApiNo:   notifyParams.TradeNo,
 		Buyer:   buyer,
 	}); err != nil {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
-	return plugin.RespHTML("success"), nil
+	return plugin.RecordNotify(req, plugin.RespHTML("success")), nil
 }
 
 func parseAlipayNotify(req *proto.InvokeContext) (*alipayNotifyParams, gopay.BodyMap, error) {

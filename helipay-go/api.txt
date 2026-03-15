@@ -862,3 +862,67 @@ subOp enId	rt20_subOpenId	否	String (40)	aaRj7wCKM UFF7dSbWa oPlssTsx/ 20183353
 签名	sign	是	String (200)	75a989cc9985e6d2bc 2d53d9eda3c31f	SM2签名结果，详见“5.4节S M2签名”;URLEncoder.encod e(sign,”UTF-8”)
 签名类型	signatureType	是	Sting	SM3WITHSM2	SM3WITHSM2;固定值，不参与 签名
 备注:当商户成功接收到合利宝的通知请求后，商户必须返回:”success”，告知合利宝商户已经收到通知。代付结果通知，仅会通知5次。
+
+4.69 openid黑名单同步接口
+功能描述
+
+此接口用于新增openid，或用于修改openid拦截状态。
+
+测试请求地址	http://entry.trx.helipay.com/trx/merchantEntry/interface.action
+生产请求地址	http://entry.trx.helipay.com/trx/merchantEntry/interface.action
+传输方式	采用HTTP传输
+提交方式	采用POST方法提交
+字符编码	统一采用UTF-8字符编码
+签名算法	SM3WITHSM2
+签名要求	请求和接收数据均需要校验签名
+接口名称(interfaceName)：appInterceptSubOpenIdListSync
+
+body域
+
+字段名	变量名	必填	类型	实例值	说明
+客户端类型	appPayType	是	String (20）	WXPAY	客户端类型WXPAY:微信；;A LIPAY:支付宝
+请求编号	requestNo	是	String (50)	131313132131313131 3131	请求编号
+openid列表	openIdList	是	Set<String>	[]	需要同步的openid列表
+记录状态	statusEnum	是	String (20)	AVAILABLE	记录状态AVAILABLE：启用； DISABLED：;停用；
+返回参数data 域
+
+字段名	变量名	必填	类型	实例值	说明
+平台商或普 通商户商编	merchantNo	是	String (16)	E1800001025	平台商或普通商户商编
+请求编号	requestNo	是	String (50)	131313132131313131 3131	请求编号
+响应状态	status	是	String (10)	SUCCESS	响应状态
+响应信息	msg	是	String (50)	成功	响应信息
+
+
+
+4.70 openid黑名单查询接口
+测试请求地址	http://test.trx.helipay.com/trx/merchantEntry/interface.action
+生产请求地址	http://entry.trx.helipay.com/trx/merchantEntry/interface.action
+传输方式	采用HTTP传输
+提交方式	采用POST方法提交
+字符编码	统一采用UTF-8字符编码
+签名算法	MD5
+签名要求	请求和接收数据均需要校验签名
+body域
+接口名称(interfaceName)：appInterceptSubOpenIdListQuery
+
+字段名	变量名	必填	类型	实例值	说明
+客户端类型	appPayType	是	String (20）	WXPAY	客户端类型WXPAY:微信；;A LIPAY:支付宝
+openid列表	openIdList	否	Set<St ring>	[]	openid列表和查询时间范围 必须填写其中一种
+查询开始时 间	startTime	否	String (20)	yyyy-MM-dd	openid列表和查询时间范围 必须填写其中一种
+查询结束时 间	endTime	否	String (20)	yyyy-MM-dd	openid列表和查询时间范围 必须填写其中一种
+查询页码	pageNum	否	int	1	默认值为1
+返回参数data域
+字段名	变量名	必填	类型	示例值	说明
+平台商或普 通商户编号	merchantNo	是	String (16)	C18000xxxxx	平台商或普通商户编号
+查询开始时 间	startTime	是	String (20)	xxxxxxxx	yyyy-MM-dd
+查询结束时 间	endTime	是	String (20)	xxxxxxxx	yyyy-MM-dd
+当前页码	currentPage	是	int	xxxxxxxx	1
+总页数	totalPage	是	int	xxxxxxxx	2
+拦截openid 配置列表	appInterceptSubOpenIdList	是	JSONAr ray	[{}]	返回请求页码的拦截openid 配置列表
+appInterceptSubOpenIdList结构：
+字段名	变量名	必填	类型	实例值	说明
+客户端类型	appPayType	是	String (20）	WXPAY	客户端类型WXPAY:微信；;A LIPAY:支付宝
+openid	openId	是	String (128)	xxxxxxxx	openid
+记录状态	statusEnum	是	String (20)	AVAILABLE	记录状态AVAILABLE：启用； DISABLED：;停用；
+创建时间	createDate	是	String (20)	xxxxxxxx	yyyy-MM-dd
+更新时间	updateDate	是	String (20)	xxxxxxxx	yyyy-MM-dd

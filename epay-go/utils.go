@@ -26,7 +26,7 @@ type globalConfig struct {
 }
 
 func readConfig(req *proto.InvokeContext) (*epayConfig, error) {
-	if req == nil || req.GetChannel() == nil || len(req.GetChannel().GetConfigJsonRaw()) == 0 {
+	if req == nil || req.GetChannel() == nil || len(req.GetChannel().GetCfgRaw()) == 0 {
 		return nil, fmt.Errorf("通道配置不完整")
 	}
 	raw := struct {
@@ -34,7 +34,7 @@ func readConfig(req *proto.InvokeContext) (*epayConfig, error) {
 		AppID  string `json:"appid"`
 		AppKey string `json:"appkey"`
 	}{}
-	if err := json.Unmarshal(req.GetChannel().GetConfigJsonRaw(), &raw); err != nil {
+	if err := json.Unmarshal(req.GetChannel().GetCfgRaw(), &raw); err != nil {
 		return nil, fmt.Errorf("通道配置解析失败: %w", err)
 	}
 	if raw.AppURL == "" || raw.AppID == "" || raw.AppKey == "" {

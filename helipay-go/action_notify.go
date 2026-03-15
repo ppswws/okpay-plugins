@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/ppswws/okpay-plugin-sdk"
@@ -13,60 +14,60 @@ import (
 func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	cfg, err := readConfig(req)
 	if err != nil {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
 	n, err := parseHelipayOrderNotify(req)
 	if err != nil || !verifyNotify(n.toSignMap(), cfg.AppKey) || n.Rt4Status != "SUCCESS" {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
 	order := req.GetOrder()
 	if order == nil {
-		return plugin.RespHTML("success"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("success")), nil
 	}
 	if n.Rt2OrderID != order.GetTradeNo() {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
 	if order.GetReal() != toCents(n.Rt5OrderAmount) {
-		return plugin.RespHTML("amount_mismatch"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("amount_mismatch")), nil
 	}
-	if err := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
-		BizType: proto.BizType_BIZ_TYPE_ORDER,
+	if err := plugin.CompleteBiz(ctx, plugin.BizDoneIn{
+		BizType: plugin.BizTypeOrder,
 		BizNo:   order.GetTradeNo(),
-		State:   proto.BizState_BIZ_STATE_SUCCEEDED,
+		State:   plugin.BizStateSucceeded,
 		ApiNo:   n.Rt3SystemSerial,
 		Buyer:   n.Rt10OpenID,
 	}); err != nil {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
-	return plugin.RespHTML("success"), nil
+	return plugin.RecordNotify(req, plugin.RespHTML("success")), nil
 }
 
 func refundNotify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	cfg, err := readConfig(req)
 	if err != nil {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
 	n, err := parseHelipayRefundNotify(req)
 	if err != nil || !verifyNotify(n.toSignMap(), cfg.AppKey) {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
 	status := strings.ToUpper(n.Rt5Status)
 	refund := req.GetRefund()
 	if refund == nil || refund.GetRefundNo() == "" {
-		return plugin.RespHTML("success"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("success")), nil
 	}
 	if n.Rt3RefundOrderID != refund.GetRefundNo() {
-		return plugin.RespHTML("refund_mismatch"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("refund_mismatch")), nil
 	}
 	if n.Rt6Amount != "" && refund.GetAmount() != toCents(n.Rt6Amount) {
-		return plugin.RespHTML("amount_mismatch"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("amount_mismatch")), nil
 	}
 	respBody := "status=" + status
 	if raw, marshalErr := json.Marshal(n); marshalErr == nil {
 		respBody = string(raw)
 	}
-	if err := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
-		BizType:  proto.BizType_BIZ_TYPE_REFUND,
+	if err := plugin.CompleteBiz(ctx, plugin.BizDoneIn{
+		BizType:  plugin.BizTypeRefund,
 		BizNo:    refund.GetRefundNo(),
 		State:    helipayRefundState(status),
 		ApiNo:    n.Rt4SystemSerial,
@@ -74,29 +75,29 @@ func refundNotify(ctx context.Context, req *proto.InvokeContext) (*proto.PageRes
 		Msg:      status,
 		RespBody: respBody,
 	}); err != nil {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
-	return plugin.RespHTML("success"), nil
+	return plugin.RecordNotify(req, plugin.RespHTML("success")), nil
 }
 
 func transferNotify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	cfg, err := readConfig(req)
 	if err != nil {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
 	n, err := parseHelipayTransferNotify(req)
 	if err != nil || !verifyNotify(n.toSignMap(), cfg.AppKey) {
-		return plugin.RespHTML("fail"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("fail")), nil
 	}
 	transfer := req.GetTransfer()
 	if transfer == nil || transfer.GetTradeNo() == "" {
-		return plugin.RespHTML("success"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("success")), nil
 	}
 	status := strings.ToUpper(n.Rt7OrderStatus)
 	state, ok := helipayTransferState(status)
 	if ok {
-		_ = plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
-			BizType: proto.BizType_BIZ_TYPE_TRANSFER,
+		_ = plugin.CompleteBiz(ctx, plugin.BizDoneIn{
+			BizType: plugin.BizTypeTransfer,
 			BizNo:   transfer.GetTradeNo(),
 			State:   state,
 			ApiNo:   n.Rt6SerialNumber,
@@ -104,30 +105,30 @@ func transferNotify(ctx context.Context, req *proto.InvokeContext) (*proto.PageR
 			Msg:     n.Rt9Reason,
 		})
 	}
-	return plugin.RespHTML("success"), nil
+	return plugin.RecordNotify(req, plugin.RespHTML("success")), nil
 }
 
 func helipayRefundState(status string) proto.BizState {
 	switch status {
 	case "SUCCESS":
-		return proto.BizState_BIZ_STATE_SUCCEEDED
+		return plugin.BizStateSucceeded
 	case "FAIL", "CLOSE":
-		return proto.BizState_BIZ_STATE_FAILED
+		return plugin.BizStateFailed
 	default:
-		return proto.BizState_BIZ_STATE_PROCESSING
+		return plugin.BizStateProcessing
 	}
 }
 
 func helipayTransferState(status string) (proto.BizState, bool) {
 	switch status {
 	case "SUCCESS":
-		return proto.BizState_BIZ_STATE_SUCCEEDED, true
+		return plugin.BizStateSucceeded, true
 	case "FAIL", "REFUND":
-		return proto.BizState_BIZ_STATE_FAILED, true
+		return plugin.BizStateFailed, true
 	case "RECEIVE", "INIT", "DOING":
-		return proto.BizState_BIZ_STATE_PROCESSING, true
+		return plugin.BizStateProcessing, true
 	default:
-		return proto.BizState_BIZ_STATE_PROCESSING, false
+		return plugin.BizStateProcessing, false
 	}
 }
 
@@ -299,7 +300,19 @@ func parseNotifyJSONMap(req *proto.InvokeContext) (map[string]string, error) {
 	}
 	src := map[string]any{}
 	if err := json.Unmarshal(payload, &src); err != nil {
-		return nil, fmt.Errorf("notify body json invalid: %w", err)
+		values, parseErr := url.ParseQuery(string(payload))
+		if parseErr != nil || len(values) == 0 {
+			return nil, fmt.Errorf("notify body parse failed: %w", err)
+		}
+		out := make(map[string]string, len(values))
+		for k, v := range values {
+			if len(v) > 0 {
+				out[k] = v[0]
+			} else {
+				out[k] = ""
+			}
+		}
+		return out, nil
 	}
 	out := make(map[string]string, len(src))
 	for k, v := range src {

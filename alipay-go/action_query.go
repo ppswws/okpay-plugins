@@ -13,7 +13,7 @@ import (
 
 type channelBizResult struct {
 	State proto.BizState
-	Input plugin.BizResultInput
+	Input plugin.BizOut
 }
 
 func kernelResult(result channelBizResult) *proto.BizResult {
@@ -79,30 +79,31 @@ func queryOrderByChannel(ctx context.Context, req *proto.InvokeContext) (channel
 			stats.RespBody = queryErr.Error()
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_PROCESSING,
-			Input: plugin.BizResultInput{Msg: queryErr.Error(), Stats: stats},
+			State: plugin.BizStateProcessing,
+			Input: plugin.BizOut{Msg: queryErr.Error(), Stats: stats},
 		}, nil
 	case resp == nil || resp.Response == nil:
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_PROCESSING,
-			Input: plugin.BizResultInput{Msg: "交易处理中", Stats: stats},
+			State: plugin.BizStateProcessing,
+			Input: plugin.BizOut{Msg: "交易处理中", Stats: stats},
 		}, nil
 	}
 
-	state := proto.BizState_BIZ_STATE_PROCESSING
+	state := plugin.BizStateProcessing
 	msg := "交易处理中"
 	switch resp.Response.TradeStatus {
 	case "TRADE_SUCCESS", "TRADE_FINISHED":
-		state = proto.BizState_BIZ_STATE_SUCCEEDED
+		state = plugin.BizStateSucceeded
 		msg = "交易成功"
 	case "TRADE_CLOSED":
-		state = proto.BizState_BIZ_STATE_FAILED
+		state = plugin.BizStateFailed
 		msg = "交易关闭"
 	}
 	return channelBizResult{
 		State: state,
-		Input: plugin.BizResultInput{
+		Input: plugin.BizOut{
 			ApiNo: resp.Response.TradeNo,
+			Buyer: resp.Response.BuyerOpenId,
 			Code:  resp.Response.Code,
 			Msg:   msg,
 			Stats: stats,
@@ -132,8 +133,8 @@ func queryRefundByChannel(ctx context.Context, req *proto.InvokeContext) (channe
 		bm.Set("out_trade_no", refund.GetTradeNo())
 	} else {
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_FAILED,
-			Input: plugin.BizResultInput{Msg: "缺少订单号", Stats: plugin.RequestStats{}},
+			State: plugin.BizStateFailed,
+			Input: plugin.BizOut{Msg: "缺少订单号", Stats: plugin.RequestStats{}},
 		}, nil
 	}
 
@@ -151,13 +152,13 @@ func queryRefundByChannel(ctx context.Context, req *proto.InvokeContext) (channe
 			stats.RespBody = queryErr.Error()
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_PROCESSING,
-			Input: plugin.BizResultInput{Msg: queryErr.Error(), Stats: stats},
+			State: plugin.BizStateProcessing,
+			Input: plugin.BizOut{Msg: queryErr.Error(), Stats: stats},
 		}, nil
 	case resp == nil || resp.Response == nil:
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_PROCESSING,
-			Input: plugin.BizResultInput{Msg: "退款处理中", Stats: stats},
+			State: plugin.BizStateProcessing,
+			Input: plugin.BizOut{Msg: "退款处理中", Stats: stats},
 		}, nil
 	case resp.Response.Code != "10000":
 		msg := resp.Response.SubMsg
@@ -166,16 +167,16 @@ func queryRefundByChannel(ctx context.Context, req *proto.InvokeContext) (channe
 			msg = resp.Response.Msg
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_PROCESSING,
-			Input: plugin.BizResultInput{Code: resp.Response.SubCode, Msg: msg, Stats: stats},
+			State: plugin.BizStateProcessing,
+			Input: plugin.BizOut{Code: resp.Response.SubCode, Msg: msg, Stats: stats},
 		}, nil
 	}
 
-	state := proto.BizState_BIZ_STATE_PROCESSING
+	state := plugin.BizStateProcessing
 	msg := "退款处理中"
 	switch strings.ToUpper(resp.Response.RefundStatus) {
 	case "REFUND_SUCCESS":
-		state = proto.BizState_BIZ_STATE_SUCCEEDED
+		state = plugin.BizStateSucceeded
 		msg = "退款成功"
 	}
 	apiNo := resp.Response.TradeNo
@@ -185,7 +186,7 @@ func queryRefundByChannel(ctx context.Context, req *proto.InvokeContext) (channe
 	}
 	return channelBizResult{
 		State: state,
-		Input: plugin.BizResultInput{
+		Input: plugin.BizOut{
 			ApiNo: apiNo,
 			Code:  resp.Response.SubCode,
 			Msg:   msg,
@@ -234,13 +235,13 @@ func queryTransferByChannel(ctx context.Context, req *proto.InvokeContext) (chan
 			stats.RespBody = queryErr.Error()
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_PROCESSING,
-			Input: plugin.BizResultInput{Msg: queryErr.Error(), Stats: stats},
+			State: plugin.BizStateProcessing,
+			Input: plugin.BizOut{Msg: queryErr.Error(), Stats: stats},
 		}, nil
 	case resp == nil || resp.Response == nil:
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_PROCESSING,
-			Input: plugin.BizResultInput{Msg: "代付处理中", Stats: stats},
+			State: plugin.BizStateProcessing,
+			Input: plugin.BizOut{Msg: "代付处理中", Stats: stats},
 		}, nil
 	case resp.Response.Code != "10000":
 		msg := resp.Response.SubMsg
@@ -249,22 +250,22 @@ func queryTransferByChannel(ctx context.Context, req *proto.InvokeContext) (chan
 			msg = resp.Response.Msg
 		}
 		return channelBizResult{
-			State: proto.BizState_BIZ_STATE_PROCESSING,
-			Input: plugin.BizResultInput{Code: resp.Response.SubCode, Msg: msg, Stats: stats},
+			State: plugin.BizStateProcessing,
+			Input: plugin.BizOut{Code: resp.Response.SubCode, Msg: msg, Stats: stats},
 		}, nil
 	}
 
-	state := proto.BizState_BIZ_STATE_PROCESSING
+	state := plugin.BizStateProcessing
 	msg := "代付处理中"
 	switch strings.ToUpper(resp.Response.Status) {
 	case "SUCCESS":
-		state = proto.BizState_BIZ_STATE_SUCCEEDED
+		state = plugin.BizStateSucceeded
 		msg = "代付成功"
 	case "FAIL", "CLOSED", "REFUND":
-		state = proto.BizState_BIZ_STATE_FAILED
+		state = plugin.BizStateFailed
 		msg = "代付失败"
 	}
-	if state == proto.BizState_BIZ_STATE_FAILED {
+	if state == plugin.BizStateFailed {
 		switch {
 		case resp.Response.FailReason != "":
 			msg = resp.Response.FailReason
@@ -282,7 +283,7 @@ func queryTransferByChannel(ctx context.Context, req *proto.InvokeContext) (chan
 	}
 	return channelBizResult{
 		State: state,
-		Input: plugin.BizResultInput{
+		Input: plugin.BizOut{
 			ApiNo: apiNo,
 			Code:  code,
 			Msg:   msg,

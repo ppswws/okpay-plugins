@@ -26,45 +26,45 @@ type epayNotifyParams struct {
 func notify(ctx context.Context, req *proto.InvokeContext) (*proto.PageResponse, error) {
 	order := req.GetOrder()
 	if order == nil || order.GetTradeNo() == "" {
-		return plugin.RespHTML("order_mismatch"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("order_mismatch")), nil
 	}
 	cfg, err := readConfig(req)
 	if err != nil {
-		return plugin.RespHTML("config_error"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("config_error")), nil
 	}
 	n, err := parseEpayNotify(req)
 	if err != nil {
-		return plugin.RespHTML("invalid_notify_params"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("invalid_notify_params")), nil
 	}
 	if !verifyMD5(n.toSignMap(), cfg.AppKey) {
-		return plugin.RespHTML("sign_error"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("sign_error")), nil
 	}
 	if n.TradeStatus != "TRADE_SUCCESS" {
-		return plugin.RespHTML("trade_status_invalid"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("trade_status_invalid")), nil
 	}
 	if n.OutTradeNo != order.GetTradeNo() {
-		return plugin.RespHTML("order_mismatch"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("order_mismatch")), nil
 	}
 	if order.GetReal() != toCents(n.Money) {
-		return plugin.RespHTML("amount_mismatch"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("amount_mismatch")), nil
 	}
 	queryResp, err := epayQuery(ctx, cfg, order)
 	if err != nil {
-		return plugin.RespHTML("query_error"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("query_error")), nil
 	}
 	if queryResp.Code != 1 || queryResp.Status != "1" {
-		return plugin.RespHTML("query_unpaid"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("query_unpaid")), nil
 	}
-	if err := plugin.CompleteBiz(ctx, plugin.CompleteBizInput{
-		BizType: proto.BizType_BIZ_TYPE_ORDER,
+	if err := plugin.CompleteBiz(ctx, plugin.BizDoneIn{
+		BizType: plugin.BizTypeOrder,
 		BizNo:   order.GetTradeNo(),
-		State:   proto.BizState_BIZ_STATE_SUCCEEDED,
+		State:   plugin.BizStateSucceeded,
 		ApiNo:   n.TradeNo,
 		Buyer:   n.Buyer,
 	}); err != nil {
-		return plugin.RespHTML("complete_error"), nil
+		return plugin.RecordNotify(req, plugin.RespHTML("complete_error")), nil
 	}
-	return plugin.RespHTML("success"), nil
+	return plugin.RecordNotify(req, plugin.RespHTML("success")), nil
 }
 
 func parseEpayNotify(req *proto.InvokeContext) (*epayNotifyParams, error) {

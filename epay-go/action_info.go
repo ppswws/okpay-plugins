@@ -8,12 +8,12 @@ import (
 )
 
 func info(ctx context.Context) (*proto.PluginInfoResponse, error) {
-	return plugin.BuildInfoResponse(plugin.Manifest{
+	return plugin.BuildInfo(plugin.Manifest{
 		ID:       "epay",
 		Name:     "彩虹易支付",
 		Link:     "https://pay.cccyun.cc/",
 		Paytypes: []string{"alipay", "wxpay", "bank"},
-		Inputs: map[string]plugin.InputSpec{
+		Inputs: map[string]plugin.InSpec{
 			"appurl": {
 				Name:     "接口地址",
 				Type:     "input",

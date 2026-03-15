@@ -22,24 +22,25 @@ func queryOrder(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult
 	}
 	resp, stats, queryErr := queryOrderFromAPI(ctx, cfg, order)
 	if queryErr != nil {
-		return bizResultByState(proto.BizState_BIZ_STATE_PROCESSING, plugin.BizResultInput{
+		return bizResultByState(plugin.BizStateProcessing, plugin.BizOut{
 			Code:  "QUERY_ERROR",
 			Msg:   queryErr.Error(),
 			Stats: stats,
 		}), nil
 	}
-	state := proto.BizState_BIZ_STATE_PROCESSING
+	state := plugin.BizStateProcessing
 	msg := "交易处理中"
 	switch resp["ra_Status"] {
 	case "100":
-		state = proto.BizState_BIZ_STATE_SUCCEEDED
+		state = plugin.BizStateSucceeded
 		msg = "交易成功"
 	case "101":
-		state = proto.BizState_BIZ_STATE_FAILED
+		state = plugin.BizStateFailed
 		msg = "交易失败"
 	}
-	return bizResultByState(state, plugin.BizResultInput{
+	return bizResultByState(state, plugin.BizOut{
 		ApiNo: resp["r5_TrxNo"],
+		Buyer: resp["rd_OpenId"],
 		Code:  resp["rb_Code"],
 		Msg:   msg,
 		Stats: stats,
@@ -57,27 +58,27 @@ func queryRefund(ctx context.Context, req *proto.InvokeContext) (*proto.BizResul
 	}
 	resp, stats, queryErr := queryRefundFromAPI(ctx, cfg, refund)
 	if queryErr != nil {
-		return bizResultByState(proto.BizState_BIZ_STATE_PROCESSING, plugin.BizResultInput{
+		return bizResultByState(plugin.BizStateProcessing, plugin.BizOut{
 			Code:  "QUERY_ERROR",
 			Msg:   queryErr.Error(),
 			Stats: stats,
 		}), nil
 	}
-	state := proto.BizState_BIZ_STATE_PROCESSING
+	state := plugin.BizStateProcessing
 	msg := "退款处理中"
 	switch resp["ra_Status"] {
 	case "100":
-		state = proto.BizState_BIZ_STATE_SUCCEEDED
+		state = plugin.BizStateSucceeded
 		msg = "退款成功"
 	case "101":
-		state = proto.BizState_BIZ_STATE_FAILED
+		state = plugin.BizStateFailed
 		msg = "退款失败"
 	default:
 		if m := strings.TrimSpace(resp["rc_CodeMsg"]); m != "" {
 			msg = m
 		}
 	}
-	return bizResultByState(state, plugin.BizResultInput{
+	return bizResultByState(state, plugin.BizOut{
 		ApiNo: resp["r4_RefundTrxNo"],
 		Code:  resp["rb_Code"],
 		Msg:   msg,
@@ -96,27 +97,27 @@ func queryTransfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizRes
 	}
 	resp, stats, queryErr := queryTransferFromAPI(ctx, cfg, transfer)
 	if queryErr != nil {
-		return bizResultByState(proto.BizState_BIZ_STATE_PROCESSING, plugin.BizResultInput{
+		return bizResultByState(plugin.BizStateProcessing, plugin.BizOut{
 			Code:  "QUERY_ERROR",
 			Msg:   queryErr.Error(),
 			Stats: stats,
 		}), nil
 	}
-	state := proto.BizState_BIZ_STATE_PROCESSING
+	state := plugin.BizStateProcessing
 	msg := "代付处理中"
 	switch resp["status"] {
 	case "205":
-		state = proto.BizState_BIZ_STATE_SUCCEEDED
+		state = plugin.BizStateSucceeded
 		msg = "代付成功"
 	case "204", "208", "214":
-		state = proto.BizState_BIZ_STATE_FAILED
+		state = plugin.BizStateFailed
 		msg = "代付失败"
 	default:
 		if m := strings.TrimSpace(resp["errorDesc"]); m != "" {
 			msg = m
 		}
 	}
-	return bizResultByState(state, plugin.BizResultInput{
+	return bizResultByState(state, plugin.BizOut{
 		ApiNo: resp["platformSerialNo"],
 		Code:  resp["errorCode"],
 		Msg:   msg,
@@ -218,6 +219,6 @@ func queryTransferFromAPI(ctx context.Context, cfg *joinpayConfig, transfer *pro
 	}, stats, nil
 }
 
-func bizResultByState(state proto.BizState, input plugin.BizResultInput) *proto.BizResult {
+func bizResultByState(state proto.BizState, input plugin.BizOut) *proto.BizResult {
 	return plugin.Result(state, input)
 }

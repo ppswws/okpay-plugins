@@ -21,7 +21,7 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, er
 	}
 	result, err := refundOrder(ctx, req, cfg, refund)
 	if err != nil {
-		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+		return plugin.Result(plugin.BizStateFailed, plugin.BizOut{
 			Msg:   err.Error(),
 			Stats: plugin.RequestStats{ReqMs: result.ReqMs, ReqBody: result.ReqBody, RespBody: result.RespBody},
 		}), nil
@@ -36,14 +36,14 @@ func refund(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, er
 	}
 	stats := plugin.RequestStats{ReqMs: result.ReqMs, ReqBody: result.ReqBody, RespBody: result.RespBody}
 	if state == 1 {
-		return plugin.Result(plugin.BizStateSucceeded, plugin.BizResultInput{
+		return plugin.Result(plugin.BizStateSucceeded, plugin.BizOut{
 			ApiNo: result.APIRefundNo,
 			Code:  result.RetCode,
 			Msg:   resultText,
 			Stats: stats,
 		}), nil
 	}
-	return plugin.Result(plugin.BizStateProcessing, plugin.BizResultInput{
+	return plugin.Result(plugin.BizStateProcessing, plugin.BizOut{
 		ApiNo: result.APIRefundNo,
 		Code:  result.RetCode,
 		Msg:   resultText,

@@ -55,6 +55,7 @@ SDK 协议与 API 详见：
 - Create 分发：`plugin.CreateWithHandlers`
 - UA 判断：`plugin.IsWeChat/IsAlipay/IsMobileQQ/IsMobile`
 - 微信辅助：`plugin.BuildMPOAuthURL/GetMPOpenid/GetMiniOpenid/GetMiniScheme`
+- 支付宝 OAuth 辅助：`plugin.BuildAliOAuthURL/GetAliIdentity`
 
 ## 5. 构建
 

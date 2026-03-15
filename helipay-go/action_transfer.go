@@ -20,7 +20,7 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 	}
 	bankCode, err := inferHelipayBankCode(transfer.GetBankName())
 	if err != nil {
-		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+		return plugin.Result(plugin.BizStateFailed, plugin.BizOut{
 			Msg:   err.Error(),
 			Stats: plugin.RequestStats{},
 		}), nil
@@ -45,7 +45,7 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 	}
 	resp, stats, err := transferOrder(ctx, cfg, params)
 	if err != nil {
-		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+		return plugin.Result(plugin.BizStateFailed, plugin.BizOut{
 			Msg:   err.Error(),
 			Stats: stats,
 		}), nil
@@ -55,7 +55,7 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 		if msg == "" {
 			msg = resp["rt2_retCode"]
 		}
-		return plugin.Result(plugin.BizStateFailed, plugin.BizResultInput{
+		return plugin.Result(plugin.BizStateFailed, plugin.BizOut{
 			Code:  resp["rt2_retCode"],
 			Msg:   msg,
 			Stats: stats,
@@ -65,7 +65,7 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 	if result == "" {
 		result = resp["rt2_retCode"]
 	}
-	return plugin.Result(plugin.BizStateProcessing, plugin.BizResultInput{
+	return plugin.Result(plugin.BizStateProcessing, plugin.BizOut{
 		ApiNo: resp["rt6_serialNumber"],
 		Code:  resp["rt2_retCode"],
 		Msg:   result,

@@ -60,14 +60,14 @@ func (s *helipayService) Submit(ctx context.Context, req *proto.BizRequest) (*pr
 	)
 	invoke := req.GetCtx()
 	switch req.GetBizType() {
-	case proto.BizType_BIZ_TYPE_ORDER:
-		out = plugin.Result(plugin.BizStateProcessing, plugin.BizResultInput{
+	case plugin.BizTypeOrder:
+		out = plugin.Result(plugin.BizStateProcessing, plugin.BizOut{
 			Msg:   "请使用 Handle(create) 获取支付页面",
 			Stats: plugin.RequestStats{},
 		})
-	case proto.BizType_BIZ_TYPE_REFUND:
+	case plugin.BizTypeRefund:
 		out, outErr = refund(ctx, invoke)
-	case proto.BizType_BIZ_TYPE_TRANSFER:
+	case plugin.BizTypeTransfer:
 		out, outErr = transfer(ctx, invoke)
 	default:
 		outErr = fmt.Errorf("submit 不支持的业务类型: %s", req.GetBizType().String())
@@ -82,19 +82,16 @@ func (s *helipayService) Query(ctx context.Context, req *proto.BizRequest) (*pro
 	)
 	invoke := req.GetCtx()
 	switch req.GetBizType() {
-	case proto.BizType_BIZ_TYPE_ORDER:
+	case plugin.BizTypeOrder:
 		out, outErr = queryOrder(ctx, invoke)
-	case proto.BizType_BIZ_TYPE_REFUND:
+	case plugin.BizTypeRefund:
 		out, outErr = queryRefund(ctx, invoke)
-	case proto.BizType_BIZ_TYPE_TRANSFER:
+	case plugin.BizTypeTransfer:
 		out, outErr = queryTransfer(ctx, invoke)
-	case proto.BizType_BIZ_TYPE_BALANCE:
+	case plugin.BizTypeBalance:
 		out, outErr = balance(ctx, invoke)
 	default:
-		out = plugin.Result(plugin.BizStateProcessing, plugin.BizResultInput{
-			Msg:   "渠道未实现该业务查询",
-			Stats: plugin.RequestStats{},
-		})
+		out = &proto.BizResult{}
 	}
 	return out, outErr
 }

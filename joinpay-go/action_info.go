@@ -8,13 +8,15 @@ import (
 )
 
 func info(ctx context.Context) (*proto.PluginInfoResponse, error) {
-	return plugin.BuildInfoResponse(plugin.Manifest{
+	return plugin.BuildInfo(plugin.Manifest{
 		ID:         "joinpay",
 		Name:       "汇聚支付",
 		Link:       "https://www.joinpay.com/",
 		Paytypes:   []string{"alipay", "wxpay", "bank"},
 		Transtypes: []string{"bank"},
-		Inputs: map[string]plugin.InputSpec{
+		BindWxmp:   true,
+		BindWxa:    true,
+		Inputs: map[string]plugin.InSpec{
 			"appid":    {Name: "商户编号", Type: "input", Note: "对应 p1_MerchantNo", Required: true},
 			"appkey":   {Name: "商户密钥", Type: "input", Note: "MD5 密钥", Required: true},
 			"appmchid": {Name: "报备商户号", Type: "input", Note: "对应 qa_TradeMerchantNo", Required: true},
