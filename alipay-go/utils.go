@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -195,24 +194,6 @@ func buildOrderURLs(req *proto.InvokeContext, order *proto.OrderSnapshot) (strin
 	return notifyURL, returnURL
 }
 
-func buildRefundNotifyURL(req *proto.InvokeContext, refund *proto.RefundSnapshot) string {
-	globalCfg := readGlobalConfig(req)
-	notifyDomain := strings.TrimRight(globalCfg.NotifyDomain, "/")
-	if notifyDomain == "" || refund == nil || refund.GetRefundNo() == "" {
-		return ""
-	}
-	return notifyDomain + "/pay/refundnotify/" + refund.GetRefundNo()
-}
-
-func buildTransferNotifyURL(req *proto.InvokeContext, transfer *proto.TransferSnapshot) string {
-	globalCfg := readGlobalConfig(req)
-	notifyDomain := strings.TrimRight(globalCfg.NotifyDomain, "/")
-	if notifyDomain == "" || transfer == nil || transfer.GetTradeNo() == "" {
-		return ""
-	}
-	return notifyDomain + "/pay/transfernotify/" + transfer.GetTradeNo()
-}
-
 func toYuan(cents int64) string {
 	sign := ""
 	if cents < 0 {
@@ -284,17 +265,6 @@ func normalizeKeyBase64(raw string) string {
 			return r
 		}
 	}, key)
-}
-
-func queryParam(req *proto.InvokeContext, key string) string {
-	if req == nil || req.GetRequest() == nil || key == "" {
-		return ""
-	}
-	values, err := url.ParseQuery(req.GetRequest().GetQuery())
-	if err != nil {
-		return ""
-	}
-	return values.Get(key)
 }
 
 func marshalJSON(v any) string {

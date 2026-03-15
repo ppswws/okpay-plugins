@@ -146,7 +146,7 @@ func inferAlipayIdentityType(account string) string {
 	if isDigits(account) {
 		return "ALIPAY_LOGON_ID"
 	}
-	if strings.Contains(account, "@") == true {
+	if strings.Contains(account, "@") {
 		return "ALIPAY_LOGON_ID"
 	}
 	return "ALIPAY_OPEN_ID"
