@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	plugin "github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk"
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
@@ -222,7 +222,7 @@ func bankHandler(ctx context.Context, req *proto.InvokeContext) (*proto.PageResp
 
 func createPublicOrder(ctx context.Context, req *proto.InvokeContext, cfg *helipayConfig, order *proto.OrderSnapshot, payType, appid, isRaw, openid string) (string, plugin.RequestStats, error) {
 	globalCfg := readGlobalConfig(req)
-	notifyURL := strings.TrimRight(globalCfg.NotifyDomain, "/") + "/pay/notify/" + order.GetTradeNo()
+	notifyURL := buildNotifyURL(globalCfg.NotifyDomain, order)
 	productName := globalCfg.GoodsName
 	params := map[string]string{
 		"P1_bizType":         "AppPayPublic",
@@ -252,7 +252,7 @@ func createPublicOrder(ctx context.Context, req *proto.InvokeContext, cfg *helip
 
 func createAppletOrder(ctx context.Context, req *proto.InvokeContext, cfg *helipayConfig, order *proto.OrderSnapshot, payType, appid, isRaw, openid string) (string, plugin.RequestStats, error) {
 	globalCfg := readGlobalConfig(req)
-	notifyURL := strings.TrimRight(globalCfg.NotifyDomain, "/") + "/pay/notify/" + order.GetTradeNo()
+	notifyURL := buildNotifyURL(globalCfg.NotifyDomain, order)
 	productName := globalCfg.GoodsName
 	params := map[string]string{
 		"P1_bizType":         "AppPayApplet",
@@ -282,7 +282,7 @@ func createAppletOrder(ctx context.Context, req *proto.InvokeContext, cfg *helip
 
 func createWapOrder(ctx context.Context, req *proto.InvokeContext, cfg *helipayConfig, order *proto.OrderSnapshot, payType string) (string, plugin.RequestStats, error) {
 	globalCfg := readGlobalConfig(req)
-	notifyURL := strings.TrimRight(globalCfg.NotifyDomain, "/") + "/pay/notify/" + order.GetTradeNo()
+	notifyURL := buildNotifyURL(globalCfg.NotifyDomain, order)
 	productName := globalCfg.GoodsName
 	params := map[string]string{
 		"P1_bizType":        "AppPayH5WFT",
@@ -354,16 +354,16 @@ func jsoperatewxdataFromPayURL(ctx context.Context, payURL string) (string, erro
 
 	qbaseReq := map[string]any{
 		"function_name": "public",
-		"data": "",
-		"action":       1,
-		"scene":        1,
-		"call_id":      buildWXRequestID("-"),
-		"cloudid_list": []string{},
+		"data":          "",
+		"action":        1,
+		"scene":         1,
+		"call_id":       buildWXRequestID("-"),
+		"cloudid_list":  []string{},
 	}
 	qbaseActionData, err := marshalJSONNoEscape(map[string]any{
-			"action":  "getUrlScheme",
-			"query":   query.Encode(),
-			"options": map[string]any{"envVersion": "release"},
+		"action":  "getUrlScheme",
+		"query":   query.Encode(),
+		"options": map[string]any{"envVersion": "release"},
 	})
 	if err != nil {
 		return "", fmt.Errorf("序列化 qbase action data 失败: %w", err)
@@ -470,7 +470,7 @@ func marshalJSONNoEscape(v any) (string, error) {
 
 func createScanOrder(ctx context.Context, req *proto.InvokeContext, cfg *helipayConfig, order *proto.OrderSnapshot, payType string) (string, plugin.RequestStats, error) {
 	globalCfg := readGlobalConfig(req)
-	notifyURL := strings.TrimRight(globalCfg.NotifyDomain, "/") + "/pay/notify/" + order.GetTradeNo()
+	notifyURL := buildNotifyURL(globalCfg.NotifyDomain, order)
 	productName := globalCfg.GoodsName
 	params := map[string]string{
 		"P1_bizType":        "AppPay",
@@ -492,6 +492,17 @@ func createScanOrder(ctx context.Context, req *proto.InvokeContext, cfg *helipay
 		params["P15_subMerchantId"] = cfg.AppMchID
 	}
 	return createOrder(ctx, params, cfg.AppKey)
+}
+
+func buildNotifyURL(notifyDomain string, order *proto.OrderSnapshot) string {
+	if order == nil || order.GetTradeNo() == "" {
+		return ""
+	}
+	notifyDomain = strings.TrimRight(notifyDomain, "/")
+	if notifyDomain == "" {
+		return ""
+	}
+	return notifyDomain + "/pay/notify/" + order.GetTradeNo()
 }
 
 func createOrder(ctx context.Context, params map[string]string, apiKey string) (string, plugin.RequestStats, error) {

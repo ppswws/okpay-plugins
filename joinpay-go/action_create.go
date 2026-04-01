@@ -235,8 +235,8 @@ func createOrder(ctx context.Context, req *proto.InvokeContext, cfg *joinpayConf
 		"p5_ProductName": limitLength(productName, 30),
 		"p6_ProductDesc": limitLength(productName, 300),
 		"p7_Mp":          limitLength(order.GetParam(), 100),
-		"p8_ReturnUrl":   siteDomain + "/pay/" + order.GetType() + "/" + order.GetTradeNo(),
-		"p9_NotifyUrl":   notifyDomain + "/pay/notify/" + order.GetTradeNo(),
+		"p8_ReturnUrl":   buildReturnURL(siteDomain, order),
+		"p9_NotifyUrl":   buildNotifyURL(notifyDomain, "notify/"+order.GetTradeNo()),
 		"q1_FrpCode":     frpCode,
 	}
 	params["qa_TradeMerchantNo"] = cfg.AppMchID

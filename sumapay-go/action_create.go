@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	plugin "github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk"
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 

@@ -181,12 +181,11 @@ func buildPayURL(req *proto.InvokeContext, order *proto.OrderSnapshot, query map
 	if order == nil {
 		return ""
 	}
-	globalCfg := readGlobalConfig(req)
-	siteDomain := strings.TrimRight(globalCfg.SiteDomain, "/")
+	siteDomain := strings.TrimRight(readGlobalConfig(req).SiteDomain, "/")
 	if siteDomain == "" {
 		return ""
 	}
-	payURL := siteDomain + "/pay/" + order.GetType() + "/" + order.GetTradeNo()
+	payURL := buildReturnURL(siteDomain, order)
 	if len(query) == 0 {
 		return payURL
 	}
@@ -205,6 +204,26 @@ func buildPayURL(req *proto.InvokeContext, order *proto.OrderSnapshot, query map
 		return payURL
 	}
 	return payURL + "?" + qs
+}
+
+func buildReturnURL(siteDomain string, order *proto.OrderSnapshot) string {
+	if order == nil || order.GetTradeNo() == "" || order.GetType() == "" {
+		return ""
+	}
+	siteDomain = strings.TrimRight(siteDomain, "/")
+	if siteDomain == "" {
+		return ""
+	}
+	return siteDomain + "/pay/" + order.GetType() + "/" + order.GetTradeNo()
+}
+
+func buildNotifyURL(notifyDomain, path string) string {
+	notifyDomain = strings.TrimRight(notifyDomain, "/")
+	path = strings.TrimLeft(strings.TrimSpace(path), "/")
+	if notifyDomain == "" || path == "" {
+		return ""
+	}
+	return notifyDomain + "/pay/" + path
 }
 
 func decodeJSONAnyMap(raw string) (map[string]any, error) {

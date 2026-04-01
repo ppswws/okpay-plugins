@@ -382,15 +382,15 @@ func appendFormMap(dst map[string]string, raw string) {
 	if strings.TrimSpace(raw) == "" {
 		return
 	}
-	vals, err := url.ParseQuery(raw)
+	queryValues, err := url.ParseQuery(raw)
 	if err != nil {
 		return
 	}
-	for k, arr := range vals {
-		if len(arr) == 0 {
+	for key, values := range queryValues {
+		if len(values) == 0 {
 			continue
 		}
-		dst[k] = arr[len(arr)-1]
+		dst[key] = values[len(values)-1]
 	}
 }
 

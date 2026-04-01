@@ -36,7 +36,7 @@ func transfer(ctx context.Context, req *proto.InvokeContext) (*proto.BizResult, 
 		"isChecked":            "202",
 		"paidDesc":             "工资发放",
 		"paidUse":              "201",
-		"callbackUrl":          notifyDomain + "/pay/transfernotify/" + transfer.GetTradeNo(),
+		"callbackUrl":          buildNotifyURL(notifyDomain, "transfernotify/"+transfer.GetTradeNo()),
 	}
 	if receiverBankChannelNo := strings.TrimSpace(transfer.GetBranchName()); receiverBankChannelNo != "" {
 		params["receiverBankChannelNo"] = receiverBankChannelNo

@@ -59,7 +59,7 @@ func refundOrder(ctx context.Context, req *proto.InvokeContext, cfg *joinpayConf
 		"p3_RefundOrderNo": refund.GetRefundNo(),
 		"p4_RefundAmount":  toYuan(refund.GetAmount()),
 		"p5_RefundReason":  "申请退款",
-		"p6_NotifyUrl":     notifyDomain + "/pay/refundnotify/" + refund.GetRefundNo(),
+		"p6_NotifyUrl":     buildNotifyURL(notifyDomain, "refundnotify/"+refund.GetRefundNo()),
 	}
 	params["hmac"] = signJoinpay(params, joinpayRefundRequestFields, cfg.AppKey)
 

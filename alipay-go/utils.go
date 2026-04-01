@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-pay/gopay"
 	"github.com/go-pay/gopay/alipay"
-	plugin "github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk"
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
@@ -156,11 +156,11 @@ func queryValue(req *proto.InvokeContext, key string) string {
 	if queryRaw == "" {
 		return ""
 	}
-	vals, err := url.ParseQuery(queryRaw)
+	queryValues, err := url.ParseQuery(queryRaw)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(vals.Get(key))
+	return strings.TrimSpace(queryValues.Get(key))
 }
 
 func buildPayURL(req *proto.InvokeContext, order *proto.OrderSnapshot, query map[string]string) string {

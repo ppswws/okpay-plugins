@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	plugin "github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk"
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 

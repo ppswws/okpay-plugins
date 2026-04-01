@@ -100,10 +100,10 @@ func appendQueryValues(dst url.Values, raw string) {
 	if err != nil {
 		return
 	}
-	for k, vals := range parsed {
-		if len(vals) == 0 {
+	for key, values := range parsed {
+		if len(values) == 0 {
 			continue
 		}
-		dst.Set(k, vals[len(vals)-1])
+		dst.Set(key, values[len(values)-1])
 	}
 }

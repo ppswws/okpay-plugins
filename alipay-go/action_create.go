@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-pay/gopay"
 	"github.com/go-pay/gopay/alipay"
-	plugin "github.com/ppswws/okpay-plugin-sdk"
+	"github.com/ppswws/okpay-plugin-sdk"
 	"github.com/ppswws/okpay-plugin-sdk/proto"
 )
 
@@ -236,12 +236,12 @@ func buildAutoPostPage(payURL string) (*proto.PageResponse, error) {
 		action = action + "?charset=" + url.QueryEscape(charset)
 	}
 	fields := make(map[string][]string, len(values))
-	for key, vals := range values {
-		if len(vals) == 0 {
+	for key, fieldValues := range values {
+		if len(fieldValues) == 0 {
 			continue
 		}
-		cp := make([]string, 0, len(vals))
-		cp = append(cp, vals...)
+		cp := make([]string, 0, len(fieldValues))
+		cp = append(cp, fieldValues...)
 		fields[key] = cp
 	}
 	// 表单编码由 SDK 统一输出为 utf-8（meta + accept-charset）。
