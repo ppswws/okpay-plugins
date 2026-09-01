@@ -1,0 +1,26 @@
+# Maven
+target/
+*.jar
+*.war
+
+# 但 maven-repo/ 下的 SDK 构件 jar 必须提交（GitHub Pages 静态 Maven 仓库）
+!maven-repo/**
+!maven-repo/com/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# jqwik property-test database
+**/.jqwik-database

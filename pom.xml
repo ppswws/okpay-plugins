@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.okpay</groupId>
+    <artifactId>okpay-plugins</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+    <name>okpay-plugins</name>
+    <description>OkPay payment channel plugin implementations — open source</description>
+
+    <modules>
+        <module>plugins/alipay</module>
+        <module>plugins/epay</module>
+        <module>plugins/helipay</module>
+        <module>plugins/joinpay</module>
+        <module>plugins/sumapay</module>
+        <module>plugins/wxpay</module>
+    </modules>
+
+    <properties>
+        <java.version>21</java.version>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <okpay-plugin.version>1.0.0</okpay-plugin.version>
+        <slf4j.version>2.0.16</slf4j.version>
+        <lombok.version>1.18.36</lombok.version>
+        <junit.version>5.11.0</junit.version>
+        <assertj.version>3.26.3</assertj.version>
+        <mockito.version>5.12.0</mockito.version>
+        <jqwik.version>1.9.2</jqwik.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- okpay-plugin SDK：闭源构件，从本仓库 GitHub Pages 的 maven-repo 拉取 -->
+            <dependency>
+                <groupId>com.okpay</groupId>
+                <artifactId>okpay-plugin</artifactId>
+                <version>${okpay-plugin.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>${slf4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>${lombok.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.assertj</groupId>
+                <artifactId>assertj-core</artifactId>
+                <version>${assertj.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-core</artifactId>
+                <version>${mockito.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-junit-jupiter</artifactId>
+                <version>${mockito.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.jqwik</groupId>
+                <artifactId>jqwik</artifactId>
+                <version>${jqwik.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <repositories>
+        <repository>
+            <id>okpay-maven</id>
+            <name>OkPay SDK Maven Repository</name>
+            <url>https://ppswws.github.io/okpay-plugins/maven-repo/</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+</project>
