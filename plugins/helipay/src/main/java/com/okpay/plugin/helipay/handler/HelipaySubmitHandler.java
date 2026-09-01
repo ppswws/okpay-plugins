@@ -18,7 +18,6 @@ public class HelipaySubmitHandler extends AbstractBizHandler {
     private static final Logger log = LoggerFactory.getLogger(HelipaySubmitHandler.class);
 
     public HelipaySubmitHandler() {
-        on(BizType.T_PAY,  (ctx, req) -> Responses.ing());
         on(BizType.T_REF,  (ctx, req) -> refund(ctx));
         on(BizType.T_XFER, (ctx, req) -> transfer(ctx));
     }

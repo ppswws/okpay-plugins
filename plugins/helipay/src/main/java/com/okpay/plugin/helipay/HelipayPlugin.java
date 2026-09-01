@@ -1,6 +1,7 @@
 package com.okpay.plugin.helipay;
 
 import com.okpay.plugin.AbstractPaymentChannel;
+import com.okpay.plugin.enums.BizType;
 import com.okpay.plugin.helipay.handler.*;
 import com.okpay.plugin.model.*;
 import org.pf4j.Extension;
@@ -17,7 +18,6 @@ public class HelipayPlugin extends AbstractPaymentChannel {
     private final HelipayQueryHandler queryHandler = new HelipayQueryHandler();
 
     public HelipayPlugin() {
-        on("create",  createHandler::create);
         on("alipay",  createHandler::alipay);
         on("wxpay",   createHandler::wxpay);
         on("bank",    createHandler::bank);
@@ -30,6 +30,9 @@ public class HelipayPlugin extends AbstractPaymentChannel {
 
     @Override
     public BizResult submit(InvokeContext ctx, BizRequest req) {
+        if (req.getBizType() == BizType.T_PAY) {
+            return createHandler.submit(ctx);
+        }
         return submitHandler.handle(ctx, req);
     }
 

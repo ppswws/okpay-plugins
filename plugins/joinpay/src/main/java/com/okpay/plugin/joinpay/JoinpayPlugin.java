@@ -1,6 +1,7 @@
 package com.okpay.plugin.joinpay;
 
 import com.okpay.plugin.AbstractPaymentChannel;
+import com.okpay.plugin.enums.BizType;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.joinpay.handler.*;
 import org.pf4j.Extension;
@@ -17,7 +18,6 @@ public class JoinpayPlugin extends AbstractPaymentChannel {
     private final JoinpayQueryHandler queryHandler = new JoinpayQueryHandler();
 
     public JoinpayPlugin() {
-        on("create",  createHandler::create);
         on("alipay",  createHandler::alipay);
         on("wxpay",   createHandler::wxpay);
         on("bank",    createHandler::bank);
@@ -30,6 +30,9 @@ public class JoinpayPlugin extends AbstractPaymentChannel {
 
     @Override
     public BizResult submit(InvokeContext ctx, BizRequest req) {
+        if (req.getBizType() == BizType.T_PAY) {
+            return createHandler.submit(ctx);
+        }
         return submitHandler.handle(ctx, req);
     }
 

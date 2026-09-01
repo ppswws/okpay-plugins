@@ -11,25 +11,15 @@ import org.slf4j.*;
 import java.util.*;
 
 /**
- * 支付宝 Submit 处理器 — 支付/退款/打款（零第三方 SDK，走 AlipayOpenApiClient）。
+ * 支付宝 Submit 处理器 — 退款/打款（零第三方 SDK，走 AlipayOpenApiClient）。
  */
 public class AlipaySubmitHandler extends AbstractBizHandler {
 
     private static final Logger log = LoggerFactory.getLogger(AlipaySubmitHandler.class);
 
     public AlipaySubmitHandler() {
-        on(BizType.T_PAY,  this::submitPay);
         on(BizType.T_REF,  this::submitRefund);
         on(BizType.T_XFER, this::submitTransfer);
-    }
-
-    // =========================================================================
-    // 支付 — 由 create handler 处理
-    // =========================================================================
-
-    /** 基类 handle 已按 T_PAY 分发到此，直接返回占位。 */
-    private com.okpay.plugin.model.BizResult submitPay(InvokeContext ctx, BizRequest req) {
-        return Responses.ing();
     }
 
     // =========================================================================

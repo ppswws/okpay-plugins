@@ -45,7 +45,6 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
             "errorCode","errorDesc","userNo","merchantOrderNo");
 
     public JoinpaySubmitHandler() {
-        on(BizType.T_PAY, (ctx, req) -> Responses.ing());
         on(BizType.T_REF,  (ctx, req) -> refund(ctx));
         on(BizType.T_XFER, (ctx, req) -> transfer(ctx));
     }

@@ -30,8 +30,9 @@ public class JoinpayCreateHandler {
             "r6_FrpCode","r7_TrxNo","r8_MerchantBankCode","r9_SubMerchantNo",
             "ra_Code","rb_CodeMsg","rc_Result","rd_Pic");
 
-    public PageResponse create(InvokeContext ctx) {
-        return Sdk.createWithHandlers(ctx, Map.of(
+    /** 按支付方式分发并提取支付入口 URL（复用 createWithHandlers）。 */
+    public com.okpay.plugin.model.BizResult submit(InvokeContext ctx) {
+        return Sdk.createResult(ctx, Map.of(
             "alipay", this::alipay, "wxpay", this::wxpay, "bank", this::bank
         ));
     }

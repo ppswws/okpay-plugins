@@ -60,8 +60,9 @@ public class SumapayCreateHandler {
     private static final List<String> JSAPI_VERIFY_FIELDS = List.of(
             "requestId","result","passThrough","pay_info");
 
-    public PageResponse create(InvokeContext ctx) {
-        return Sdk.createWithHandlers(ctx, Map.of(
+    /** 按支付方式分发并提取支付入口 URL（复用 createWithHandlers）。 */
+    public com.okpay.plugin.model.BizResult submit(InvokeContext ctx) {
+        return Sdk.createResult(ctx, Map.of(
             "alipay", this::alipay, "wxpay", this::wxpay
         ));
     }

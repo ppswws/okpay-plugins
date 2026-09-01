@@ -18,8 +18,9 @@ public class WxpayCreateHandler {
 
     private static final Logger log = LoggerFactory.getLogger(WxpayCreateHandler.class);
 
-    public PageResponse create(InvokeContext ctx) {
-        return Sdk.createWithHandlers(ctx, Map.of("wxpay", this::wxpay));
+    /** 按支付方式分发并提取支付入口 URL（复用 createWithHandlers）。 */
+    public BizResult submit(InvokeContext ctx) {
+        return Sdk.createResult(ctx, Map.of("wxpay", this::wxpay));
     }
 
     public PageResponse wxpay(InvokeContext ctx) {

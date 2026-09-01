@@ -30,8 +30,9 @@ public class HelipayCreateHandler {
     private static final String QBASE_URL = "https://servicewechat.com/wxa-qbase/jsoperatewxdata";
     private static final String H5_PAY_HOST = "h5pay.helipay.com";
 
-    public PageResponse create(InvokeContext ctx) {
-        return Sdk.createWithHandlers(ctx, Map.of(
+    /** 按支付方式分发并提取支付入口 URL（复用 createWithHandlers）。 */
+    public com.okpay.plugin.model.BizResult submit(InvokeContext ctx) {
+        return Sdk.createResult(ctx, Map.of(
             "alipay", this::alipay, "wxpay", this::wxpay, "bank", this::bank
         ));
     }
@@ -200,14 +201,16 @@ public class HelipayCreateHandler {
     // 请求参数构建（sign 由 createOrder 统一追加）
     // =========================================================================
 
-    private Map<String, String> publicParams(InvokeContext ctx, HelipayConfig cfg,
-                                             String payType, String appid, String isRaw, String openid) {
+    /** AppPayPublic/AppPayApplet 预下单共用参数（差异仅 P1_bizType/P4_payType）。 */
+    private Map<String, String> appParams(InvokeContext ctx, HelipayConfig cfg,
+                                          String payType, String appid, String isRaw, String openid,
+                                          String p1BizType, String p4PayType) {
         var order = ctx.getOrder();
         var params = new LinkedHashMap<String, String>();
-        params.put("P1_bizType", "AppPayPublic");
+        params.put("P1_bizType", p1BizType);
         params.put("P2_orderId", order.getTradeNo());
         params.put("P3_customerNumber", cfg.getAppid());
-        params.put("P4_payType", "PUBLIC");
+        params.put("P4_payType", p4PayType);
         params.put("P5_appid", appid);
         params.put("P6_deviceInfo", "");
         params.put("P7_isRaw", isRaw);
@@ -226,30 +229,16 @@ public class HelipayCreateHandler {
         return params;
     }
 
+    /** 公众号/服务窗/JS 预下单参数（P1_bizType=AppPayPublic、P4_payType=PUBLIC） */
+    private Map<String, String> publicParams(InvokeContext ctx, HelipayConfig cfg,
+                                             String payType, String appid, String isRaw, String openid) {
+        return appParams(ctx, cfg, payType, appid, isRaw, openid, "AppPayPublic", "PUBLIC");
+    }
+
+    /** 小程序预下单参数（P1_bizType=AppPayApplet、P4_payType=APPLET） */
     private Map<String, String> appletParams(InvokeContext ctx, HelipayConfig cfg,
                                              String payType, String appid, String isRaw, String openid) {
-        var order = ctx.getOrder();
-        var params = new LinkedHashMap<String, String>();
-        params.put("P1_bizType", "AppPayApplet");
-        params.put("P2_orderId", order.getTradeNo());
-        params.put("P3_customerNumber", cfg.getAppid());
-        params.put("P4_payType", "APPLET");
-        params.put("P5_appid", appid);
-        params.put("P6_deviceInfo", "");
-        params.put("P7_isRaw", isRaw);
-        params.put("P8_openid", openid);
-        params.put("P9_orderAmount", toYuan(order.getReal()));
-        params.put("P10_currency", "CNY");
-        params.put("P11_appType", mapAppPayType(payType));
-        params.put("P12_notifyUrl", notifyUrl(ctx, cfg));
-        params.put("P13_successToUrl", buildPayUrl(ctx, cfg, Map.of()));
-        params.put("P14_orderIp", order.getIpBuyer());
-        params.put("P15_goodsName", cfg.getGoodsName());
-        params.put("P16_goodsDetail", "");
-        params.put("P17_limitCreditPay", "");
-        params.put("P18_desc", "");
-        if (notBlank(cfg.getAppmchid())) params.put("P20_subMerchantId", cfg.getAppmchid());
-        return params;
+        return appParams(ctx, cfg, payType, appid, isRaw, openid, "AppPayApplet", "APPLET");
     }
 
     private Map<String, String> wapParams(InvokeContext ctx, HelipayConfig cfg, String payType) {

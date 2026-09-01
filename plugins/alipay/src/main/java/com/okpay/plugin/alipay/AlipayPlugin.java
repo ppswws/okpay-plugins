@@ -1,6 +1,7 @@
 package com.okpay.plugin.alipay;
 
 import com.okpay.plugin.AbstractPaymentChannel;
+import com.okpay.plugin.enums.BizType;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.alipay.handler.*;
 import org.pf4j.Extension;
@@ -20,8 +21,6 @@ public class AlipayPlugin extends AbstractPaymentChannel {
     private final AlipaySubmitHandler submitHandler = new AlipaySubmitHandler();
 
     public AlipayPlugin() {
-        // 下单（内部根据 biztype_alipay 配置分发具体模式）
-        on("create",  createHandler::create);
         on("alipay",  createHandler::alipay);
 
         // 通知
@@ -36,6 +35,9 @@ public class AlipayPlugin extends AbstractPaymentChannel {
 
     @Override
     public BizResult submit(InvokeContext ctx, BizRequest req) {
+        if (req.getBizType() == BizType.T_PAY) {
+            return createHandler.submit(ctx);
+        }
         return submitHandler.handle(ctx, req);
     }
 

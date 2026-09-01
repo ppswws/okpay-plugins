@@ -31,8 +31,9 @@ import java.util.concurrent.ThreadLocalRandom;
 @Slf4j
 public class AlipayCreateHandler {
 
-    public PageResponse create(InvokeContext ctx) {
-        return Sdk.createWithHandlers(ctx, Map.of("alipay", this::alipay));
+    /** 按支付方式分发并提取支付入口 URL（复用 createWithHandlers）。 */
+    public com.okpay.plugin.model.BizResult submit(InvokeContext ctx) {
+        return Sdk.createResult(ctx, Map.of("alipay", this::alipay));
     }
 
     public PageResponse alipay(InvokeContext ctx) {

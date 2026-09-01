@@ -270,16 +270,6 @@ class SumapaySubmitHandlerTest {
         }
     }
 
-    @Test
-    @DisplayName("T_PAY submit → 处理中占位")
-    void submitPayPlaceholder() {
-        var ctx = refundCtx(todayTradeNo());
-        var result = new SumapaySubmitHandler().handle(ctx,
-                BizRequest.builder().bizType(BizType.T_PAY).build());
-
-        assertThat(result.getState()).isEqualTo(BizState.S_ING);
-    }
-
     // =========================================================================
     // 内部
     // =========================================================================

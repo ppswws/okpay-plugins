@@ -21,7 +21,7 @@ public final class JoinpayUtil {
 
     public static String limitLength(String s, int max) {
         if (s == null) return "";
-        return s.length() > max ? s.substring(0, max) : "";
+        return s.length() > max ? s.substring(0, max) : s;
     }
 
     public static boolean isFormOrHtml(String s) {

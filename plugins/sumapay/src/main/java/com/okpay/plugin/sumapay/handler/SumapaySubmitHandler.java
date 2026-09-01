@@ -47,7 +47,6 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
             "requestId", "result", "remark");
 
     public SumapaySubmitHandler() {
-        on(BizType.T_PAY, (ctx, req) -> Responses.ing());
         on(BizType.T_REF, (ctx, req) -> refund(ctx));
     }
 

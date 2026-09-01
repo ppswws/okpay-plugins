@@ -10,24 +10,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
- * 微信支付 Submit 处理器 — 支付/退款/打款（APIv3，零第三方 SDK）。
+ * 微信支付 Submit 处理器 — 退款（APIv3，零第三方 SDK）。
  */
 public class WxpaySubmitHandler extends AbstractBizHandler {
 
     private static final Logger log = LoggerFactory.getLogger(WxpaySubmitHandler.class);
 
     public WxpaySubmitHandler() {
-        on(BizType.T_PAY,  this::submitPay);
         on(BizType.T_REF,  this::submitRefund);
-    }
-
-    // =========================================================================
-    // 支付 — 由 create handler 处理，submit 仅返回占位
-    // =========================================================================
-
-    /** 基类 handle 已按 T_PAY 分发到此，直接返回占位。 */
-    private BizResult submitPay(InvokeContext ctx, BizRequest req) {
-        return Responses.ing();
     }
 
     // =========================================================================
