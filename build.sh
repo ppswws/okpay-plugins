@@ -16,7 +16,7 @@ collect_plugin_jars() {
   for jar in "$src"/target/*.jar; do
     [ -e "$jar" ] || continue
     case "$jar" in *-sources.jar|*-javadoc.jar) continue ;; esac
-    cp -f "$jar" "$BUILD_DIR/"
+    mv -f "$jar" "$BUILD_DIR/"
   done
 }
 
