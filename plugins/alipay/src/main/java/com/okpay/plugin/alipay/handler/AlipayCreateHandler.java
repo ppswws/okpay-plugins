@@ -83,6 +83,11 @@ public class AlipayCreateHandler {
         return cfg.getNotifyDomain() + "/pay/notify/" + tradeNo;
     }
 
+    /** 渠道同步回跳统一收口：支付结果状态机页（/pay/result/{tradeNo}），不走商户 return_url 直回 */
+    private static String resultPageUrl(AlipayConfig cfg, String tradeNo) {
+        return cfg.getSiteDomain() + "/pay/result/" + tradeNo;
+    }
+
     /** 直付通单笔：SMID 非空时注入 sub_merchant + settle_info（结算到该子商户进件默认账号，账期 1d 最快自动确认）。与合单子单同构。 */
     private static void applyDirectPaySettle(AlipayConfig cfg, Map<String, Object> biz) {
         var smids = cfg.smidList();
@@ -115,7 +120,7 @@ public class AlipayCreateHandler {
         putClientIpBusinessParams(ctx, biz);
         var extras = new LinkedHashMap<String, String>();
         extras.put("notify_url", notifyUrl(cfg, order.getTradeNo()));
-        extras.put("return_url", order.getReturnUrl());
+        extras.put("return_url", resultPageUrl(cfg, order.getTradeNo()));
         return Sdk.FetchResult.of(Responses.respHTML(
                 cfg.client().pageExecute("alipay.trade.page.pay", biz, cfg.extras(extras))), null);
     };
@@ -135,7 +140,7 @@ public class AlipayCreateHandler {
         putClientIpBusinessParams(ctx, biz);
         var extras = new LinkedHashMap<String, String>();
         extras.put("notify_url", notifyUrl(cfg, order.getTradeNo()));
-        extras.put("return_url", order.getReturnUrl());
+        extras.put("return_url", resultPageUrl(cfg, order.getTradeNo()));
         return Sdk.FetchResult.of(Responses.respHTML(
                 cfg.client().pageExecute("alipay.trade.wap.pay", biz, cfg.extras(extras))), null);
     };
@@ -181,7 +186,7 @@ public class AlipayCreateHandler {
         var preOrderNo = mergePrecreate(ctx, cfg, order, plan, "QUICK_WAP_WAY");
         var extras = new LinkedHashMap<String, String>();
         extras.put("notify_url", notifyUrl(cfg, order.getTradeNo()));
-        extras.put("return_url", order.getReturnUrl());
+        extras.put("return_url", resultPageUrl(cfg, order.getTradeNo()));
         var html = cfg.client().pageExecute("alipay.trade.wap.merge.pay",
                 Map.of("pre_order_no", preOrderNo), cfg.extras(extras));
         return Sdk.FetchResult.of(Responses.respHTML(html), null);

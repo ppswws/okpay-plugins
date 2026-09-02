@@ -147,7 +147,7 @@ public class WxpayCreateHandler {
         if (kind == Kind.H5) {
             var url = resp.body().path("h5_url").asText(null);
             if (url == null) throw new Sdk.BizFailException("H5 下单未返回 h5_url", resp);
-            url += "&redirect_url=" + urlEncode(order.getReturnUrl());
+            url += "&redirect_url=" + urlEncode(resultPageUrl(cfg, ctx));
             return Sdk.FetchResult.of(Responses.respJump(url), resp);
         }
         return appJsapiResult(kind, ctx, cfg, resp, appId);
@@ -224,7 +224,7 @@ public class WxpayCreateHandler {
         if (kind == Kind.H5) {
             var url = resp.body().path("h5_url").asText(null);
             if (url == null) throw new Sdk.BizFailException("合单 H5 未返回 h5_url", resp);
-            url += "&redirect_url=" + urlEncode(order.getReturnUrl());
+            url += "&redirect_url=" + urlEncode(resultPageUrl(cfg, ctx));
             return Sdk.FetchResult.of(Responses.respJump(url), resp);
         }
         return appJsapiResult(kind, ctx, cfg, resp, appId);
@@ -357,6 +357,11 @@ public class WxpayCreateHandler {
 
     private String buildReturnUrl(InvokeContext ctx, WxpayConfig cfg) {
         return (cfg != null ? cfg.getSiteDomain() : "") + "/pay/wxpay/" + ctx.getOrder().getTradeNo();
+    }
+
+    /** 渠道 H5 同步回跳统一收口：支付结果状态机页（/pay/result/{tradeNo}）。buildReturnUrl 专供 OAuth/中转，勿混用 */
+    private static String resultPageUrl(WxpayConfig cfg, InvokeContext ctx) {
+        return (cfg != null ? cfg.getSiteDomain() : "") + "/pay/result/" + ctx.getOrder().getTradeNo();
     }
 
     private static String queryParam(InvokeContext ctx, String key) {

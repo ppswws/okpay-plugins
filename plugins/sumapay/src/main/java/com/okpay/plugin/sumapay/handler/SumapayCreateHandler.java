@@ -128,7 +128,7 @@ public class SumapayCreateHandler {
         var params = baseParams(ctx, cfg);
         params.put("requestType", "IOZ2010");
         params.put("noticeUrl", notifyUrl(ctx, cfg));
-        params.put("backUrl", buildReturnUrl(ctx, cfg));
+        params.put("backUrl", resultPageUrl(ctx, cfg));
         params.put("terminalIp", TERMINAL_IP);
         params.put("subMerchantId", cfg.getAppmchid());
         var resp = SumapayApi.post(ctx, SumapayApi.CREATE_URL, params,
@@ -151,7 +151,7 @@ public class SumapayCreateHandler {
         params.put("requestType", "IOZ1017");
         params.put("envFlag", "3");
         params.put("noticeUrl", notifyUrl(ctx, cfg));
-        params.put("backUrl", buildReturnUrl(ctx, cfg));
+        params.put("backUrl", resultPageUrl(ctx, cfg));
         params.put("terminalIp", TERMINAL_IP);
         params.put("subMerchantId", cfg.getAppmchid());
         var resp = SumapayApi.post(ctx, SumapayApi.CREATE_URL, params,
@@ -270,6 +270,11 @@ public class SumapayCreateHandler {
     private String buildReturnUrl(InvokeContext ctx, SumapayConfig cfg) {
         var order = ctx.getOrder();
         return cfg.getSiteDomain() + "/pay/" + order.getType() + "/" + order.getTradeNo();
+    }
+
+    /** 渠道同步回跳统一收口：支付结果状态机页（/pay/result/{tradeNo}）。buildReturnUrl/relayUrl 专供 OAuth/桌面扫码中转，勿混用 */
+    private static String resultPageUrl(InvokeContext ctx, SumapayConfig cfg) {
+        return cfg.getSiteDomain() + "/pay/result/" + ctx.getOrder().getTradeNo();
     }
 
     /** 桌面端扫码中转页：真实支付在手机端重入后发起 */

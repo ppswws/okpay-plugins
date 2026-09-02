@@ -102,7 +102,7 @@ class JoinpayCreateHandlerTest {
             var resp = new JoinpayCreateHandler().wxpay(ctx);
 
             assertThat(resp.getType()).isEqualTo("jump");
-            assertThat(resp.getUrl()).isEqualTo("https://pay.example.com/pay/err/T1");
+            assertThat(resp.getUrl()).isEqualTo("https://pay.example.com/pay/result/T1");
         }
         // 命中后插件未做任何拦截判断——兑换方法内部已抛异常终止；被拦截：不发起支付、不写 ext
         verify(cb).recordOAuthIdentity(any());

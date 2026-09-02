@@ -149,7 +149,7 @@ public class JoinpayCreateHandler {
         params.put("p5_ProductName", productName);
         params.put("p6_ProductDesc", JoinpayUtil.limitLength(productName, 300));
         params.put("p7_Mp", JoinpayUtil.limitLength(order.getParam(), 100));
-        params.put("p8_ReturnUrl", buildReturnUrl(ctx, cfg));
+        params.put("p8_ReturnUrl", resultPageUrl(ctx, cfg));
         params.put("p9_NotifyUrl", cfg.getNotifyDomain() + "/pay/notify/" + order.getTradeNo());
         params.put("q1_FrpCode", frpCode);
         params.put("qa_TradeMerchantNo", cfg.getAppmchid() != null ? cfg.getAppmchid() : "");
@@ -197,6 +197,11 @@ public class JoinpayCreateHandler {
     private String buildReturnUrl(InvokeContext ctx, JoinpayConfig cfg) {
         var order = ctx.getOrder();
         return cfg.getSiteDomain() + "/pay/" + order.getType() + "/" + order.getTradeNo();
+    }
+
+    /** 渠道同步回跳统一收口：支付结果状态机页（/pay/result/{tradeNo}）。buildReturnUrl 专供 OAuth/中转，勿混用 */
+    private static String resultPageUrl(InvokeContext ctx, JoinpayConfig cfg) {
+        return cfg.getSiteDomain() + "/pay/result/" + ctx.getOrder().getTradeNo();
     }
 
     private static String queryParam(InvokeContext ctx, String key) {

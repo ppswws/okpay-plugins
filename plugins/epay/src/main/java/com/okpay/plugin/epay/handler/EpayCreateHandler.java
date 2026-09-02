@@ -85,7 +85,8 @@ public class EpayCreateHandler {
         params.put("type", order.getType());
         params.put("out_trade_no", order.getTradeNo());
         params.put("notify_url", cfg.getNotifyDomain() + "/pay/notify/" + order.getTradeNo());
-        params.put("return_url", cfg.getSiteDomain() + "/pay/" + order.getType() + "/" + order.getTradeNo());
+        // 渠道同步回跳统一收口：支付结果状态机页（/pay/result/{tradeNo}），不再把商户地址直传上游
+        params.put("return_url", cfg.getSiteDomain() + "/pay/result/" + order.getTradeNo());
         params.put("name", cfg.getGoodsName());
         params.put("money", toYuan(order.getReal()));
         if (!cfg.isSubmitMode()) {
