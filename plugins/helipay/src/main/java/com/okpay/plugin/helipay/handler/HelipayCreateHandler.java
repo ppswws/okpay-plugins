@@ -390,9 +390,9 @@ public class HelipayCreateHandler {
         var root = HttpHelper.MAPPER.readTree(resp.bodyAsString());
         if (root.path("base_resp").path("ret").asInt(-1) != 0)
             throw new IOException("jsoperatewxdata 请求失败");
-        var node2 = HttpHelper.MAPPER.readTree(root.path("data").asText(""));
-        var node3 = HttpHelper.MAPPER.readTree(node2.path("data").asText(""));
-        var openlink = node3.path("openlink").asText("").trim();
+        var node2 = HttpHelper.MAPPER.readTree(root.path("data").asString(""));
+        var node3 = HttpHelper.MAPPER.readTree(node2.path("data").asString(""));
+        var openlink = node3.path("openlink").asString("").trim();
         if (openlink.isEmpty()) throw new IOException("未获取到 openlink");
         return openlink;
     }

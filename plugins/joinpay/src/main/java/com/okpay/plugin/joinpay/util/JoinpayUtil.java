@@ -1,6 +1,8 @@
 package com.okpay.plugin.joinpay.util;
 
 import com.okpay.plugin.sdk.HttpHelper;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -14,8 +16,9 @@ public final class JoinpayUtil {
      * 数值保真 JSON 解析：浮点按 BigDecimal 保留原文（165684.50 不会变成 165684.5）。
      * 汇聚回包/通知中存在数值型金额（如 paidAmount: 1.00），验签须按上游 JSON 原文拼接。
      */
-    private static final com.fasterxml.jackson.databind.ObjectMapper NUM_MAPPER = HttpHelper.MAPPER.copy()
-            .enable(com.fasterxml.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+    private static final JsonMapper NUM_MAPPER = HttpHelper.MAPPER.rebuild()
+            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .build();
 
     private JoinpayUtil() {}
 
@@ -34,7 +37,7 @@ public final class JoinpayUtil {
         try {
             var raw = parseJsonNumRaw(json);
             raw.forEach((k, v) -> map.put(k, v != null ? v.toString() : ""));
-        } catch (Exception e) {
+} catch (tools.jackson.core.JacksonException e) {
             // 非 JSON：返回空 Map，由调用方决定回退策略
         }
         return map;
@@ -42,7 +45,7 @@ public final class JoinpayUtil {
 
     /** JSON → Map&lt;String, Object&gt;（数值保真，调用方自行取嵌套对象）；解析失败抛出 */
     @SuppressWarnings("unchecked")
-    public static Map<String, Object> parseJsonNumRaw(String json) throws Exception {
+    public static Map<String, Object> parseJsonNumRaw(String json) {
         if (json == null || json.isBlank()) throw new IllegalArgumentException("空 JSON");
         return (Map<String, Object>) NUM_MAPPER.readValue(json, Map.class);
     }

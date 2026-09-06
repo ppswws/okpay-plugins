@@ -62,8 +62,8 @@ public class WxpayComplainCore {
             var parsed = buildClient(cfg).parseNotify(
                     new String(body, StandardCharsets.UTF_8), headerList);
             return CallbackResult.builder()
-                    .complaintId(parsed.path("complaint_id").asText(null))
-                    .actionType(parsed.path("action_type").asText(null))
+                    .complaintId(parsed.path("complaint_id").asString(null))
+                    .actionType(parsed.path("action_type").asString(null))
                     .ackStatus(200).ackContent("{\"code\":\"SUCCESS\"}").contentType("application/json")
                     .build(); // 应答体为微信 v3 通知标准成功格式
         } catch (Exception e) { log.error("投诉回调解析失败", e);
@@ -83,7 +83,7 @@ public class WxpayComplainCore {
                     HttpHelper.MAPPER.writeValueAsString(metaNode), filename,
                     "image/" + ext(filename).replace("jpg", "jpeg"),
                     fileData, null);
-            var mediaId = resp.body().path("media_id").asText(null);
+            var mediaId = resp.body().path("media_id").asString(null);
             if (mediaId == null) throw new IllegalStateException("上传图片未返回 media_id");
             return mediaId;
         } catch (Exception e) { throw new IllegalStateException("上传图片失败", e); }

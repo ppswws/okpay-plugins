@@ -47,16 +47,11 @@
             <version>2.2.0</version>
         </dependency>
 
-        <!-- Jackson（SDK 内部 JSON 处理 + JavaTimeModule） -->
+        <!-- Jackson 3（SDK 内部 JSON 处理；java.time 内嵌支持，与宿主 Boot 4.1.1 同版本，消双轨） -->
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
+            <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>2.17.2</version>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.datatype</groupId>
-            <artifactId>jackson-datatype-jsr310</artifactId>
-            <version>2.17.2</version>
+            <version>3.1.5</version>
         </dependency>
 
         <!-- Lombok -->

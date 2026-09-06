@@ -191,14 +191,14 @@ class WxpayCombineSubmitHandlerTest {
             var bodies = bodyCaptor.getAllValues();
             assertThat(bodies).hasSize(3);
             var b1 = HttpHelper.MAPPER.readTree(bodies.get(0));
-            assertThat(b1.path("out_trade_no").asText()).isEqualTo(Sdk.subTradeNo(TRADE_NO, 1));
-            assertThat(b1.path("out_refund_no").asText()).isEqualTo(REFUND_NO + "_1");
+            assertThat(b1.path("out_trade_no").asString()).isEqualTo(Sdk.subTradeNo(TRADE_NO, 1));
+            assertThat(b1.path("out_refund_no").asString()).isEqualTo(REFUND_NO + "_1");
             assertThat(b1.path("amount").path("refund").asInt()).isEqualTo(10000);
             assertThat(b1.path("amount").path("total").asInt()).isEqualTo(10000);
-            assertThat(b1.path("notify_url").asText())
+            assertThat(b1.path("notify_url").asString())
                     .isEqualTo("https://pay.example.com/pay/refundnotify/" + REFUND_NO);
             var b2 = HttpHelper.MAPPER.readTree(bodies.get(1));
-            assertThat(b2.path("out_refund_no").asText()).isEqualTo(REFUND_NO + "_2");
+            assertThat(b2.path("out_refund_no").asString()).isEqualTo(REFUND_NO + "_2");
             // 逐单累计
             var updates = ArgumentCaptor.forClass(UpdateSubOrderRequest.class);
             verify(cb, times(3)).updateSubOrder(updates.capture());
@@ -229,7 +229,7 @@ class WxpayCombineSubmitHandlerTest {
             assertThat(result.getState()).isEqualTo(BizState.S_OK);
             var bodies = bodyCaptor.getAllValues();
             assertThat(bodies).hasSize(2);
-            assertThat(HttpHelper.MAPPER.readTree(bodies.get(0)).path("out_refund_no").asText())
+            assertThat(HttpHelper.MAPPER.readTree(bodies.get(0)).path("out_refund_no").asString())
                     .isEqualTo(REFUND_NO + "_2");
         }
     }
@@ -255,7 +255,7 @@ class WxpayCombineSubmitHandlerTest {
             var bodies = bodyCaptor.getAllValues();
             assertThat(bodies).hasSize(2);
             var b1 = HttpHelper.MAPPER.readTree(bodies.get(0));
-            assertThat(b1.path("out_refund_no").asText()).isEqualTo(REFUND_NO + "_1");
+            assertThat(b1.path("out_refund_no").asString()).isEqualTo(REFUND_NO + "_1");
             assertThat(b1.path("amount").path("refund").asInt()).isEqualTo(5000);
             var b2 = HttpHelper.MAPPER.readTree(bodies.get(1));
             assertThat(b2.path("amount").path("refund").asInt()).isEqualTo(5000);

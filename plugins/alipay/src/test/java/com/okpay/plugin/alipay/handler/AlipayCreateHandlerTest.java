@@ -1,6 +1,6 @@
 package com.okpay.plugin.alipay.handler;
 
-import com.fasterxml.jackson.core.type.TypeReference;
+import tools.jackson.core.type.TypeReference;
 import com.okpay.plugin.HostCallback;
 import com.okpay.plugin.model.ChannelSnapshot;
 import com.okpay.plugin.model.ConfigSnapshot;

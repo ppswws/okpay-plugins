@@ -2,7 +2,7 @@ package com.okpay.plugin.alipay.handler;
 
 import static com.okpay.plugin.sdk.PaymentUtils.toCents;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.*;
 import com.okpay.plugin.alipay.util.AlipayConfig;
@@ -180,8 +180,8 @@ public class AlipayNotifyHandler {
                 return Responses.notifyFail(ctx, "amount_mismatch");
             var bySubNo = new LinkedHashMap<String, JsonNode>();
             for (var r : results) {
-                var no = r.path("out_trade_no").asText("");
-                if (no.isEmpty() || !"SUCCESS".equals(r.path("result_code").asText(""))
+                var no = r.path("out_trade_no").asString("");
+                if (no.isEmpty() || !"SUCCESS".equals(r.path("result_code").asString(""))
                         || bySubNo.put(no, r) != null) {
                     return Responses.notifyFail(ctx, "amount_mismatch");
                 }
@@ -191,13 +191,13 @@ public class AlipayNotifyHandler {
                 var r = bySubNo.get(sub.getSubTradeNo());
                 if (r == null) return Responses.notifyFail(ctx, "amount_mismatch");
                 // 子单金额校验（fail-closed）：通知金额与库内子单不一致拒绝推进
-                var subAmount = r.path("total_amount").asText(null);
+                var subAmount = r.path("total_amount").asString(null);
                 if (subAmount == null || sub.getMoney() != toCents(subAmount)) {
                     log.debug("支付宝合单通知子单金额不符, tradeNo={}, sub={}",
                             order.getTradeNo(), sub.getSubTradeNo());
                     return Responses.notifyFail(ctx, "amount_mismatch");
                 }
-                var api = r.path("trade_no").asText("");
+                var api = r.path("trade_no").asString("");
                 if (firstApi == null) firstApi = api;
                 Sdk.updateSubOrder(ctx, UpdateSubOrderRequest.builder()
                         .tradeNo(order.getTradeNo()).subTradeNo(sub.getSubTradeNo())

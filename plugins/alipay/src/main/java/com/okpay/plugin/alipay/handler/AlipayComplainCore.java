@@ -1,6 +1,6 @@
 package com.okpay.plugin.alipay.handler;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.AlipayOpenApiClient;
 import com.okpay.plugin.sdk.HttpHelper;
@@ -121,7 +121,7 @@ public class AlipayComplainCore {
                     params.getOrDefault("biz_content", "{}"));
 
             return CallbackResult.builder()
-                    .complaintId(biz.path("complain_event_id").asText(null))
+                    .complaintId(biz.path("complain_event_id").asString(null))
                     .ackStatus(200)
                     .ackContent("success")
                     .contentType("text/plain")
@@ -316,7 +316,7 @@ public class AlipayComplainCore {
      * FINISHED / CANCELLED / PLATFORM_FINISH / CLOSED / REPORT_SUCCEED → 终态。</p>
      */
     ComplaintRecord toRecord(JsonNode item) {
-        var status = item != null ? item.path("status").asText(null) : null;
+        var status = item != null ? item.path("status").asString(null) : null;
         var state = status != null ? switch (status) {
             case "MERCHANT_PROCESSING", "MERCHANT_FEEDBACK_TIMEOUT" -> 0;
             case "MERCHANT_FEEDBACKED", "PLATFORM_PROCESSING" -> 1;
@@ -324,24 +324,24 @@ public class AlipayComplainCore {
         } : 0;
 
         // 投诉对象（官方 target_id/target_type）：target_type=PID 时 target_id 即被诉商家 PID
-        var targetType = item != null ? item.path("target_type").asText(null) : null;
+        var targetType = item != null ? item.path("target_type").asString(null) : null;
         var merchantNo = "PID".equals(targetType)
-                ? item.path("target_id").asText(null) : null;
+                ? item.path("target_id").asString(null) : null;
 
         return ComplaintRecord.builder()
-                .complaintId(item != null ? item.path("complain_event_id").asText(null) : null) // 支付宝侧投诉单号
+                .complaintId(item != null ? item.path("complain_event_id").asString(null) : null) // 支付宝侧投诉单号
                 .merchantNo(merchantNo)                                                        // 被诉方（target_type=PID 时的商家 PID）
-                .tradeNo(item != null ? item.path("merchant_order_no").asText(null) : null)     // 商家订单号 = 本地交易号
-                .outTradeNo(item != null ? item.path("merchant_order_no").asText(null) : null)
-                .apiTradeNo(item != null ? item.path("trade_no").asText(null) : null)           // 支付宝交易号
+                .tradeNo(item != null ? item.path("merchant_order_no").asString(null) : null)     // 商家订单号 = 本地交易号
+                .outTradeNo(item != null ? item.path("merchant_order_no").asString(null) : null)
+                .apiTradeNo(item != null ? item.path("trade_no").asString(null) : null)           // 支付宝交易号
                 .state(state)
                 .rawState(status)
-                .complaintType(item != null ? item.path("leaf_category_name").asText(null) : null) // 用户投诉诉求
-                .title(item != null ? item.path("complain_reason").asText(null) : null)            // 投诉原因
-                .content(item != null ? item.path("content").asText(null) : null)                  // 投诉内容
-                .phone(item != null ? item.path("phone_no").asText(null) : null)                   // 投诉人电话
-                .amount(item != null ? toFen(item.path("trade_amount").asText(null)) : null)       // 交易金额（元 → 分）
-                .occurredAt(item != null ? parseTime(item.path("gmt_create").asText(null)) : null)
+                .complaintType(item != null ? item.path("leaf_category_name").asString(null) : null) // 用户投诉诉求
+                .title(item != null ? item.path("complain_reason").asString(null) : null)            // 投诉原因
+                .content(item != null ? item.path("content").asString(null) : null)                  // 投诉内容
+                .phone(item != null ? item.path("phone_no").asString(null) : null)                   // 投诉人电话
+                .amount(item != null ? toFen(item.path("trade_amount").asString(null)) : null)       // 交易金额（元 → 分）
+                .occurredAt(item != null ? parseTime(item.path("gmt_create").asString(null)) : null)
                 .images(item != null ? textList(item.path("images")) : List.of())
                 .messages(item != null ? extractMessages(item) : List.of())
                 .build();
@@ -356,7 +356,7 @@ public class AlipayComplainCore {
         if (replies == null || !replies.isArray()) return List.of();
         var list = new ArrayList<ComplaintRecord.MessageRecord>();
         for (var r : replies) {
-            var replyRole = r.path("replier_role").asText(null);
+            var replyRole = r.path("replier_role").asString(null);
             var role = switch (replyRole) {
                 case "USER" -> 1;       // 用户
                 case "MERCHANT" -> 2;   // 商户
@@ -365,8 +365,8 @@ public class AlipayComplainCore {
             list.add(ComplaintRecord.MessageRecord.builder()
                     .role(role)
                     .name(role == 1 ? "用户" : role == 2 ? "商户" : "系统")
-                    .content(r.path("content").asText(null))
-                    .createdAt(parseTime(r.path("gmt_create").asText(null)))
+                    .content(r.path("content").asString(null))
+                    .createdAt(parseTime(r.path("gmt_create").asString(null)))
                     .images(textList(r.path("images")))
                     .build());
         }
@@ -385,7 +385,7 @@ public class AlipayComplainCore {
     private static List<String> textList(JsonNode node) {
         if (node == null || !node.isArray()) return List.of();
         var list = new ArrayList<String>();
-        for (var v : node) list.add(v.asText());
+        for (var v : node) list.add(v.asString());
         return list;
     }
 

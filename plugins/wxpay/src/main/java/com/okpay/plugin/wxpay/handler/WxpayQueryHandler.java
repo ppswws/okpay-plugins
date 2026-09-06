@@ -4,7 +4,7 @@ import com.okpay.plugin.enums.*;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.*;
 import com.okpay.plugin.wxpay.util.WxpayConfig;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import org.slf4j.*;
 
 import java.util.LinkedHashMap;
@@ -39,18 +39,18 @@ public class WxpayQueryHandler extends AbstractBizHandler {
             var result = queryTransaction(ctx, cfg, tradeNo);
             var node = result.body();
 
-            var state = node.path("trade_state").asText("");
+            var state = node.path("trade_state").asString("");
             return switch (state) {
                 case "SUCCESS",
                      // REFUND=交易成功后发生退款：交易本身已成功付入，退款归属退款单跟踪，不得判订单失败
                      "REFUND" -> Responses.ok(
-                        node.path("transaction_id").asText(null),
-                        node.path("payer").path("openid").asText(null), result);
+                        node.path("transaction_id").asString(null),
+                        node.path("payer").path("openid").asString(null), result);
                 case "NOTPAY", "USERPAYING" -> Responses.result(BizState.S_ING)
-                        .code(state).msg(node.path("trade_state_desc").asText(null))
-                        .buyer(node.path("payer").path("openid").asText(null))
+                        .code(state).msg(node.path("trade_state_desc").asString(null))
+                        .buyer(node.path("payer").path("openid").asString(null))
                         .traced(result).build();
-                default -> Responses.fail(state, node.path("trade_state_desc").asText(null), result);
+                default -> Responses.fail(state, node.path("trade_state_desc").asString(null), result);
             };
         } catch (WechatPayException e) {
             log.debug("微信订单查询暂时失败, tradeNo={}, code={}", tradeNo, e.code());
@@ -79,7 +79,7 @@ public class WxpayQueryHandler extends AbstractBizHandler {
             // 按子单号建 map 配对（应答顺序无契约保证，禁用下标对位）
             var bySubNo = new LinkedHashMap<String, JsonNode>();
             for (var item : subArray) {
-                var subNo = item.path("out_trade_no").asText(null);
+                var subNo = item.path("out_trade_no").asString(null);
                 if (subNo == null || subNo.isBlank() || bySubNo.putIfAbsent(subNo, item) != null)
                     return Responses.fail("COMBINE_MISMATCH", "合单子单号缺失或重复", result);
             }
@@ -87,7 +87,7 @@ public class WxpayQueryHandler extends AbstractBizHandler {
                 var item = bySubNo.get(sub.getSubTradeNo());
                 if (item == null)
                     return Responses.fail("COMBINE_MISMATCH", "合单应答缺少子单 " + sub.getSubTradeNo(), result);
-                var state = item.path("trade_state").asText("");
+                var state = item.path("trade_state").asString("");
                 if (!"SUCCESS".equals(state)) {
                     return switch (state) {
                         case "NOTPAY", "USERPAYING" -> Responses.ing(state, "合单未支付完成", result);
@@ -105,12 +105,12 @@ public class WxpayQueryHandler extends AbstractBizHandler {
                 var item = bySubNo.get(sub.getSubTradeNo());
                 Sdk.updateSubOrder(ctx, UpdateSubOrderRequest.builder()
                         .tradeNo(tradeNo).subTradeNo(sub.getSubTradeNo())
-                        .apiTradeNo(item.path("transaction_id").asText(null))
+                        .apiTradeNo(item.path("transaction_id").asString(null))
                         .status(SubOrderSnapshot.STATUS_PAID).build());
-                if (firstApi == null) firstApi = item.path("transaction_id").asText(null);
+                if (firstApi == null) firstApi = item.path("transaction_id").asString(null);
             }
             return Responses.ok(firstApi,
-                    node.path("combine_payer_info").path("openid").asText(null), result);
+                    node.path("combine_payer_info").path("openid").asString(null), result);
         } catch (WechatPayException e) {
             log.debug("微信合单查询暂时失败, tradeNo={}, code={}", tradeNo, e.code());
             return Responses.ing("QUERY_ERROR", e.getMessage());
@@ -143,9 +143,9 @@ public class WxpayQueryHandler extends AbstractBizHandler {
             var result = cfg.client().get("/v3/refund/domestic/refunds/"
                     + PaymentUtils.urlEncode(refundNo) + query, ctx);
 
-            var status = result.body().path("status").asText("");
+            var status = result.body().path("status").asString("");
             if ("SUCCESS".equals(status)) {
-                return Responses.ok(result.body().path("transaction_id").asText(null), result);
+                return Responses.ok(result.body().path("transaction_id").asString(null), result);
             }
             // CLOSED=退款单关闭（钱未退，单已终态）、ABNORMAL=退款异常（原路退卡失败，需商户平台人工处理）：
             // 两者渠道侧已终态，必须映射本地失败态退出查单池，否则永久 ing 无限查且无人工介入出口

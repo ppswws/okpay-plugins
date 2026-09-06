@@ -58,9 +58,9 @@ public class WxpaySubmitHandler extends AbstractBizHandler {
 
             var result = cfg.client().post("/v3/refund/domestic/refunds",
                     HttpHelper.MAPPER.valueToTree(body), ctx);
-            var status = result.body().path("status").asText("");
+            var status = result.body().path("status").asString("");
             if ("SUCCESS".equals(status)) {
-                return Responses.ok(result.body().path("transaction_id").asText(null), result);
+                return Responses.ok(result.body().path("transaction_id").asString(null), result);
             }
             // 受理即终态的失败（渠道侧不再变化）直接判失败退出查单池，与查单映射一致
             if ("CLOSED".equals(status) || "ABNORMAL".equals(status)) {
@@ -101,8 +101,8 @@ public class WxpaySubmitHandler extends AbstractBizHandler {
             body.put("notify_url", getNotifyDomain(ctx) + "/pay/refundnotify/" + refund.getRefundNo());
             var result = cfg.client().post("/v3/refund/domestic/refunds",
                     HttpHelper.MAPPER.valueToTree(body), ctx);
-            var status = result.body().path("status").asText("");
-            if ("SUCCESS".equals(status)) return Responses.ok(result.body().path("transaction_id").asText(null), result);
+            var status = result.body().path("status").asString("");
+            if ("SUCCESS".equals(status)) return Responses.ok(result.body().path("transaction_id").asString(null), result);
             if ("PROCESSING".equals(status)) return Responses.ing(status, "退款处理中", result);
             // 确定性拒绝（其余状态）→ 计入失败；首单失败且无任何成功 → S_FAIL
             log.debug("合单退款子单被拒, refundNo={}, sub={}, status={}",

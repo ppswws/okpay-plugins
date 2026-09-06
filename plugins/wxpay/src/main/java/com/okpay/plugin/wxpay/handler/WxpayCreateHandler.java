@@ -142,10 +142,10 @@ public class WxpayCreateHandler {
         var resp = cfg.client().post(singlePath(kind, cfg), HttpHelper.MAPPER.valueToTree(body), ctx);
         if (kind == Kind.NATIVE) {
             return Sdk.FetchResult.of(Responses.respPageURL("wxpay_qrcode",
-                    resp.body().path("code_url").asText()), resp);
+                    resp.body().path("code_url").asString()), resp);
         }
         if (kind == Kind.H5) {
-            var url = resp.body().path("h5_url").asText(null);
+            var url = resp.body().path("h5_url").asString(null);
             if (url == null) throw new Sdk.BizFailException("H5 下单未返回 h5_url", resp);
             url += "&redirect_url=" + urlEncode(resultPageUrl(cfg, ctx));
             return Sdk.FetchResult.of(Responses.respJump(url), resp);
@@ -217,12 +217,12 @@ public class WxpayCreateHandler {
         }
         Sdk.saveSubOrders(ctx, order.getTradeNo(), items);
         if (kind == Kind.NATIVE) {
-            var codeUrl = resp.body().path("code_url").asText(null);
+            var codeUrl = resp.body().path("code_url").asString(null);
             if (codeUrl == null) throw new Sdk.BizFailException("合单下单未返回 code_url", resp);
             return Sdk.FetchResult.of(Responses.respPageURL("wxpay_qrcode", codeUrl), resp);
         }
         if (kind == Kind.H5) {
-            var url = resp.body().path("h5_url").asText(null);
+            var url = resp.body().path("h5_url").asString(null);
             if (url == null) throw new Sdk.BizFailException("合单 H5 未返回 h5_url", resp);
             url += "&redirect_url=" + urlEncode(resultPageUrl(cfg, ctx));
             return Sdk.FetchResult.of(Responses.respJump(url), resp);
@@ -233,7 +233,7 @@ public class WxpayCreateHandler {
     /** APP/JSAPI 调起参数（单笔/合单共用；合单 APP 调起键同单笔） */
     private static Sdk.FetchResult appJsapiResult(Kind kind, InvokeContext ctx, WxpayConfig cfg,
                                                   WechatPayV3Client.WxResponse resp, String appId) throws Exception {
-        var prepayId = resp.body().path("prepay_id").asText(null);
+        var prepayId = resp.body().path("prepay_id").asString(null);
         if (prepayId == null) throw new Sdk.BizFailException(
                 (kind == Kind.APP ? "APP" : "JSAPI") + "下单未返回 prepay_id", resp);
         var timeStamp = String.valueOf(System.currentTimeMillis() / 1000);

@@ -372,7 +372,7 @@ class WxpayCombineQueryHandlerTest {
             assertThat(result.getState()).isEqualTo(BizState.S_OK);
             var bodies = bodyCaptor.getAllValues();
             assertThat(bodies).hasSize(2);
-            assertThat(HttpHelper.MAPPER.readTree(bodies.get(0)).path("out_refund_no").asText())
+            assertThat(HttpHelper.MAPPER.readTree(bodies.get(0)).path("out_refund_no").asString())
                     .isEqualTo(REFUND_NO + "_2");
         }
     }

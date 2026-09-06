@@ -226,22 +226,22 @@ class WxpayCombineCreateHandlerTest {
             new WxpayCreateHandler().wxpay(ctx);
 
             var body = HttpHelper.MAPPER.readTree(bodyCaptor.getValue());
-            assertThat(body.path("combine_appid").asText()).isEqualTo(APP_ID);
-            assertThat(body.path("combine_mchid").asText()).isEqualTo(MCH_ID);
-            assertThat(body.path("combine_out_trade_no").asText()).isEqualTo(TRADE_NO);
-            assertThat(body.path("notify_url").asText())
+            assertThat(body.path("combine_appid").asString()).isEqualTo(APP_ID);
+            assertThat(body.path("combine_mchid").asString()).isEqualTo(MCH_ID);
+            assertThat(body.path("combine_out_trade_no").asString()).isEqualTo(TRADE_NO);
+            assertThat(body.path("notify_url").asString())
                     .isEqualTo("https://pay.example.com/pay/notify/" + TRADE_NO);
             var subs = body.path("sub_orders");
             assertThat(subs.size()).isEqualTo(3);
             long total = 0;
             for (int i = 0; i < 3; i++) {
-                assertThat(subs.get(i).path("out_trade_no").asText())
+                assertThat(subs.get(i).path("out_trade_no").asString())
                         .isEqualTo(SdkSubNo(TRADE_NO, i + 1));
                 // sub_orders.mchid 必填（直连=商户号）
-                assertThat(subs.get(i).path("mchid").asText()).isEqualTo(MCH_ID);
-                assertThat(subs.get(i).path("attach").asText()).isEqualTo("combine");
-                assertThat(subs.get(i).path("description").asText()).isNotEmpty();
-                assertThat(subs.get(i).path("amount").path("currency").asText()).isEqualTo("CNY");
+                assertThat(subs.get(i).path("mchid").asString()).isEqualTo(MCH_ID);
+                assertThat(subs.get(i).path("attach").asString()).isEqualTo("combine");
+                assertThat(subs.get(i).path("description").asString()).isNotEmpty();
+                assertThat(subs.get(i).path("amount").path("currency").asString()).isEqualTo("CNY");
                 total += subs.get(i).path("amount").path("total_amount").asLong();
             }
             assertThat(total).isEqualTo(30000);
@@ -288,9 +288,9 @@ class WxpayCombineCreateHandlerTest {
 
             var body = HttpHelper.MAPPER.readTree(bodyCaptor.getValue());
             // 服务商合单：sub_orders.mchid 取值 combine_mchid（官方服务商合单要求），sub_mchid 并存
-            assertThat(body.path("sub_orders").get(0).path("mchid").asText())
+            assertThat(body.path("sub_orders").get(0).path("mchid").asString())
                     .isEqualTo(MCH_ID);
-            assertThat(body.path("sub_orders").get(0).path("sub_mchid").asText())
+            assertThat(body.path("sub_orders").get(0).path("sub_mchid").asString())
                     .isEqualTo("SUB1001");
         }
     }
@@ -395,9 +395,9 @@ class WxpayCombineCreateHandlerTest {
             assertThat(urlCaptor.getValue()).isEqualTo(BASE + "/v3/combine-transactions/jsapi");
             var body = HttpHelper.MAPPER.readTree(bodyCaptor.getValue());
             // combine_appid 与 OAuth 公众号同源，payer 挂 combine_payer_info.openid（无顶层 payer）
-            assertThat(body.path("combine_appid").asText()).isEqualTo("wxMPAPP1");
-            assertThat(body.path("combine_mchid").asText()).isEqualTo(MCH_ID);
-            assertThat(body.path("combine_payer_info").path("openid").asText())
+            assertThat(body.path("combine_appid").asString()).isEqualTo("wxMPAPP1");
+            assertThat(body.path("combine_mchid").asString()).isEqualTo(MCH_ID);
+            assertThat(body.path("combine_payer_info").path("openid").asString())
                     .isEqualTo("wxOPENID_MP1");
             assertThat(body.path("payer").isMissingNode()).isTrue();
         }

@@ -1,6 +1,6 @@
 package com.okpay.plugin.wxpay.handler;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.okpay.plugin.model.ComplaintRecord;
@@ -18,20 +18,20 @@ final class WxpayConvert {
 
     static ComplaintRecord toRecord(JsonNode item) {
         return ComplaintRecord.builder()
-                .complaintId(item.path("complaint_id").asText(null))
-                .merchantNo(item.path("complained_mchid").asText(null))
+                .complaintId(item.path("complaint_id").asString(null))
+                .merchantNo(item.path("complained_mchid").asString(null))
                 .tradeNo(extractOutTradeNo(item))
                 .outTradeNo(extractOutTradeNo(item))
-                .state(mapState(item.path("complaint_state").asText(null)))
-                .rawState(item.path("complaint_state").asText(null))
-                .complaintType(item.path("problem_type").asText(null))
-                .title(item.path("problem_description").asText(null))
-                .content(item.path("complaint_detail").asText(null))
-                .phone(item.path("payer_phone").asText(null))
-                .buyerId(item.path("payer_openid").asText(null))
+                .state(mapState(item.path("complaint_state").asString(null)))
+                .rawState(item.path("complaint_state").asString(null))
+                .complaintType(item.path("problem_type").asString(null))
+                .title(item.path("problem_description").asString(null))
+                .content(item.path("complaint_detail").asString(null))
+                .phone(item.path("payer_phone").asString(null))
+                .buyerId(item.path("payer_openid").asString(null))
                 .amount(item.path("apply_refund_amount").isNumber()
                         ? item.path("apply_refund_amount").asLong() : null)
-                .occurredAt(parseTime(item.path("complaint_time").asText(null)))
+                .occurredAt(parseTime(item.path("complaint_time").asString(null)))
                 .images(extractImages(item))
                 .messages(extractMessages(item))
                 .build();
@@ -52,13 +52,13 @@ final class WxpayConvert {
         if (historys == null || !historys.isArray()) return List.of();
         var list = new ArrayList<ComplaintRecord.MessageRecord>();
         for (var h : historys) {
-            var operateType = h.path("operate_type").asText("");
-            var operator = h.path("operator").asText(null);
+            var operateType = h.path("operate_type").asString("");
+            var operator = h.path("operator").asString(null);
             list.add(ComplaintRecord.MessageRecord.builder()
                     .role(mapHistoryRole(operateType))
                     .name(operator != null && !operator.isBlank() ? operator : historyRoleName(operateType))
                     .content(historyContent(h, operateType))
-                    .createdAt(parseTime(h.path("operate_time").asText(null)))
+                    .createdAt(parseTime(h.path("operate_time").asString(null)))
                     .images(historyImages(h))
                     .build());
         }
@@ -67,14 +67,14 @@ final class WxpayConvert {
 
     /** 协商内容优先级：operate_details → normal_message 文本块拼接 → click_message → operate_type */
     private static String historyContent(JsonNode h, String operateType) {
-        var details = h.path("operate_details").asText(null);
+        var details = h.path("operate_details").asString(null);
         if (details != null && !details.isBlank()) return details;
         var blocks = h.path("normal_message").path("blocks");
         if (blocks.isArray()) {
             var sb = new StringBuilder();
             for (var block : blocks) {
-                if ("TEXT".equals(block.path("type").asText(""))) {
-                    var text = block.path("text").path("text").asText("");
+                if ("TEXT".equals(block.path("type").asString(""))) {
+                    var text = block.path("text").path("text").asString("");
                     if (!text.isBlank()) {
                         if (sb.length() > 0) sb.append('\n');
                         sb.append(text);
@@ -83,7 +83,7 @@ final class WxpayConvert {
             }
             if (sb.length() > 0) return sb.toString();
         }
-        var click = h.path("click_message").path("message_content").asText(null);
+        var click = h.path("click_message").path("message_content").asString(null);
         if (click != null && !click.isBlank()) return click;
         return operateType.isBlank() ? null : operateType;
     }
@@ -122,7 +122,7 @@ final class WxpayConvert {
     private static List<String> textList(JsonNode node) {
         if (node == null || !node.isArray()) return List.of();
         var list = new ArrayList<String>();
-        for (var v : node) list.add(v.asText());
+        for (var v : node) list.add(v.asString());
         return list;
     }
 
@@ -148,7 +148,7 @@ final class WxpayConvert {
     private static String extractOutTradeNo(JsonNode item) {
         var orderInfo = item.path("complaint_order_info");
         if (orderInfo != null && orderInfo.isArray() && !orderInfo.isEmpty()) {
-            var outTradeNo = orderInfo.get(0).path("out_trade_no").asText(null);
+            var outTradeNo = orderInfo.get(0).path("out_trade_no").asString(null);
             return outTradeNo != null ? outTradeNo : "";
         }
         return "";
@@ -177,7 +177,7 @@ final class WxpayConvert {
             for (var media : mediaList) {
                 var urls = media.path("media_url");
                 if (urls != null && urls.isArray()) {
-                    for (var url : urls) images.add(url.asText());
+                    for (var url : urls) images.add(url.asString());
                 }
             }
         }

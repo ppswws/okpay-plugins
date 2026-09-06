@@ -423,8 +423,8 @@ class WxpayCreateHandlerTest {
             assertThat(urlCaptor.getValue())
                     .isEqualTo("https://api.mch.weixin.qq.com/v3/pay/transactions/jsapi");
             var body = HttpHelper.MAPPER.readTree(bodyCaptor.getValue());
-            assertThat(body.path("appid").asText()).isEqualTo("wxMPAPP1");
-            assertThat(body.path("payer").path("openid").asText()).isEqualTo("wxOPENID_MP1");
+            assertThat(body.path("appid").asString()).isEqualTo("wxMPAPP1");
+            assertThat(body.path("payer").path("openid").asString()).isEqualTo("wxOPENID_MP1");
         }
         // 风控内置：兑换成功即自动经宿主回调落库 openid + 黑名单（SDK 内部闭环，插件无跳过路径）
         verify(cb).recordOAuthIdentity(any());
@@ -517,11 +517,11 @@ class WxpayCreateHandlerTest {
             assertThat(urlCaptor.getValue())
                     .isEqualTo("https://api.mch.weixin.qq.com/v3/pay/partner/transactions/jsapi");
             var body = HttpHelper.MAPPER.readTree(bodyCaptor.getValue());
-            assertThat(body.path("sp_mchid").asText()).isEqualTo(MCH_ID);
-            assertThat(body.path("sub_mchid").asText()).isEqualTo("SUB1001");
+            assertThat(body.path("sp_mchid").asString()).isEqualTo(MCH_ID);
+            assertThat(body.path("sub_mchid").asString()).isEqualTo("SUB1001");
             // sp_appid 用 OAuth 公众号（openid 同源），payer 只承载 sp_openid
-            assertThat(body.path("sp_appid").asText()).isEqualTo("wxMPAPP1");
-            assertThat(body.path("payer").path("sp_openid").asText()).isEqualTo("wxOPENID_MP1");
+            assertThat(body.path("sp_appid").asString()).isEqualTo("wxMPAPP1");
+            assertThat(body.path("payer").path("sp_openid").asString()).isEqualTo("wxOPENID_MP1");
             assertThat(body.path("payer").path("openid").isMissingNode()).isTrue();
             assertThat(body.path("payer").path("sub_openid").isMissingNode()).isTrue();
         }

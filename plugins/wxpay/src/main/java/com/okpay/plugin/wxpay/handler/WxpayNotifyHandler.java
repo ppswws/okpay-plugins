@@ -1,6 +1,6 @@
 package com.okpay.plugin.wxpay.handler;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.*;
 import com.okpay.plugin.wxpay.util.WxpayConfig;
@@ -47,16 +47,16 @@ public class WxpayNotifyHandler {
             var result = cfg.client().parseNotify(body, headerList(getHeaders(ctx)));
 
             // 合单通知：顶层 combine_out_trade_no 判定（fail-closed：子单数/状态/金额任一不符拒收等重发）
-            if (result.path("combine_out_trade_no").asText(null) != null) {
+            if (result.path("combine_out_trade_no").asString(null) != null) {
                 return handleCombineNotify(ctx, cfg, order, result);
             }
 
             // 校验 out_trade_no 与订单一致
-            if (!order.getTradeNo().equals(result.path("out_trade_no").asText(null))) {
+            if (!order.getTradeNo().equals(result.path("out_trade_no").asString(null))) {
                 return ackFail(ctx, "order_mismatch");
             }
 
-            var tradeState = result.path("trade_state").asText("");
+            var tradeState = result.path("trade_state").asString("");
 
             if (!"SUCCESS".equals(tradeState)) {
                 log.debug("微信支付通知状态非成功, tradeNo={}, state={}", order.getTradeNo(), tradeState);
@@ -78,10 +78,10 @@ public class WxpayNotifyHandler {
             // 已配置系统公众号（统一OAuth首层已存 buyer 供风控）→ 渠道 openid 不覆盖身份；
             // 未配置 → 渠道 openid 即 buyer（现状）
             var buyer = ctx.getConfig().isOauthWxConfigured()
-                    ? null : result.path("payer").path("openid").asText(null);
+                    ? null : result.path("payer").path("openid").asString(null);
             try {
                 Sdk.completeOrderOk(ctx, order.getTradeNo(),
-                        result.path("transaction_id").asText(null), buyer);
+                        result.path("transaction_id").asString(null), buyer);
             } catch (Exception e) {
                 log.error("微信支付完成订单失败, tradeNo={}", order.getTradeNo(), e);
                 return ackFail(ctx, "complete_error");
@@ -106,7 +106,7 @@ public class WxpayNotifyHandler {
 
         try {
             var result = cfg.client().parseNotify(body, headerList(getHeaders(ctx)));
-            var refundStatus = result.path("refund_status").asText("");
+            var refundStatus = result.path("refund_status").asString("");
             var tradeNo = refund.getTradeNo() != null ? refund.getTradeNo() : "";
             var subs = tradeNo.isBlank() ? List.<SubOrderSnapshot>of() : Sdk.getSubOrders(ctx, tradeNo);
             if (!"SUCCESS".equals(refundStatus)) {
@@ -124,11 +124,11 @@ public class WxpayNotifyHandler {
             if (subs.isEmpty()) {
                 // 单笔退款通知
                 Sdk.completeRefundOk(ctx, refund.getRefundNo(),
-                        result.path("transaction_id").asText(null));
+                        result.path("transaction_id").asString(null));
                 return ackOk(ctx);
             }
             // 合单退款通知：out_refund_no = refundNo_序号 → 累计对应子单（通知重发 → 超限=已累计，幂等）
-            var outRefundNo = result.path("out_refund_no").asText("");
+            var outRefundNo = result.path("out_refund_no").asString("");
             var idx = PaymentUtils.refundIdx(outRefundNo, refund.getRefundNo());
             if (idx > 0 && idx <= subs.size()) {
                 // 金额缺失/非法（-1）→ 不累计不推进（防误走已付标记分支），靠查单续退兜底
@@ -152,7 +152,7 @@ public class WxpayNotifyHandler {
             var after = Sdk.getSubOrders(ctx, tradeNo);
             if (after.stream().allMatch(s -> s.getRefundMoney() >= s.getMoney())) {
                 Sdk.completeRefundOk(ctx, refund.getRefundNo(),
-                        result.path("transaction_id").asText(null));
+                        result.path("transaction_id").asString(null));
             }
         } catch (Exception e) {
             // 与支付通知对称：处理失败（验签/解密/落库异常）回 FAIL 让微信重发，不吞异常假确认
@@ -170,7 +170,7 @@ public class WxpayNotifyHandler {
     /** 合单支付通知：子单数一致 + 全部 SUCCESS + 逐单金额一致 + 合计==实付，全部通过才推进 */
     private PageResponse handleCombineNotify(InvokeContext ctx, WxpayConfig cfg, OrderSnapshot order,
                                              JsonNode result) {
-        if (!order.getTradeNo().equals(result.path("combine_out_trade_no").asText(null))) {
+        if (!order.getTradeNo().equals(result.path("combine_out_trade_no").asString(null))) {
             return ackFail(ctx, "order_mismatch");
         }
         var subs = Sdk.getSubOrders(ctx, order.getTradeNo());
@@ -185,7 +185,7 @@ public class WxpayNotifyHandler {
         // 按子单号建 map 配对（通知里 sub_orders 顺序无契约保证，禁用下标对位）
         var bySubNo = new LinkedHashMap<String, JsonNode>();
         for (var item : subArray) {
-            var subNo = item.path("out_trade_no").asText(null);
+            var subNo = item.path("out_trade_no").asString(null);
             if (subNo == null || subNo.isBlank() || bySubNo.putIfAbsent(subNo, item) != null) {
                 return ackFail(ctx, "amount_mismatch");
             }
@@ -196,10 +196,10 @@ public class WxpayNotifyHandler {
                 log.debug("合单通知缺少子单, tradeNo={}, sub={}", order.getTradeNo(), sub.getSubTradeNo());
                 return ackFail(ctx, "amount_mismatch");
             }
-            if (!"SUCCESS".equals(item.path("trade_state").asText(""))) {
+            if (!"SUCCESS".equals(item.path("trade_state").asString(""))) {
                 log.debug("合单通知子单未成功, tradeNo={}, sub={}, state={}",
                         order.getTradeNo(), sub.getSubTradeNo(),
-                        item.path("trade_state").asText(null));
+                        item.path("trade_state").asString(null));
                 return ackFail(ctx, "amount_mismatch");
             }
             var amount = item.path("amount").path("total_amount").asLong(-1);
@@ -220,13 +220,13 @@ public class WxpayNotifyHandler {
             Sdk.updateSubOrder(ctx, UpdateSubOrderRequest.builder()
                     .tradeNo(order.getTradeNo())
                     .subTradeNo(sub.getSubTradeNo())
-                    .apiTradeNo(item.path("transaction_id").asText(null))
+                    .apiTradeNo(item.path("transaction_id").asString(null))
                     .status(SubOrderSnapshot.STATUS_PAID).build());
-            if (firstApi == null) firstApi = item.path("transaction_id").asText(null);
+            if (firstApi == null) firstApi = item.path("transaction_id").asString(null);
         }
         // 与单笔通知一致：已配置系统公众号 → 渠道 openid 不覆盖身份
         var buyer = ctx.getConfig().isOauthWxConfigured()
-                ? null : result.path("combine_payer_info").path("openid").asText(null);
+                ? null : result.path("combine_payer_info").path("openid").asString(null);
         try {
             Sdk.completeOrderOk(ctx, order.getTradeNo(), firstApi, buyer);
         } catch (Exception e) {
