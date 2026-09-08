@@ -12,8 +12,8 @@ okpay-plugins/
 ├── pom.xml                 父 POM（聚合器 + 版本统一管理）
 ├── plugins/                通道插件
 │   ├── alipay/             支付宝
-│   ├── epay/               epay 聚合支付
-│   ├── helipay/            和利支付
+│   ├── epay/               彩虹易支付
+│   ├── helipay/            合利宝
 │   ├── joinpay/            汇聚支付
 │   ├── sumapay/            丰付支付
 │   └── wxpay/              微信支付（APIv3）
