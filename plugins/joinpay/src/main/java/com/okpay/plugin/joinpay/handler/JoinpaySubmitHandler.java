@@ -54,14 +54,14 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
     // =========================================================================
 
     private BizResult refund(InvokeContext ctx) {
+        // 契约：T_REF submit 时内核恒填 refund+order（退款/主单快照），缺失即宿主缺陷——不再判空兜底
         var order = ctx.getOrder();
         var refund = ctx.getRefund();
-        if (refund == null || refund.getRefundNo() == null) return fail("退款单号为空");
         var cfg = JoinpayConfig.from(ctx);
         var params = new LinkedHashMap<String, String>();
         params.put("p0_Version", "2.3");
         params.put("p1_MerchantNo", cfg.getAppid());
-        params.put("p2_OrderNo", order != null ? order.getTradeNo() : "");
+        params.put("p2_OrderNo", order.getTradeNo());
         params.put("p3_RefundOrderNo", refund.getRefundNo());
         params.put("p4_RefundAmount", toYuan(refund.getAmount()));
         params.put("p5_RefundReason", "申请退款");
@@ -95,8 +95,8 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
     // =========================================================================
 
     private BizResult transfer(InvokeContext ctx) {
+        // 契约：T_XFER submit 时内核恒填 transfer（tradeNo 恒非空），缺失即宿主缺陷——不再判空兜底
         var transfer = ctx.getTransfer();
-        if (transfer == null || transfer.getTradeNo() == null) return fail("打款单号为空");
         var cfg = JoinpayConfig.from(ctx);
         // 平台语义 private 对私 / public 对公 → JOINPAY 代付 receiverAccountType：201 对私 / 204 对公
         var accountType = "public".equals(transfer.getAccountType()) ? "204" : "201";

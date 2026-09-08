@@ -20,10 +20,8 @@ public class EpayQueryHandler extends AbstractBizHandler {
     }
 
     private BizResult query(InvokeContext ctx, BizRequest req) {
+        // 契约：T_PAY query 时内核恒填 order，缺失即宿主缺陷——不再判空兜底
         var order = ctx.getOrder();
-        if (order == null || order.getTradeNo() == null || order.getTradeNo().isBlank())
-            return Responses.fail("PARAM_ERROR", "订单为空");
-
         var qr = queryRaw(ctx, order.getTradeNo());
         var m = qr.body();
         var state = "1".equals(m.get("code")) && "1".equals(m.get("status")) ? BizState.S_OK : BizState.S_ING;

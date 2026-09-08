@@ -27,12 +27,12 @@ public class HelipaySubmitHandler extends AbstractBizHandler {
     // =========================================================================
 
     private BizResult refund(InvokeContext ctx) {
+        // 契约：T_REF submit 时内核恒填 refund（tradeNo/refundNo 恒非空），缺失即宿主缺陷——不再判空兜底
         var refund = ctx.getRefund();
-        if (refund == null || refund.getRefundNo() == null) return fail("退款单号为空");
         var cfg = HelipayConfig.from(ctx);
         var params = new LinkedHashMap<String, String>();
         params.put("P1_bizType", "AppPayRefund");
-        params.put("P2_orderId", refund.getTradeNo() != null ? refund.getTradeNo() : "");
+        params.put("P2_orderId", refund.getTradeNo());
         params.put("P3_customerNumber", cfg.getAppid());
         params.put("P4_refundOrderId", refund.getRefundNo());
         params.put("P5_amount", toYuan(refund.getAmount()));
@@ -64,8 +64,8 @@ public class HelipaySubmitHandler extends AbstractBizHandler {
     // =========================================================================
 
     private BizResult transfer(InvokeContext ctx) {
+        // 契约：T_XFER submit 时内核恒填 transfer（tradeNo 恒非空），缺失即宿主缺陷——不再判空兜底
         var transfer = ctx.getTransfer();
-        if (transfer == null || transfer.getTradeNo() == null) return fail("打款单号为空");
         var cfg = HelipayConfig.from(ctx);
         // 银行编码来自打款表单下拉选择（通道支持的银行项目直传），不做名称映射
         if (transfer.getBankCode() == null || transfer.getBankCode().isBlank())

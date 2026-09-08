@@ -51,9 +51,9 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
     }
 
     private BizResult refund(InvokeContext ctx) {
+        // 契约：T_REF submit 时内核恒填 refund+order（退款/主单快照），缺失即宿主缺陷——不再判空兜底
         var order = ctx.getOrder();
         var refund = ctx.getRefund();
-        if (refund == null || refund.getRefundNo() == null) return Responses.fail("PARAM_ERROR", "退款单号为空");
         var cfg = SumapayConfig.from(ctx);
         var refundNo = refund.getRefundNo();
         try {
@@ -133,7 +133,7 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
         var refundNo = refund.getRefundNo();
         var params = new LinkedHashMap<String, String>();
         params.put("requestId", refundNo);
-        params.put("originalRequestId", order != null ? order.getTradeNo() : "");
+        params.put("originalRequestId", order.getTradeNo());
         params.put("tradeProcess", cfg.getAppid());
         params.put("fund", toYuan(refund.getAmount()));
         params.put("noticeUrl", cfg.getNotifyDomain() + "/pay/refundnotify/" + refundNo);
@@ -160,9 +160,8 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
     // 内部
     // =========================================================================
 
-    /** 订单是否为当日（丰付按订单日期区分退款路径） */
+    /** 订单是否为当日（丰付按订单日期区分退款路径）；order 恒非空、单号恒 24 位（内核契约），不再判空/短号 */
     private static boolean isToday(OrderSnapshot order) {
-        if (order == null || order.getTradeNo() == null || order.getTradeNo().length() < 9) return true;
         // 单号格式 [PRT]yyyyMMddHHmmss+序号，日期位 1-8
         var orderDate = order.getTradeNo().substring(1, 9);
         return orderDate.equals(LocalDate.now(SHANGHAI).format(DATE));

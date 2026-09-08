@@ -14,8 +14,8 @@ import java.util.*;
  * 合利宝异步通知处理器（支付/退款/打款）。
  *
  * <p>应答语义：验签/必要字段缺失/单号不匹配 → fail；金额不符 → amount_mismatch；
- * 宿主无对应单据 → success（避免对未知单反复重试）；支付/退款完成推进失败 → fail
- * （交还渠道重试）；打款完成推进失败 → 仍 success（打款结果由查询轮询收敛）。</p>
+ * 支付/退款完成推进失败 → fail（交还渠道重试）；打款完成推进失败 → 仍 success（打款结果由查询轮询收敛）。
+ * 实体缺失不发插件：宿主按单号路由时无单据直接 404（PluginPageService.dispatch），插件内不再判空。</p>
  */
 public class HelipayNotifyHandler {
 
@@ -33,9 +33,8 @@ public class HelipayNotifyHandler {
             return Responses.notifyFail(ctx, "fail");
         if (!"SUCCESS".equals(params.get("rt4_status")))
             return Responses.notifyFail(ctx, "fail");
+        // 契约：notify 回调实体恒非空（PluginPageService.dispatch 无单据即 404）
         var order = ctx.getOrder();
-        if (order == null || order.getTradeNo() == null || order.getTradeNo().isBlank())
-            return Responses.notifyOk(ctx, "success");
         if (!order.getTradeNo().equals(params.get("rt2_orderId")))
             return Responses.notifyFail(ctx, "fail");
         if (order.getReal() != toCents(params.getOrDefault("rt5_orderAmount", "0")))
@@ -58,8 +57,6 @@ public class HelipayNotifyHandler {
                 || !HelipaySignUtil.verifyNotify(params, cfg.getAppkey()))
             return Responses.notifyFail(ctx, "fail");
         var refund = ctx.getRefund();
-        if (refund == null || refund.getRefundNo() == null || refund.getRefundNo().isBlank())
-            return Responses.notifyOk(ctx, "success");
         if (!refund.getRefundNo().equals(params.get("rt3_refundOrderId")))
             return Responses.notifyFail(ctx, "refund_mismatch");
         if (notBlank(params.get("rt6_amount")) && refund.getAmount() != toCents(params.get("rt6_amount")))
@@ -86,8 +83,6 @@ public class HelipayNotifyHandler {
                 || !HelipaySignUtil.verifyNotify(params, cfg.getAppkey()))
             return Responses.notifyFail(ctx, "fail");
         var transfer = ctx.getTransfer();
-        if (transfer == null || transfer.getTradeNo() == null || transfer.getTradeNo().isBlank())
-            return Responses.notifyOk(ctx, "success");
         var status = upper(params.get("rt7_orderStatus"));
         try {
             switch (status) {

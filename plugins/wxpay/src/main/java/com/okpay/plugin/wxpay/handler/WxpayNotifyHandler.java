@@ -36,10 +36,8 @@ public class WxpayNotifyHandler {
 
     /** 支付通知（APIv3） */
     public PageResponse payNotify(InvokeContext ctx) {
+        // 契约：notify 回调按 tradeNo 前缀路由，实体缺失不发插件（PluginPageService.dispatch），order 恒非空
         var order = ctx.getOrder();
-        if (order == null || order.getTradeNo() == null || order.getTradeNo().isBlank())
-            return ackFail(ctx, "order_mismatch");
-
         var cfg = WxpayConfig.from(ctx);
         var body = getNotifyBody(ctx);
 
@@ -97,18 +95,16 @@ public class WxpayNotifyHandler {
 
     /** 退款通知（APIv3） */
     public PageResponse refundNotify(InvokeContext ctx) {
+        // 契约：notify 回调实体恒非空（同 payNotify）；refund.tradeNo 恒非空（RefundSnapshot 契约）
         var refund = ctx.getRefund();
-        if (refund == null || refund.getRefundNo() == null || refund.getRefundNo().isBlank())
-            return ackFail(ctx, "refund_mismatch");
-
         var cfg = WxpayConfig.from(ctx);
         var body = getNotifyBody(ctx);
 
         try {
             var result = cfg.client().parseNotify(body, headerList(getHeaders(ctx)));
             var refundStatus = result.path("refund_status").asString("");
-            var tradeNo = refund.getTradeNo() != null ? refund.getTradeNo() : "";
-            var subs = tradeNo.isBlank() ? List.<SubOrderSnapshot>of() : Sdk.getSubOrders(ctx, tradeNo);
+            var tradeNo = refund.getTradeNo();
+            var subs = Sdk.getSubOrders(ctx, tradeNo);
             if (!"SUCCESS".equals(refundStatus)) {
                 // 合单退款逐子单提交，任一子单的 PROCESSING 通知也会推送到主单回调：
                 // 不能据单条子单通知判主单 FAIL（否则后续成功通知无法恢复终态），由查单续退兜底；

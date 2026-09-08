@@ -37,9 +37,8 @@ public class SumapayNotifyHandler {
     // =========================================================================
 
     public PageResponse notify(InvokeContext ctx) {
+        // 契约：notify 回调实体恒非空（PluginPageService.dispatch 无单据即 404）
         var order = ctx.getOrder();
-        if (order == null || order.getTradeNo() == null || order.getTradeNo().isBlank())
-            return Responses.notifyFail(ctx, "fail");
         var cfg = SumapayConfig.from(ctx);
         var params = parseNotifyForm(ctx);
         if (!SumapaySignUtil.verify(cfg.getAppkey(), SumapaySignUtil.concat(params, ORDER_NOTIFY_FIELDS),
@@ -69,9 +68,8 @@ public class SumapayNotifyHandler {
     // =========================================================================
 
     public PageResponse refundNotify(InvokeContext ctx) {
+        // 契约：notify 回调实体恒非空（同 notify）；refund.tradeNo 恒非空
         var refund = ctx.getRefund();
-        if (refund == null || refund.getRefundNo() == null || refund.getRefundNo().isBlank())
-            return Responses.notifyOk(ctx, "success");
         var cfg = SumapayConfig.from(ctx);
         var params = parseNotifyForm(ctx);
         // 双路径验签：带 result 字段按付款至二级户通知验（可能复用退款回调地址），否则按退款通知验

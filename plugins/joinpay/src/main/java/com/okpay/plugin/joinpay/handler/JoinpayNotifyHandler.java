@@ -47,9 +47,8 @@ public class JoinpayNotifyHandler {
         var status = params.getOrDefault("r6_Status", "");
         if (!"100".equals(status))
             return Responses.notifyFail(ctx, "status=" + status);
+        // 契约：notify 回调实体恒非空（PluginPageService.dispatch 无单据即 404）
         var order = ctx.getOrder();
-        if (order == null || order.getTradeNo() == null || order.getTradeNo().isBlank())
-            return Responses.notifyOk(ctx, "success");
         if (!order.getTradeNo().equals(params.get("r2_OrderNo")))
             return Responses.notifyFail(ctx, "order_mismatch");
         if (order.getReal() != toCents(params.getOrDefault("r3_Amount", "0")))
@@ -72,10 +71,6 @@ public class JoinpayNotifyHandler {
             return Responses.notifyFail(ctx, params.isEmpty() ? "invalid_notify_params" : "sign_error");
         var status = params.getOrDefault("ra_Status", "");
         var refund = ctx.getRefund();
-        if (refund == null || refund.getRefundNo() == null || refund.getRefundNo().isBlank())
-            return "100".equals(status)
-                   ? Responses.notifyOk(ctx, "success")
-                   : Responses.notifyFail(ctx, "status=" + status);
         if (!refund.getRefundNo().equals(params.get("r3_RefundOrderNo")))
             return Responses.notifyFail(ctx, "refund_mismatch");
         if (refund.getAmount() != toCents(params.getOrDefault("r4_RefundAmount", "0")))
@@ -103,10 +98,6 @@ public class JoinpayNotifyHandler {
             return Responses.notifyFail(ctx, params.isEmpty() ? "invalid_notify_params" : "sign_error");
         var status = params.getOrDefault("status", "");
         var transfer = ctx.getTransfer();
-        if (transfer == null || transfer.getTradeNo() == null || transfer.getTradeNo().isBlank())
-            return "205".equals(status)
-                   ? Responses.notifyOk(ctx, "success")
-                   : Responses.notifyFail(ctx, "status=" + status);
         if (!transfer.getTradeNo().equals(params.get("merchantOrderNo")))
             return Responses.notifyFail(ctx, "transfer_mismatch");
         try {

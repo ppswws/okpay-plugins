@@ -20,10 +20,8 @@ public class EpayNotifyHandler {
     private static final Logger log = LoggerFactory.getLogger(EpayNotifyHandler.class);
 
     public PageResponse handle(InvokeContext ctx) {
+        // 契约：notify 回调按 tradeNo 前缀路由，实体缺失不发插件（PluginPageService.dispatch→404），order 恒非空
         var order = ctx.getOrder();
-        if (order == null || order.getTradeNo() == null || order.getTradeNo().isBlank())
-            return Responses.notifyFail(ctx, "order_mismatch");
-
         var cfg = EpayConfig.from(ctx);
         var params = parseNotifyParams(ctx);
         if (params.isEmpty() || !EpaySignUtil.verify(params, cfg.getAppkey()))

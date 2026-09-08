@@ -23,10 +23,8 @@ public class AlipayNotifyHandler {
 
     /** 支付通知 */
     public PageResponse payNotify(InvokeContext ctx) {
+        // 契约：notify 回调按 tradeNo 前缀路由，实体缺失不发插件（PluginPageService.dispatch），order 恒非空
         var order = ctx.getOrder();
-        if (order == null || order.getTradeNo() == null || order.getTradeNo().isBlank())
-            return Responses.notifyFail(ctx, "order_mismatch");
-
         var cfg = AlipayConfig.from(ctx);
         var params = parseNotifyParams(ctx);
         if (params.isEmpty()) return Responses.notifyFail(ctx, "invalid_params");
@@ -88,10 +86,8 @@ public class AlipayNotifyHandler {
 
     /** 退款通知 */
     public PageResponse refundNotify(InvokeContext ctx) {
+        // 契约：notify 回调实体恒非空（同 payNotify）；refund.tradeNo 恒非空（RefundSnapshot 契约）
         var refund = ctx.getRefund();
-        if (refund == null || refund.getRefundNo() == null || refund.getRefundNo().isBlank())
-            return Responses.notifyFail(ctx, "refund_mismatch");
-
         var cfg = AlipayConfig.from(ctx);
         var params = parseNotifyParams(ctx);
         if (params.isEmpty()) return Responses.notifyFail(ctx, "invalid_refund_params");
@@ -106,9 +102,8 @@ public class AlipayNotifyHandler {
                         refund.getRefundNo(), refundStatus);
                 return Responses.notifyOk(ctx, "success");
             }
-            var tradeNo = refund.getTradeNo() != null ? refund.getTradeNo() : "";
-            // 退款单缺 tradeNo 属异常数据：不调 getSubOrders（宿主对空单号抛参），按单笔路径处理
-            var subs = tradeNo.isBlank() ? List.<SubOrderSnapshot>of() : Sdk.getSubOrders(ctx, tradeNo);
+            var tradeNo = refund.getTradeNo();
+            var subs = Sdk.getSubOrders(ctx, tradeNo);
             if (subs.isEmpty()) {
                 // 单笔退款通知：REFUND_SUCCESS 即终态
                 Sdk.completeRefundOk(ctx, refund.getRefundNo(), params.get("trade_no"));

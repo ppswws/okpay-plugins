@@ -27,14 +27,9 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
     // =========================================================================
 
     private com.okpay.plugin.model.BizResult submitRefund(InvokeContext ctx, BizRequest req) {
+        // 契约：T_REF submit 时内核恒填 refund+order（退款/主单快照），缺失即宿主缺陷——不再判空兜底
         var refund = ctx.getRefund();
-        if (refund == null || refund.getRefundNo() == null || refund.getRefundNo().isBlank())
-            return Responses.fail("PARAM_ERROR", "退款单为空");
-
         var order = ctx.getOrder();
-        if (order == null || order.getTradeNo() == null || order.getTradeNo().isBlank())
-            return Responses.fail("PARAM_ERROR", "订单为空");
-
         try {
             // 合单退款：合单订单才查子单 → 逐子单提交（出参语义：全退 S_OK / 首败 S_FAIL / 部分 S_ING）；
             // is_combine=1 但子单缺失 = 数据不一致，拒退不静默降级单笔
@@ -121,10 +116,8 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
     // =========================================================================
 
     private com.okpay.plugin.model.BizResult submitTransfer(InvokeContext ctx, BizRequest req) {
+        // 契约：T_XFER submit 时内核恒填 transfer，缺失即宿主缺陷——不再判空兜底
         var transfer = ctx.getTransfer();
-        if (transfer == null || transfer.getTradeNo() == null || transfer.getTradeNo().isBlank())
-            return Responses.fail("PARAM_ERROR", "打款单为空");
-
         try {
             var cfg = AlipayConfig.from(ctx);
             var biz = new LinkedHashMap<String, Object>();
