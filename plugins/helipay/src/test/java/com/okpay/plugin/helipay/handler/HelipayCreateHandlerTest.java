@@ -276,14 +276,15 @@ class HelipayCreateHandlerTest {
     // =========================================================================
 
     @Test
-    @DisplayName("公众号微信内无 code → 跳授权 URL（SDK 内置：已配置系统公众号 → /oauth/wx 包装）")
+    @DisplayName("公众号微信内无 code → 跳授权 URL（SDK 内置：已配置系统公众号 → /oauth/wxmp 包装）")
     void wxpayMpWechatNoCodeJumpsOAuth() {
         var ctx = ctx(UA_WECHAT, null, true, cfgRaw("1", true, false, null));
         var resp = new HelipayCreateHandler().wxpay(ctx);
 
         assertThat(resp.getType()).isEqualTo("jump");
         var url = resp.getUrl();
-        assertThat(url).startsWith("https://pay.example.com/oauth/wx?redirect_uri=");
+        // 首层入口基地址恒为平台网关域（系统公众号绑定的授权域名），非通道前端域
+        assertThat(url).startsWith("https://gw.example.com/oauth/wxmp?redirect_uri=");
         assertThat(URLDecoder.decode(url, StandardCharsets.UTF_8))
                 .contains("redirect_uri=https://open.weixin.qq.com/connect/oauth2/authorize")
                 .contains("appid=wxMPAPP1")
@@ -553,6 +554,7 @@ class HelipayCreateHandlerTest {
                 .order(order)
                 .callback(mock(HostCallback.class))
                 .config(ConfigSnapshot.builder().siteDomain("https://pay.example.com")
+                        .gatewayDomain("https://gw.example.com")
                         .notifyDomain("https://pay.example.com")
                         .goodsName("短剧剧场")
                         .oauthWxConfigured(oauthWx).build());

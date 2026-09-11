@@ -105,7 +105,7 @@ public class JoinpayCreateHandler {
         var retUrl = buildReturnUrl(ctx, cfg);
         if (code.isBlank()) {
             if (HttpHelper.isWeChat(ua)) {
-                // 授权 URL 由 SDK 内置决策：统一公众号已配置 → 先经宿主 /oauth/wx 用系统公众号授权
+                // 授权 URL 由 SDK 内置决策：统一公众号已配置 → 先经宿主 /oauth/wxmp 用系统公众号授权
                 //（风控身份落库 buyer + 黑名单），随后微信重定向到本通道公众号授权；未配置 → 直接
                 // 通道授权。两条路径最终兑换的 openid 恒为本通道公众号 openid（支付 appid 同源），
                 // buyer 由宿主/SDK 内部管理，插件不读不判。参数已由上下文保证非空，无需防御分支

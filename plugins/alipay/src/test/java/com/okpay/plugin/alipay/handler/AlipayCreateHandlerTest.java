@@ -83,6 +83,7 @@ class AlipayCreateHandlerTest {
         }
         // 真实宿主 buildPluginConfig 永远给出 config 快照（未配置即标记 false）
         b.config(ConfigSnapshot.builder().siteDomain("https://pay.example.com")
+                .gatewayDomain("https://gw.example.com")
                 .oauthAlipayMiniConfigured(miniConfigured).build());
         return b.build();
     }
@@ -359,7 +360,7 @@ class AlipayCreateHandlerTest {
     }
 
     @Test
-    @DisplayName("JSAPI：无 buyer 且小程序全局应用已配置 → 跳宿主 /oauth/alipaymini（独立键，不经网页入口）")
+    @DisplayName("JSAPI：无 buyer 且小程序全局应用已配置 → 跳宿主 /oauth/alimini（独立键，不经网页入口）")
     void jsApiJumpsToMiniOAuthWhenNoBuyer() throws Exception {
         var cb = mock(HostCallback.class);
         when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
@@ -368,7 +369,8 @@ class AlipayCreateHandlerTest {
         var resp = new AlipayCreateHandler().alipay(ctx);
 
         assertThat(resp.getType()).isEqualTo("jump");
-        assertThat(resp.getUrl()).startsWith("https://pay.example.com/oauth/alipaymini?redirect_uri=");
+        // 首层入口基地址恒为平台网关域；内层 redirect_uri 回本次支付链路域下的支付页
+        assertThat(resp.getUrl()).startsWith("https://gw.example.com/oauth/alimini?redirect_uri=");
         assertThat(URLDecoder.decode(resp.getUrl(), StandardCharsets.UTF_8))
                 .contains("redirect_uri=https://pay.example.com/pay/alipay/T1")
                 .contains("state=T1");

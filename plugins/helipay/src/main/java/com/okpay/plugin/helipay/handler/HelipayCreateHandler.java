@@ -107,7 +107,7 @@ public class HelipayCreateHandler {
         var retUrl = buildPayUrl(ctx, cfg, Map.of("t", String.valueOf(System.currentTimeMillis() / 1000)));
         if (code.isBlank()) {
             if (HttpHelper.isWeChat(ua)) {
-                // 授权 URL 由 SDK 内置决策：统一公众号已配置 → 先经宿主 /oauth/wx 用系统公众号授权
+                // 授权 URL 由 SDK 内置决策：统一公众号已配置 → 先经宿主 /oauth/wxmp 用系统公众号授权
                 //（风控身份落库 buyer + 黑名单），随后微信重定向到本通道公众号授权；未配置 → 直接
                 // 通道授权。两条路径最终兑换的 openid 恒为本通道公众号 openid（支付 appid 同源），
                 // buyer 由宿主/SDK 内部管理，插件不读不判。参数已由上下文保证非空，无需防御分支
@@ -255,7 +255,7 @@ public class HelipayCreateHandler {
         params.put("P9_payType", "WAP");
         params.put("P10_appName", "短剧剧场");
         params.put("P11_deviceInfo", "iOS_WAP");
-        params.put("P12_applicationId", trimSlash(cfg.getSiteDomain()));
+        params.put("P12_applicationId", cfg.getSiteDomain());
         params.put("P13_goodsName", cfg.getGoodsName());
         params.put("P14_goodsDetail", "");
         params.put("P15_desc", "");
@@ -429,9 +429,7 @@ public class HelipayCreateHandler {
 
     private static String buildPayUrl(InvokeContext ctx, HelipayConfig cfg, Map<String, String> query) {
         var order = ctx.getOrder();
-        var siteDomain = trimSlash(cfg.getSiteDomain());
-        if (siteDomain.isEmpty()) return "";
-        var url = siteDomain + "/pay/" + order.getType() + "/" + order.getTradeNo();
+        var url = cfg.getSiteDomain() + "/pay/" + order.getType() + "/" + order.getTradeNo();
         if (query == null || query.isEmpty()) return url;
         var qs = new StringBuilder();
         query.forEach((k, v) -> {
@@ -495,12 +493,5 @@ public class HelipayCreateHandler {
 
     private static boolean notBlank(String s) {
         return s != null && !s.isBlank();
-    }
-
-    private static String trimSlash(String s) {
-        if (s == null) return "";
-        var t = s.trim();
-        while (t.endsWith("/")) t = t.substring(0, t.length() - 1);
-        return t;
     }
 }

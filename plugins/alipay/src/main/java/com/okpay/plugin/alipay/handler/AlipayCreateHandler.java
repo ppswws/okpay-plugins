@@ -20,7 +20,7 @@ import java.util.concurrent.ThreadLocalRandom;
  * 当面付JS/JSAPI 需 OAuth 身份（buyer）：
  * <ul>
  *   <li>JSAPI（小程序入口）：全局小程序应用已配置（payment.alipay.oauth_mini，
- *       alipay_mini_login）→ 跳宿主 /oauth/alipaymini，全局应用 + 黑名单风控 + buyer 落库；
+ *       alipay_mini_login）→ 跳宿主 /oauth/alimini，全局应用 + 黑名单风控 + buyer 落库；
  *       全局未配置 → 插件直调 SDK 用通道本身的应用完成 OAuth</li>
  *   <li>当面付JS（网页入口）：无全局应用键——user_id（2088）是账号级标识跨应用一致，
  *       恒走通道应用 OAuth</li>
@@ -329,7 +329,7 @@ public class AlipayCreateHandler {
     /**
      * 统一 OAuth（当面付JS/JSAPI 共用，lockCreate 之外执行）：
      * <ul>
-     *   <li>JSAPI + 全局小程序应用已配置 → 跳宿主 /oauth/alipaymini（payment.alipay.oauth_mini，
+     *   <li>JSAPI + 全局小程序应用已配置 → 跳宿主 /oauth/alimini（payment.alipay.oauth_mini，
      *       全局应用 + buyer 风控落库）；oauth_done 回跳后 buyer 仍空 → 失败终止
      *       （获取失败即失败，不降级为通道 OAuth 兜底）</li>
      *   <li>当面付JS 恒走通道应用 OAuth（user_id 账号级跨应用一致，无全局网页应用键）；
@@ -344,11 +344,11 @@ public class AlipayCreateHandler {
         var miniHostOAuth = mode == AlipayModeResolver.Mode.JSAPI
                 && ctx.getConfig().isOauthAlipayMiniConfigured();
         var returnUrl = cfg.getSiteDomain() + "/pay/alipay/" + order.getTradeNo();
-        // 首层：JSAPI + 全局小程序应用已配置 → 跳宿主统一 OAuth（redirect_uri 回本站支付页，state=tradeNo）
+        // 首层：JSAPI + 全局小程序应用已配置 → 跳宿主统一 OAuth（入口基地址由 SDK 取平台网关域，
+        // redirect_uri 回本次支付链路域下的支付页，state=tradeNo）
         if (miniHostOAuth && !queryParam(ctx, "oauth_done").equals("1")) {
-            return Responses.respJump(cfg.getSiteDomain() + "/oauth/alipaymini"
-                    + "?redirect_uri=" + URLEncoder.encode(returnUrl, StandardCharsets.UTF_8)
-                    + "&state=" + order.getTradeNo());
+            return Responses.respJump(OAuthHelper.buildAlipayMiniPayAuthUrl(ctx, returnUrl,
+                    order.getTradeNo()));
         }
         var authCode = queryParam(ctx, "auth_code");
         if (authCode.isBlank()) {

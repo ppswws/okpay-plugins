@@ -38,7 +38,7 @@ import static org.mockito.Mockito.when;
 /**
  * WxpayCreateHandler 支付方式分发（epay 编号 1/2/3/5 + UA 分流）。
  *
- * <p>公众号授权 URL 决策内置 SDK（已配置系统公众号 → 跳 /oauth/wx 包装的通道授权 URL，双 OAuth；
+ * <p>公众号授权 URL 决策内置 SDK（已配置系统公众号 → 跳 /oauth/wxmp 包装的通道授权 URL，双 OAuth；
  * 未配置 → 直接通道授权 URL），buyer 由宿主/SDK 管理、插件不读不判；与小程序/扫码/APP 分发。</p>
  *
  * <p>lockCreate 用例走真实签名/验签路径：平台证书经 {@code /v3/certificates} 下载响应
@@ -135,6 +135,7 @@ class WxpayCreateHandlerTest {
                 .order(order)
                 .callback(mock(HostCallback.class))
                 .config(ConfigSnapshot.builder().siteDomain("https://pay.example.com")
+                        .gatewayDomain("https://gw.example.com")
                         .oauthWxConfigured(oauthWx).build());
         if (ua != null || query != null) {
             var req = RequestSnapshot.builder();
@@ -194,7 +195,7 @@ class WxpayCreateHandlerTest {
     // =========================================================================
 
     @Test
-    @DisplayName("已配置系统公众号 → 跳 /oauth/wx 包装的通道授权 URL（双 OAuth：先系统公众号存风控身份）")
+    @DisplayName("已配置系统公众号 → 跳 /oauth/wxmp 包装的通道授权 URL（双 OAuth：先系统公众号存风控身份）")
     void unifiedOAuthWrapperWhenConfigured() throws Exception {
         // buyer 有无不参与决策：插件始终经 SDK 构建授权 URL，buyer 由宿主/SDK 管理
         var ctx = ctx(UA_WECHAT, null, true, null, cfgRaw("2", false, true, false));
@@ -203,7 +204,8 @@ class WxpayCreateHandlerTest {
 
         assertThat(resp.getType()).isEqualTo("jump");
         var url = resp.getUrl();
-        assertThat(url).startsWith("https://pay.example.com/oauth/wx?redirect_uri=");
+        // 首层入口基地址恒为平台网关域（系统公众号绑定的授权域名），非通道前端域
+        assertThat(url).startsWith("https://gw.example.com/oauth/wxmp?redirect_uri=");
         // redirect_uri 是通道公众号授权 URL（第二层 OAuth 的发起方是通道自己的公众号）
         assertThat(URLDecoder.decode(url, StandardCharsets.UTF_8))
                 .contains("redirect_uri=https://open.weixin.qq.com/connect/oauth2/authorize")
