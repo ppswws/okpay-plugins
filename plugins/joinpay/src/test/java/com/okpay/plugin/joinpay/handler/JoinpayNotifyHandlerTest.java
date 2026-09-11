@@ -31,7 +31,8 @@ import static org.mockito.Mockito.verify;
 /**
  * JoinpayNotifyHandler 三类通知（支付/退款/打款）：
  * 验签失败/参数缺失 → 拒绝且不推进；成功语义严格按文档（支付 r6_Status=100、退款 ra_Status=100/101、
- * 打款 status=205/204/208/214）；金额/单号不匹配按语义应答；宿主无对应单据 → success（不反复重试）。
+ * 打款 status=205/204/208/214）；金额/单号不匹配按语义应答。未知单号由宿主拦截（实体缺失即 404，
+ * 不进插件），本层不做判空。
  *
  * <p>支付通知为 GET（参数在 query，需 URL 解码后验签）；退款/打款通知为 JSON body。</p>
  */
@@ -108,15 +109,6 @@ class JoinpayNotifyHandlerTest {
                 ctx(mock(HostCallback.class), null, orderQuery(orderNotify("100", "1.00", "OTHER1")), "T1", 100L, null, null, null));
 
         assertThat(resp.getDataText()).isEqualTo("order_mismatch");
-    }
-
-    @Test
-    @DisplayName("支付通知宿主无对应订单 → success（不反复重试）")
-    void payNotifyUnknownOrderAcksSuccess() {
-        var resp = new JoinpayNotifyHandler().payNotify(
-                ctx(mock(HostCallback.class), null, orderQuery(orderNotify("100", "1.00", "T1")), null, 0L, null, null, null));
-
-        assertThat(resp.getDataText()).isEqualTo("success");
     }
 
     @Test
@@ -209,15 +201,6 @@ class JoinpayNotifyHandlerTest {
 
         assertThat(resp.getDataText()).isEqualTo("sign_error");
         verify(cb, never()).completeBiz(any());
-    }
-
-    @Test
-    @DisplayName("退款通知宿主无退款单 → success")
-    void refundNotifyUnknownAcksSuccess() {
-        var resp = new JoinpayNotifyHandler().refundNotify(
-                ctx(mock(HostCallback.class), json(refundNotify("100", "1.00", "R1")), null, null, 0L, null, null, null));
-
-        assertThat(resp.getDataText()).isEqualTo("success");
     }
 
     // =========================================================================
@@ -315,15 +298,6 @@ class JoinpayNotifyHandlerTest {
 
         var resp = new JoinpayNotifyHandler().transferNotify(
                 ctx(mock(HostCallback.class), HttpHelper.MAPPER.writeValueAsBytes(m), null, null, 0L, null, null, "T1"));
-
-        assertThat(resp.getDataText()).isEqualTo("success");
-    }
-
-    @Test
-    @DisplayName("打款通知宿主无打款单 → success")
-    void transferNotifyUnknownAcksSuccess() {
-        var resp = new JoinpayNotifyHandler().transferNotify(
-                ctx(mock(HostCallback.class), json(transferNotify("205", "T1")), null, null, 0L, null, null, null));
 
         assertThat(resp.getDataText()).isEqualTo("success");
     }

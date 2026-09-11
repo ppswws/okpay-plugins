@@ -27,8 +27,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /**
- * HelipayNotifyHandler 三类通知（支付/退款/打款）：验签与必填缺失 → fail、金额/单号不匹配按语义应答、
- * 宿主无对应单据 → success（不反复重试）；打款完成推进失败仍应答 success（结果由查询轮询收敛）。
+ * HelipayNotifyHandler 三类通知（支付/退款/打款）：验签与必填缺失 → fail、金额/单号不匹配按语义应答；
+ * 打款完成推进失败仍应答 success（结果由查询轮询收敛）。未知单号由宿主拦截（实体缺失即 404，不进插件），
+ * 本层不做判空。
  */
 @DisplayName("HelipayNotifyHandler 通知应答")
 class HelipayNotifyHandlerTest {
@@ -104,17 +105,6 @@ class HelipayNotifyHandlerTest {
                 notifyCtx(mock(HostCallback.class), orderNotifyBody(params), "T1", 100L));
 
         assertThat(resp.getDataText()).isEqualTo("fail");
-    }
-
-    @Test
-    @DisplayName("支付通知宿主无对应订单 → success（不反复重试）")
-    void payNotifyUnknownOrderAcksSuccess() {
-        var params = orderNotify("SUCCESS", "1.00", "T1", "desc");
-
-        var resp = new HelipayNotifyHandler().payNotify(
-                notifyCtx(mock(HostCallback.class), orderNotifyBody(params), null, 100L));
-
-        assertThat(resp.getDataText()).isEqualTo("success");
     }
 
     @Test
@@ -204,17 +194,6 @@ class HelipayNotifyHandlerTest {
         assertThat(resp.getDataText()).isEqualTo("amount_mismatch");
     }
 
-    @Test
-    @DisplayName("退款通知宿主无退款单 → success")
-    void refundNotifyUnknownAcksSuccess() {
-        var params = refundNotify("SUCCESS", "1.00", "R1");
-
-        var resp = new HelipayNotifyHandler().refundNotify(
-                notifyCtx(mock(HostCallback.class), refundNotifyBody(params), "T1", 100L, null, null, null));
-
-        assertThat(resp.getDataText()).isEqualTo("success");
-    }
-
     // =========================================================================
     // 打款通知
     // =========================================================================
@@ -290,17 +269,6 @@ class HelipayNotifyHandlerTest {
 
         var resp = new HelipayNotifyHandler().transferNotify(
                 notifyCtx(cb, transferNotifyBody(params), null, 0L, null, null, "T1"));
-
-        assertThat(resp.getDataText()).isEqualTo("success");
-    }
-
-    @Test
-    @DisplayName("打款通知宿主无打款单 → success")
-    void transferNotifyUnknownAcksSuccess() {
-        var params = transferNotify("SUCCESS", "T1", "SN1");
-
-        var resp = new HelipayNotifyHandler().transferNotify(
-                notifyCtx(mock(HostCallback.class), transferNotifyBody(params), null, 0L, null, null, null));
 
         assertThat(resp.getDataText()).isEqualTo("success");
     }
