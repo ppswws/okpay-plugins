@@ -27,15 +27,15 @@ public class WxpayComplainHandler extends WxpayComplainCore implements Complaint
                 .id("wxpay").name("微信投诉处理").kind("wxpay")
                 .modes(Map.of(
                     "direct", PluginMode.builder().label("直连商户")
-                            .fields(List.of("appid", "appmchid", "appkey", "appsecret", "privateKey")).build(),
+                            .fields(List.of("appmchid", "appkey", "appsecret", "privateKey")).build(),
                     "service", PluginMode.builder().label("服务商")
-                            .fields(List.of("appid", "appmchid", "appkey", "appsecret", "sub_mchid", "privateKey"))
+                            .fields(List.of("appmchid", "appkey", "appsecret", "sub_mchid", "privateKey"))
                             .overrides(Map.of("sub_mchid", FieldOverride.builder()
                                     .name("被诉商户号")
                                     .note("留空=处理服务商名下所有子商户的投诉；填写=仅该子商户").build()))
                             .build(),
                     "shoufutong", PluginMode.builder().label("收付通")
-                            .fields(List.of("appid", "appmchid", "appkey", "appsecret", "sub_mchid", "privateKey"))
+                            .fields(List.of("appmchid", "appkey", "appsecret", "sub_mchid", "privateKey"))
                             .overrides(Map.of("sub_mchid", FieldOverride.builder()
                                     .name("被诉商户号")
                                     .note("留空=处理收付通名下所有子商户的投诉；填写=仅该子商户").build()))

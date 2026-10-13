@@ -58,6 +58,11 @@ public class WxpayConfig implements ChannelConfig {
         return null;
     }
 
+    /** APP 支付 AppId（开放平台移动应用）：仅取显式配置，不参与公众号/小程序兜底（移动应用无绑定槽位）。 */
+    public String appPayAppId() {
+        return wxAppId != null && !wxAppId.isBlank() ? wxAppId : null;
+    }
+
     private transient String siteDomain;
     private transient String notifyDomain;
     private transient String goodsName;
@@ -66,8 +71,9 @@ public class WxpayConfig implements ChannelConfig {
 
     public static WxpayConfig from(InvokeContext ctx) {
         return ChannelConfigSupport.from(ctx, WxpayConfig.class,
-                "通道配置不完整（缺少 appmchid/appid/appsecret）",
-                cfg -> cfg.mchId == null || cfg.wxAppId == null || cfg.apiV3Key == null);
+                "通道配置不完整（缺少 appmchid/appsecret，或 appid/公众号/小程序 均未配置，或开启APP支付未填开放平台移动应用AppID）",
+                cfg -> cfg.mchId == null || cfg.apiV3Key == null || cfg.genericAppId() == null
+                        || (cfg.modeSet().contains("4") && cfg.appPayAppId() == null));
     }
 
     public Set<String> modeSet() {

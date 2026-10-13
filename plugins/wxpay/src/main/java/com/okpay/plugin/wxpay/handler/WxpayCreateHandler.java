@@ -138,6 +138,10 @@ public class WxpayCreateHandler {
             // appid 一律用 OAuth 来源公众号/小程序（appId），不能用 genericAppId 兜底（可能与 openid 不同源）。
             body.put(cfg.isServiceProvider() ? "sp_appid" : "appid", appId);
             body.put("payer", cfg.isServiceProvider() ? Map.of("sp_openid", openid) : Map.of("openid", openid));
+        } else if (kind == Kind.APP) {
+            // APP 支付 appid 恒取开放平台移动应用，不参与公众号/小程序兜底（类型不匹配微信必拒）
+            appId = requireAppPayAppId(cfg);
+            body.put(cfg.isServiceProvider() ? "sp_appid" : "appid", appId);
         }
         var resp = cfg.client().post(singlePath(kind, cfg), HttpHelper.MAPPER.valueToTree(body), ctx);
         if (kind == Kind.NATIVE) {
@@ -164,6 +168,13 @@ public class WxpayCreateHandler {
             case APP -> "app";
             case JSAPI -> "jsapi";
         };
+    }
+
+    /** APP 支付 appid：开放平台移动应用（无绑定槽位），缺失即报错，不参与公众号/小程序兜底。 */
+    private static String requireAppPayAppId(WxpayConfig cfg) {
+        var appId = cfg.appPayAppId();
+        if (appId == null) throw new IllegalArgumentException("APP支付缺少开放平台移动应用 appid");
+        return appId;
     }
 
     /** 合单下单（v3/combine-transactions/*）：顶层 combine_* 字段 + sub_orders[]，子单号确定性生成 */
@@ -200,6 +211,10 @@ public class WxpayCreateHandler {
             // combine_appid 用 OAuth 公众号 appid 保证与 openid 同源
             body.put("combine_appid", appId);
             body.put("combine_payer_info", Map.of("openid", openid));
+        } else if (kind == Kind.APP) {
+            // APP 支付 appid 恒取开放平台移动应用，不参与公众号/小程序兜底（类型不匹配微信必拒）
+            appId = requireAppPayAppId(cfg);
+            body.put("combine_appid", appId);
         }
         var path = switch (kind) {
             case NATIVE -> "/v3/combine-transactions/native";
@@ -246,9 +261,9 @@ public class WxpayCreateHandler {
             params.put("prepayid", prepayId);
             params.put("timestamp", timeStamp);
             // APP 调起签名第 4 行用裸 prepayid（不带 prepay_id= 前缀），与 JSAPI paySign 原文不同
-            params.put("sign", cfg.client().appPaySign(cfg.genericAppId(),
+            params.put("sign", cfg.client().appPaySign(appId,
                     Long.parseLong(timeStamp), nonceStr, prepayId));
-            var codeUrl = "weixin://app/" + cfg.genericAppId() + "/pay/?" + formUrlEncode(params);
+            var codeUrl = "weixin://app/" + appId + "/pay/?" + formUrlEncode(params);
             return Sdk.FetchResult.of(Responses.respPageURL("wxpay_h5", codeUrl), resp);
         }
         var params = new LinkedHashMap<String, Object>();

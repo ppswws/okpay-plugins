@@ -37,8 +37,8 @@ final class WxpayPluginInfo {
                 .link("https://pay.weixin.qq.com/")
                 .payinMethods(List.of("wxpay"))
                 .fields(Map.ofEntries(
-                    Map.entry("appid", InputField.builder().name("服务号/小程序/开放平台AppID").type("input").required(true)
-                            .note("需在微信支付后台关联对应 AppID 账号").build()),
+                    Map.entry("appid", InputField.builder().name("服务号/小程序/开放平台AppID").type("input")
+                            .note("可留空：自动用绑定的公众号 → 小程序；APP支付须填开放平台移动应用AppID；须已在微信支付后台关联对应账号").build()),
                     Map.entry("appmchid", InputField.builder().name("商户号").type("input").required(true).build()),
                     Map.entry("appkey", InputField.builder().name("API证书序列号").type("input").required(true).build()),
                     Map.entry("appsecret", InputField.builder().name("APIv3密钥").type("input").required(true)

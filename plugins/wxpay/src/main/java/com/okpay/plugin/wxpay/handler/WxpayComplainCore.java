@@ -2,6 +2,7 @@ package com.okpay.plugin.wxpay.handler;
 
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.HttpHelper;
+import com.okpay.plugin.sdk.WechatPayException;
 import com.okpay.plugin.sdk.WechatPayV3Client;
 import org.slf4j.*;
 
@@ -134,16 +135,39 @@ public class WxpayComplainCore {
         } catch (Exception e) { throw new IllegalStateException("完成投诉失败", e); }
     }
 
+    /** 投诉通知回调地址路径（微信：查询 GET / 创建 POST / 更新 PUT / 删除 DELETE 同路径）。 */
+    private static final String NOTIFY_PATH = "/v3/merchant-service/complaint-notifications";
+
+    /** 设置投诉通知回调地址：先查上游已配置地址——一致则跳过，有则更新（PUT）、无则创建（POST）。 */
     public void setNotifyUrl(ChannelConfig cfg, String url) {
         try {
+            var client = buildClient(cfg);
             var body = HttpHelper.MAPPER.createObjectNode();
             body.put("url", url);
-            buildClient(cfg).post("/v3/merchant-service/complaint-notifications", body, null);
+            var existing = queryNotifyUrl(client);
+            if (url.equals(existing)) return;
+            if (existing == null) {
+                client.post(NOTIFY_PATH, body, null);
+            } else {
+                client.put(NOTIFY_PATH, body, null);
+            }
         } catch (Exception e) { throw new IllegalStateException("设置通知地址失败", e); }
     }
 
+    /** 查询上游已配置的回调地址；未配置（微信按 RESOURCE_NOT_EXISTS 报错）返回 null，其余查询错误原样上抛。 */
+    private static String queryNotifyUrl(WechatPayV3Client client) throws IOException, InterruptedException {
+        try {
+            var resp = client.get(NOTIFY_PATH, null);
+            var url = resp.body() == null ? null : resp.body().path("url").asString(null);
+            return url == null || url.isBlank() ? null : url;
+        } catch (WechatPayException e) {
+            if ("RESOURCE_NOT_EXISTS".equals(e.code())) return null;
+            throw e;
+        }
+    }
+
     public void deleteNotifyUrl(ChannelConfig cfg, String url) {
-        try { buildClient(cfg).delete("/v3/merchant-service/complaint-notifications", null); }
+        try { buildClient(cfg).delete(NOTIFY_PATH, null); }
         catch (Exception e) { throw new IllegalStateException("删除通知地址失败", e); }
     }
 
@@ -154,7 +178,7 @@ public class WxpayComplainCore {
     private WechatPayV3Client buildClient(ChannelConfig cfg) {
         var extras = cfg.getExtras();
         try {
-            // 字段语义：appmchid=商户号（签名）、appid=AppID；子商户号走 sub_mchid
+            // 字段语义：appmchid=商户号（签名）；子商户号走 sub_mchid
             var pubKeyMode = "public_key".equals(extras.get("authMode"));
             return new WechatPayV3Client(
                     cfg.getAppMchId(),
