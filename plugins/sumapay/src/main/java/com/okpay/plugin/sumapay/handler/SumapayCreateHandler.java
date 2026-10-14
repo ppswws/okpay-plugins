@@ -103,7 +103,7 @@ public class SumapayCreateHandler {
     private PageResponse handleWxMp(InvokeContext ctx, SumapayConfig cfg, String ua) {
         if (cfg.getMp() == null || cfg.getMp().getAppid() == null)
             return Responses.respError("缺少公众号配置");
-        var code = queryParam(ctx, "auth_code");
+        var code = queryParam(ctx, "code");
         var retUrl = buildReturnUrl(ctx, cfg);
         if (code.isBlank()) {
             if (HttpHelper.isWeChat(ua)) {

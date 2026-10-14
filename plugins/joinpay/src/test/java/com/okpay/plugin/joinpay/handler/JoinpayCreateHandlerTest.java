@@ -6,6 +6,7 @@ import com.okpay.plugin.model.ConfigSnapshot;
 import com.okpay.plugin.model.InvokeContext;
 import com.okpay.plugin.model.OrderSnapshot;
 import com.okpay.plugin.model.RequestSnapshot;
+import com.okpay.plugin.joinpay.util.JoinpaySignUtil;
 import com.okpay.plugin.sdk.HttpHelper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,13 +15,16 @@ import org.mockito.MockedStatic;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -88,9 +92,33 @@ class JoinpayCreateHandlerTest {
     }
 
     @Test
+    @DisplayName("微信授权回调（?code=）→ 兑换 openid → 建单返回支付页（不得回跳授权，线上无限循环形态）")
+    void wechatCallbackQueryConsumesCode() throws Exception {
+        // 微信 snsapi_base 回调把凭证放在 code（非 auth_code），state=订单号——与真实回调一致
+        var ctx = ctx(UA_WECHAT, "code=WXCODE1&state=T1", false, cfgRaw("3"));
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.get(any(), any())).thenAnswer(inv ->
+                    new HttpHelper.HttpResponse(200, Map.of(),
+                            "{\"openid\":\"wxOPENID_1\"}".getBytes(StandardCharsets.UTF_8),
+                            "req", 10, 1));
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv ->
+                    signedPayResp("{\"appId\":\"wxMPAPP1\"}"));
+
+            var resp = new JoinpayCreateHandler().wxpay(ctx);
+
+            // 回调 code 必须被消费：兑换请求 URL 带上它；未消费即走授权回跳分支
+            mocked.verify(() -> HttpHelper.get(any(), contains("code=WXCODE1")), times(1));
+            // 回跳授权是 jump 响应——正是线上 302 死循环的形态
+            assertThat(resp.getType()).isEqualTo("page");
+            assertThat(String.valueOf(resp.getUrl())).doesNotContain("open.weixin.qq.com");
+        }
+    }
+
+    @Test
     @DisplayName("公众号回调命中买家黑名单 → 兑换内部自动抛异常 → 跳失败页终止（不再下单）")
     void mpCallbackBlockedByBlacklist() throws Exception {
-        var ctx = ctx(UA_WECHAT, "auth_code=CODE1", false, cfgRaw("3"));
+        var ctx = ctx(UA_WECHAT, "code=CODE1", false, cfgRaw("3"));
         var cb = ctx.getCallback();
         // 宿主回调：黑名单命中（recordOAuthIdentity=true，订单已推进 -3）
         when(cb.recordOAuthIdentity(any())).thenReturn(true);
@@ -108,6 +136,23 @@ class JoinpayCreateHandlerTest {
         // 命中后插件未做任何拦截判断——兑换方法内部已抛异常终止；被拦截：不发起支付、不写 ext
         verify(cb).recordOAuthIdentity(any());
         verify(cb, never()).lockOrderExt(any());
+    }
+
+    /** 下单应答验签字段（与实现侧 PAY_RESP_FIELDS 同序：测试侧独立声明，实现侧改字段会在此暴露）。 */
+    private static final List<String> PAY_RESP_VERIFY = List.of(
+            "r0_Version","r1_MerchantNo","r2_OrderNo","r3_Amount","r4_Cur","r5_Mp",
+            "r6_FrpCode","r7_TrxNo","r8_MerchantBankCode","r9_SubMerchantNo",
+            "ra_Code","rb_CodeMsg","rc_Result","rd_Pic");
+
+    private static HttpHelper.HttpResponse signedPayResp(String rcResult) throws Exception {
+        var m = new LinkedHashMap<String, String>();
+        m.put("r0_Version", "2.6");
+        m.put("r2_OrderNo", "T1");
+        m.put("ra_Code", "100");
+        m.put("rc_Result", rcResult);
+        m.put("hmac", JoinpaySignUtil.sign(m, PAY_RESP_VERIFY, "JPKEY1"));
+        return new HttpHelper.HttpResponse(200, Map.of(),
+                HttpHelper.MAPPER.writeValueAsBytes(m), "req", 10, 1);
     }
 
     /** 通道配置：biztype=3（公众号 WEIXIN_GZH）+ 公众号绑定。 */
