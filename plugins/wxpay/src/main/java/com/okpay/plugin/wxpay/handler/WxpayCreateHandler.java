@@ -154,7 +154,7 @@ public class WxpayCreateHandler {
             url += "&redirect_url=" + urlEncode(resultPageUrl(cfg, ctx));
             return Sdk.FetchResult.of(Responses.respJump(url), resp);
         }
-        return appJsapiResult(kind, ctx, cfg, resp, appId);
+        return appJsapiResult(kind, cfg, resp, appId);
     }
 
     /** 下单端点：服务商走 partner 端点（/v3/pay/partner/transactions/*），直连走直连端点 */
@@ -242,11 +242,11 @@ public class WxpayCreateHandler {
             url += "&redirect_url=" + urlEncode(resultPageUrl(cfg, ctx));
             return Sdk.FetchResult.of(Responses.respJump(url), resp);
         }
-        return appJsapiResult(kind, ctx, cfg, resp, appId);
+        return appJsapiResult(kind, cfg, resp, appId);
     }
 
     /** APP/JSAPI 调起参数（单笔/合单共用；合单 APP 调起键同单笔） */
-    private static Sdk.FetchResult appJsapiResult(Kind kind, InvokeContext ctx, WxpayConfig cfg,
+    private static Sdk.FetchResult appJsapiResult(Kind kind, WxpayConfig cfg,
                                                   WechatPayV3Client.WxResponse resp, String appId) throws Exception {
         var prepayId = resp.body().path("prepay_id").asString(null);
         if (prepayId == null) throw new Sdk.BizFailException(
@@ -273,8 +273,9 @@ public class WxpayCreateHandler {
         params.put("package", "prepay_id=" + prepayId);
         params.put("signType", "RSA");
         params.put("paySign", cfg.client().paySign(appId, Long.parseLong(timeStamp), nonceStr, prepayId));
-        params.put("outTradeNo", ctx.getOrder().getTradeNo());
-        return Sdk.FetchResult.of(Responses.respPageData("wxpay_jspay", params), resp);
+        // 模板把 js_api_parameters 直接喂 WeixinJSBridge.invoke，调起参数须落在该键且为对象
+        return Sdk.FetchResult.of(Responses.respPageData("wxpay_jspay",
+                Map.of("js_api_parameters", params)), resp);
     }
 
     // =========================================================================

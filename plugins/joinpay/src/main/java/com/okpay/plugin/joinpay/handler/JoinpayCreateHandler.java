@@ -93,7 +93,8 @@ public class JoinpayCreateHandler {
                 openid -> Sdk.lockCreate(ctx, () -> {
                     try {
                         return createOrder(ctx, cfg, "WEIXIN_XCX",
-                                Map.of("q5_OpenId", openid, "q7_AppId", cfg.getMini().getAppid()), null, false);
+                                Map.of("q5_OpenId", openid, "q7_AppId", cfg.getMini().getAppid()), "wxpay_jspay", false);
+                    } catch (RuntimeException e) { throw e;
                     } catch (Exception e) { throw new RuntimeException("小程序支付失败[" + e.getMessage() + "]", e); }
                 }));
     }
@@ -121,7 +122,8 @@ public class JoinpayCreateHandler {
                 openid -> Sdk.lockCreate(ctx, () -> {
                     try {
                         return createOrder(ctx, cfg, "WEIXIN_GZH",
-                                Map.of("q5_OpenId", openid, "q7_AppId", cfg.getMp().getAppid()), null, false);
+                                Map.of("q5_OpenId", openid, "q7_AppId", cfg.getMp().getAppid()), "wxpay_jspay", false);
+                    } catch (RuntimeException e) { throw e;
                     } catch (Exception e) { throw new RuntimeException("公众号支付失败[" + e.getMessage() + "]", e); }
                 }));
     }
@@ -175,7 +177,9 @@ public class JoinpayCreateHandler {
                         rb.isBlank() ? channelFailure(resp.statusCode())
                                      : "[" + respMap.get("ra_Code") + "]" + rb, resp);
             }
-            return Sdk.FetchResult.of(toPage(respMap, pageName, isH5), resp);
+            var page = "wxpay_jspay".equals(pageName) ? jsapiPage(respMap, resp)
+                    : toPage(respMap, pageName, isH5);
+            return Sdk.FetchResult.of(page, resp);
         } catch (RuntimeException e) { throw e;
         } catch (IOException e) {
             // 传输层失败（超时/连接失败）：无 HTTP 响应，归因渠道统一文案
@@ -192,6 +196,17 @@ public class JoinpayCreateHandler {
         var qr = respMap.getOrDefault("rc_Result",
                 "data:image/png;base64," + respMap.getOrDefault("rd_Pic", ""));
         return Responses.respPageURL(pageName, qr);
+    }
+
+    /** 公众号/小程序调起页：渠道 rc_Result 回支付参数 JSON 串，按 wxpay_jspay 模板 + js_api_parameters 下发。 */
+    private static PageResponse jsapiPage(Map<String, String> respMap, HttpHelper.HttpResponse resp) {
+        var params = respMap.getOrDefault("rc_Result", "");
+        if (params.isBlank()) throw new Sdk.BizFailException("下单成功但未返回支付参数", resp);
+        // 模板直接喂 WeixinJSBridge.invoke 须为对象；解析不出归因渠道（不冒泡成插件内部错误）
+        final Object jsParams;
+        try { jsParams = HttpHelper.MAPPER.readValue(params, Object.class); }
+        catch (Exception e) { throw new Sdk.BizFailException("渠道支付参数解析失败", resp); }
+        return Responses.respPageData("wxpay_jspay", Map.of("js_api_parameters", jsParams));
     }
 
     private String buildReturnUrl(InvokeContext ctx, JoinpayConfig cfg) {

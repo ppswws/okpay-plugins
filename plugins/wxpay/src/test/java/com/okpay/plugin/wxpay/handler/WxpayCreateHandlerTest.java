@@ -421,6 +421,10 @@ class WxpayCreateHandlerTest {
             var resp = new WxpayCreateHandler().wxpay(ctx);
             assertThat(resp.getType()).isEqualTo("page");
             assertThat(resp.getPage()).isEqualTo("wxpay_jspay");
+            // 模板把 data.js_api_parameters 直接喂 WeixinJSBridge.invoke：必须是对象
+            //（字符串/扁平字段都调不起，页面表现为点"立即支付"没反应）
+            assertThat(HttpHelper.MAPPER.readTree(resp.getDataRaw()).path("js_api_parameters").isObject())
+                    .isTrue();
             // 直连 JSAPI：appid 用 OAuth 公众号（openid 同源），payer.openid 承载 openid
             assertThat(urlCaptor.getValue())
                     .isEqualTo("https://api.mch.weixin.qq.com/v3/pay/transactions/jsapi");

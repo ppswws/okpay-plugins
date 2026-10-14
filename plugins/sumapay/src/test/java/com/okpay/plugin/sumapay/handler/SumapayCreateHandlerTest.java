@@ -239,9 +239,10 @@ class SumapayCreateHandlerTest {
 
             assertThat(resp.getType()).isEqualTo("page");
             assertThat(resp.getPage()).isEqualTo("wxpay_jspay");
-            assertThat(new String(resp.getDataRaw(), StandardCharsets.UTF_8))
-                    .contains("js_api_parameters")
-                    .contains("wxMPAPP1");
+            // 模板把 data.js_api_parameters 直接喂 WeixinJSBridge.invoke：必须是对象（渠道回的是 JSON 串）
+            var params = HttpHelper.MAPPER.readTree(resp.getDataRaw()).path("js_api_parameters");
+            assertThat(params.isObject()).isTrue();
+            assertThat(params.path("appId").asString()).isEqualTo("wxMPAPP1");
         }
         // OAuth 身份经宿主落库风控（buyer + 黑名单）
         verify(cb).recordOAuthIdentity(any());

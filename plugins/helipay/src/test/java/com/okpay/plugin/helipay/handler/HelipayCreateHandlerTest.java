@@ -329,10 +329,10 @@ class HelipayCreateHandlerTest {
 
             assertThat(resp.getType()).isEqualTo("page");
             assertThat(resp.getPage()).isEqualTo("wxpay_jspay");
-            // 模板契约：wxpay_jspay 页读 paydata.js_api_parameters
-            assertThat(new String(resp.getDataRaw(), StandardCharsets.UTF_8))
-                    .contains("\"js_api_parameters\"")
-                    .contains("\"paySign\":\"PS1\"");
+            // 模板把 data.js_api_parameters 直接喂 WeixinJSBridge.invoke：必须是对象
+            var params = HttpHelper.MAPPER.readTree(resp.getDataRaw()).path("js_api_parameters");
+            assertThat(params.isObject()).isTrue();
+            assertThat(params.path("paySign").asString()).isEqualTo("PS1");
 
             mocked.verify(() -> HttpHelper.post(any(), anyString(), bodyCaptor.capture(), anyString()));
         }
@@ -345,6 +345,27 @@ class HelipayCreateHandlerTest {
                 .containsEntry("P11_appType", "WXPAY");
         // 兑换经 SDK 内部自动风控（落库 buyer + 黑名单）
         verify(ctx.getCallback()).recordOAuthIdentity(any());
+    }
+
+    @Test
+    @DisplayName("渠道 payInfo 不是合法 JSON → 归因渠道的 error 页（不冒泡成插件内部错误）")
+    void wxpayMpInvalidPayInfoAttributesToChannel() throws Exception {
+        var ctx = ctx(UA_WECHAT, "code=CODE2", false, cfgRaw("1", true, false, null));
+        when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.get(any(), anyString())).thenAnswer(inv ->
+                    new HttpHelper.HttpResponse(200, Map.of(),
+                            "{\"openid\":\"wxOPENID_MP1\"}".getBytes(StandardCharsets.UTF_8), "req", 10, 1));
+            stubFormApi(mocked, signedOk("AppPayPublic", Map.of(
+                    "rt5_orderId", "T1",
+                    "rt10_payInfo", "not-json")));
+
+            var resp = new HelipayCreateHandler().wxpay(ctx);
+
+            assertThat(resp.getType()).isEqualTo("error");
+            assertThat(resp.getMsg()).isEqualTo("渠道支付参数解析失败");
+        }
     }
 
     // =========================================================================

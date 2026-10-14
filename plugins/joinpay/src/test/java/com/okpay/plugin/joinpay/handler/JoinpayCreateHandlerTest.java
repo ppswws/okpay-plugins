@@ -112,6 +112,34 @@ class JoinpayCreateHandlerTest {
             // 回跳授权是 jump 响应——正是线上 302 死循环的形态
             assertThat(resp.getType()).isEqualTo("page");
             assertThat(String.valueOf(resp.getUrl())).doesNotContain("open.weixin.qq.com");
+            // 公众号建单返回 JSAPI 调起页：模板名 + js_api_parameters（渠道 rc_Result 解析后透传），
+            // 缺模板名宿主会渲染成 {"type":"page","data":""}，调起参数全丢
+            assertThat(resp.getPage()).isEqualTo("wxpay_jspay");
+            assertThat(new String(resp.getDataRaw(), StandardCharsets.UTF_8))
+                    .contains("js_api_parameters")
+                    .contains("wxMPAPP1");
+        }
+    }
+
+    @Test
+    @DisplayName("渠道业务拒绝（ra_Code≠100）→ 返回 error 页透传渠道原文，不抛异常（页面可直接展示）")
+    void channelBizRejectionReturnsErrorPage() throws Exception {
+        var ctx = ctx(UA_WECHAT, "code=WXCODE2&state=T1", false, cfgRaw("3"));
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.get(any(), any())).thenAnswer(inv ->
+                    new HttpHelper.HttpResponse(200, Map.of(),
+                            "{\"openid\":\"wxOPENID_1\"}".getBytes(StandardCharsets.UTF_8),
+                            "req", 10, 1));
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv ->
+                    signedPayResp("10080061", "交易渠道为空,交易商户无可用通道", ""));
+
+            var resp = new JoinpayCreateHandler().wxpay(ctx);
+
+            // 渠道拒绝是业务失败（BizFailException），必须还原成 error 页透出原文；
+            // 包成普通异常会被宿主按「插件内部错误」兜底，渠道文案只剩日志里有
+            assertThat(resp.getType()).isEqualTo("error");
+            assertThat(resp.getMsg()).isEqualTo("[10080061]交易渠道为空,交易商户无可用通道");
         }
     }
 
@@ -145,10 +173,16 @@ class JoinpayCreateHandlerTest {
             "ra_Code","rb_CodeMsg","rc_Result","rd_Pic");
 
     private static HttpHelper.HttpResponse signedPayResp(String rcResult) throws Exception {
+        return signedPayResp("100", "", rcResult);
+    }
+
+    private static HttpHelper.HttpResponse signedPayResp(String raCode, String rbCodeMsg,
+                                                         String rcResult) throws Exception {
         var m = new LinkedHashMap<String, String>();
         m.put("r0_Version", "2.6");
         m.put("r2_OrderNo", "T1");
-        m.put("ra_Code", "100");
+        m.put("ra_Code", raCode);
+        m.put("rb_CodeMsg", rbCodeMsg);
         m.put("rc_Result", rcResult);
         m.put("hmac", JoinpaySignUtil.sign(m, PAY_RESP_VERIFY, "JPKEY1"));
         return new HttpHelper.HttpResponse(200, Map.of(),

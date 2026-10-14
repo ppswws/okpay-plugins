@@ -204,8 +204,12 @@ public class SumapayCreateHandler {
         requireSuccess(m, resp);
         var payInfo = m.get("pay_info");
         if (payInfo == null || payInfo.isBlank()) throw new Sdk.BizFailException("渠道未返回支付参数", resp);
+        // 渠道回的是调起参数 JSON 串，模板直接喂 WeixinJSBridge.invoke 须为对象；解析不出归因渠道
+        final Object jsParams;
+        try { jsParams = HttpHelper.MAPPER.readValue(payInfo, Object.class); }
+        catch (Exception e) { throw new Sdk.BizFailException("渠道支付参数解析失败", resp); }
         return Sdk.FetchResult.of(Responses.respPageData("wxpay_jspay",
-                Map.of("js_api_parameters", payInfo)), resp);
+                Map.of("js_api_parameters", jsParams)), resp);
     }
 
     // =========================================================================

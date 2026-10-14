@@ -125,7 +125,8 @@ public class HelipayCreateHandler {
                         var resp = createOrder(ctx,
                                 publicParams(ctx, cfg, "wxpay", cfg.getMp().getAppid(), "1", openid),
                                 cfg.getAppkey());
-                        return jspayResult(resp, "公众号支付失败");
+                        return jspayResult(resp);
+                    } catch (RuntimeException e) { throw e;
                     } catch (Exception e) { throw new RuntimeException("公众号支付失败[" + e.getMessage() + "]", e); }
                 }));
     }
@@ -153,16 +154,20 @@ public class HelipayCreateHandler {
                         var resp = createOrder(ctx,
                                 appletParams(ctx, cfg, "wxpay", cfg.getMini().getAppid(), "1", openid),
                                 cfg.getAppkey());
-                        return jspayResult(resp, "小程序支付失败");
+                        return jspayResult(resp);
+                    } catch (RuntimeException e) { throw e;
                     } catch (Exception e) { throw new RuntimeException("小程序支付失败[" + e.getMessage() + "]", e); }
                 }));
     }
 
-    /** JSAPI 调起参数：渠道返回的 payInfo 是 JSON 字符串，原样作为 wxpay_jspay 页载荷 */
-    private static Sdk.FetchResult jspayResult(HttpHelper.HttpResponse resp, String failPrefix) throws Exception {
+    /** JSAPI 调起页：渠道 payInfo 是调起参数 JSON 串，解析成对象后按 wxpay_jspay + js_api_parameters 下发 */
+    private static Sdk.FetchResult jspayResult(HttpHelper.HttpResponse resp) throws Exception {
         var payInfo = payInfoOf(resp);
         if (payInfo.isBlank()) throw new Sdk.BizFailException("下单成功但未返回支付参数", resp);
-        var jsParams = HttpHelper.MAPPER.readValue(payInfo, Object.class);
+        // 模板直接喂 WeixinJSBridge.invoke 须为对象；解析不出归因渠道（不冒泡成插件内部错误）
+        final Object jsParams;
+        try { jsParams = HttpHelper.MAPPER.readValue(payInfo, Object.class); }
+        catch (Exception e) { throw new Sdk.BizFailException("渠道支付参数解析失败", resp); }
         return Sdk.FetchResult.of(Responses.respPageData("wxpay_jspay",
                 Map.of("js_api_parameters", jsParams)), resp);
     }
