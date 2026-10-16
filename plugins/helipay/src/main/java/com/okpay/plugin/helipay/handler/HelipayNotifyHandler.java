@@ -1,5 +1,6 @@
 package com.okpay.plugin.helipay.handler;
 
+import com.okpay.plugin.enums.BizType;
 import static com.okpay.plugin.sdk.PaymentUtils.toCents;
 
 import com.okpay.plugin.helipay.util.*;
@@ -30,20 +31,20 @@ public class HelipayNotifyHandler {
         var params = parseNotifyBody(ctx);
         if (params.isEmpty() || !requiredOrderNotify(params)
                 || !HelipaySignUtil.verifyNotify(params, cfg.getAppkey()))
-            return Responses.notifyFail(ctx, "fail");
+            return Responses.notifyFail("fail", BizType.T_PAY);
         if (!"SUCCESS".equals(params.get("rt4_status")))
-            return Responses.notifyFail(ctx, "fail");
+            return Responses.notifyFail("fail", BizType.T_PAY);
         // 契约：notify 回调实体恒非空（PluginPageService.dispatch 无单据即 404）
         var order = ctx.getOrder();
         if (!order.getTradeNo().equals(params.get("rt2_orderId")))
-            return Responses.notifyFail(ctx, "fail");
+            return Responses.notifyFail("fail", BizType.T_PAY);
         if (order.getReal() != toCents(params.getOrDefault("rt5_orderAmount", "0")))
-            return Responses.notifyFail(ctx, "amount_mismatch");
+            return Responses.notifyFail("amount_mismatch", BizType.T_PAY);
         try {
             Sdk.completeOrderOk(ctx, order.getTradeNo(),
                     params.get("rt3_systemSerial"), params.get("rt10_openId"));
-        } catch (Exception e) { log.error("完成订单失败", e); return Responses.notifyFail(ctx, "fail"); }
-        return Responses.notifyOk(ctx, "success");
+        } catch (Exception e) { log.error("完成订单失败", e); return Responses.notifyFail("fail", BizType.T_PAY); }
+        return Responses.notifyOk("success", BizType.T_PAY);
     }
 
     // =========================================================================
@@ -55,12 +56,12 @@ public class HelipayNotifyHandler {
         var params = parseNotifyBody(ctx);
         if (params.isEmpty() || !requiredRefundNotify(params)
                 || !HelipaySignUtil.verifyNotify(params, cfg.getAppkey()))
-            return Responses.notifyFail(ctx, "fail");
+            return Responses.notifyFail("fail", BizType.T_REF);
         var refund = ctx.getRefund();
         if (!refund.getRefundNo().equals(params.get("rt3_refundOrderId")))
-            return Responses.notifyFail(ctx, "refund_mismatch");
+            return Responses.notifyFail("refund_mismatch", BizType.T_REF);
         if (notBlank(params.get("rt6_amount")) && refund.getAmount() != toCents(params.get("rt6_amount")))
-            return Responses.notifyFail(ctx, "amount_mismatch");
+            return Responses.notifyFail("amount_mismatch", BizType.T_REF);
         var status = upper(params.get("rt5_status"));
         try {
             switch (status) {
@@ -68,8 +69,8 @@ public class HelipayNotifyHandler {
                 case "FAIL", "CLOSE" -> Sdk.completeRefundFail(ctx, refund.getRefundNo(), params.get("rt5_status"), null);
                 default -> Sdk.completeRefundIng(ctx, refund.getRefundNo(), params.get("rt4_systemSerial"), params.get("rt5_status"), null);
             }
-        } catch (Exception e) { log.error("完成退款失败", e); return Responses.notifyFail(ctx, "fail"); }
-        return Responses.notifyOk(ctx, "success");
+        } catch (Exception e) { log.error("完成退款失败", e); return Responses.notifyFail("fail", BizType.T_REF); }
+        return Responses.notifyOk("success", BizType.T_REF);
     }
 
     // =========================================================================
@@ -81,7 +82,7 @@ public class HelipayNotifyHandler {
         var params = parseNotifyBody(ctx);
         if (params.isEmpty() || !requiredTransferNotify(params)
                 || !HelipaySignUtil.verifyNotify(params, cfg.getAppkey()))
-            return Responses.notifyFail(ctx, "fail");
+            return Responses.notifyFail("fail", BizType.T_XFER);
         var transfer = ctx.getTransfer();
         var status = upper(params.get("rt7_orderStatus"));
         try {
@@ -95,10 +96,12 @@ public class HelipayNotifyHandler {
                 default -> { /* 未知状态不推进，交由查询轮询 */ }
             }
         } catch (Exception e) {
-            // 打款完成推进失败仍应答 success：打款结果由查询轮询收敛，重试通知无意义
+            // 推进失败交还渠道重发（与 joinpay 打款通知同形态）：渠道重发触发同一状态机重试，
+            // 查询轮询仍为兜底——双保险优于单靠轮询
             log.error("完成打款失败", e);
+            return Responses.notifyFail("fail", BizType.T_XFER);
         }
-        return Responses.notifyOk(ctx, "success");
+        return Responses.notifyOk("success", BizType.T_XFER);
     }
 
     // =========================================================================

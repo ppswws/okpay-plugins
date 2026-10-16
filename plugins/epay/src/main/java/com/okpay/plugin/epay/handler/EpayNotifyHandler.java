@@ -2,6 +2,7 @@ package com.okpay.plugin.epay.handler;
 
 import static com.okpay.plugin.sdk.PaymentUtils.toCents;
 
+import com.okpay.plugin.enums.BizType;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.*;
 import com.okpay.plugin.epay.util.*;
@@ -25,27 +26,27 @@ public class EpayNotifyHandler {
         var cfg = EpayConfig.from(ctx);
         var params = parseNotifyParams(ctx);
         if (params.isEmpty() || !EpaySignUtil.verify(params, cfg.getAppkey()))
-            return Responses.notifyFail(ctx, params.isEmpty() ? "invalid_notify_params" : "sign_error");
+            return Responses.notifyFail(params.isEmpty() ? "invalid_notify_params" : "sign_error", BizType.T_PAY);
         if (!"TRADE_SUCCESS".equals(params.get("trade_status")))
-            return Responses.notifyFail(ctx, "trade_status_invalid");
+            return Responses.notifyFail("trade_status_invalid", BizType.T_PAY);
         if (!order.getTradeNo().equals(params.get("out_trade_no")))
-            return Responses.notifyFail(ctx, "order_mismatch");
+            return Responses.notifyFail("order_mismatch", BizType.T_PAY);
         if (order.getReal() != toCents(params.getOrDefault("money", "0")))
-            return Responses.notifyFail(ctx, "amount_mismatch");
+            return Responses.notifyFail("amount_mismatch", BizType.T_PAY);
 
         // 服务器二次确认（复用 QueryHandler）
         var qr = EpayQueryHandler.queryRaw(ctx, order.getTradeNo()).body();
         if (!"1".equals(qr.get("code")) || !"1".equals(qr.get("status")))
-            return Responses.notifyFail(ctx, "query_unpaid");
+            return Responses.notifyFail("query_unpaid", BizType.T_PAY);
 
         try {
             Sdk.completeOrderOk(ctx, order.getTradeNo(),
                     params.get("trade_no"), params.get("buyer"));
         } catch (Exception e) {
             log.error("易支付完成订单失败, tradeNo={}", order.getTradeNo(), e);
-            return Responses.notifyFail(ctx, "complete_error");
+            return Responses.notifyFail("complete_error", BizType.T_PAY);
         }
-        return Responses.notifyOk(ctx, "success");
+        return Responses.notifyOk("success", BizType.T_PAY);
     }
 
     private Map<String, String> parseNotifyParams(InvokeContext ctx) {

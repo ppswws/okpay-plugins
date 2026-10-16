@@ -210,7 +210,7 @@ class AlipayTransferHandlerTest {
     void bankcardTransferRequiresName() throws Exception {
         var xfer = TransferSnapshot.builder()
                 .tradeNo(XFER_NO).type("bank").cardNo("6225880000001234")
-                .amount(500000).build();
+                .accountType("private").amount(500000).build();
         var ctx = ctx(xfer, null);
 
         var result = new AlipaySubmitHandler().handle(ctx,
@@ -225,9 +225,9 @@ class AlipayTransferHandlerTest {
     // =========================================================================
 
     @Test
-    @DisplayName("银行卡转账（对私默认）：TRANS_BANKCARD_NO_PWD + BANK_CARD_NO + account_type=2，无 business_params")
+    @DisplayName("银行卡转账（对私）：TRANS_BANKCARD_NO_PWD + BANK_CARD_NO + account_type=2，无 business_params")
     void bankcardTransferPrivateDefault() throws Exception {
-        var ctx = ctx(transfer("bank", null), null);
+        var ctx = ctx(transfer("bank", "private"), null);
 
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             var bodyCaptor = ArgumentCaptor.forClass(String.class);
@@ -254,6 +254,22 @@ class AlipayTransferHandlerTest {
             var bankcard = mapOf(payee, "bankcard_ext_info");
             assertThat(bankcard).containsEntry("account_type", "2");
         }
+    }
+
+    @Test
+    @DisplayName("银行卡转账账户类型缺失或未知 → 显式拒绝（S_FAIL，不静默默认对私）")
+    void bankcardTransferRejectsUnknownAccountType() throws Exception {
+        var missing = ctx(transfer("bank", null), null);
+        var missingResult = new AlipaySubmitHandler().handle(missing,
+                BizRequest.builder().bizType(BizType.T_XFER).bizNo(XFER_NO).build());
+        assertThat(missingResult.getState()).isEqualTo(BizState.S_FAIL);
+        assertThat(missingResult.getMsg()).contains("未知打款账户类型");
+
+        var unknown = ctx(transfer("bank", "corp"), null);
+        var unknownResult = new AlipaySubmitHandler().handle(unknown,
+                BizRequest.builder().bizType(BizType.T_XFER).bizNo(XFER_NO).build());
+        assertThat(unknownResult.getState()).isEqualTo(BizState.S_FAIL);
+        assertThat(unknownResult.getMsg()).contains("未知打款账户类型");
     }
 
     @Test
@@ -320,7 +336,7 @@ class AlipayTransferHandlerTest {
         cfg.put("transfer_alipay_scene_name", "转账汇款");
         cfg.put("transfer_alipay_info_type", "t1");
         cfg.put("transfer_alipay_info_content", "c1");
-        var ctx = ctx(transfer("bank", null), cfg);
+        var ctx = ctx(transfer("bank", "private"), cfg);
 
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             var bodyCaptor = ArgumentCaptor.forClass(String.class);
@@ -367,7 +383,7 @@ class AlipayTransferHandlerTest {
     @Test
     @DisplayName("转账查询：银行卡 → product_code=TRANS_BANKCARD_NO_PWD")
     void queryTransferBankcardProductCode() throws Exception {
-        var ctx = ctx(transfer("bank", null), null);
+        var ctx = ctx(transfer("bank", "private"), null);
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             var bodyCaptor = ArgumentCaptor.forClass(String.class);
             mocked.when(() -> HttpHelper.post(any(), any(), bodyCaptor.capture(), any()))

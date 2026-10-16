@@ -2,6 +2,8 @@ package com.okpay.plugin.alipay.handler;
 
 import static com.okpay.plugin.sdk.PaymentUtils.toYuan;
 
+import com.okpay.plugin.sdk.PaymentUtils;
+
 import com.okpay.plugin.enums.*;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.*;
@@ -118,6 +120,16 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
     private com.okpay.plugin.model.BizResult submitTransfer(InvokeContext ctx, BizRequest req) {
         // 契约：T_XFER submit 时内核恒填 transfer，缺失即宿主缺陷——不再判空兜底
         var transfer = ctx.getTransfer();
+        // 银行卡打款的账户类型是本地参数契约（PaymentUtils 单点判定）：前置校验并转 S_FAIL，
+        // 不与渠道请求同处 try——参数错误不能落入「状态未知 → S_ING」的 catch
+        String bankAccountType = null;
+        if ("bank".equals(transfer.getType())) {
+            try {
+                bankAccountType = PaymentUtils.isPublicAccount(transfer.getAccountType()) ? "1" : "2";
+            } catch (IllegalArgumentException e) {
+                return Responses.fail("PARAM_ERROR", e.getMessage());
+            }
+        }
         try {
             var cfg = AlipayConfig.from(ctx);
             var biz = new LinkedHashMap<String, Object>();
@@ -134,8 +146,7 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
                 biz.put("product_code", "TRANS_BANKCARD_NO_PWD");
                 payee.put("identity_type", "BANKCARD_ACCOUNT");
                 payee.put("identity", transfer.getCardNo() != null ? transfer.getCardNo() : "");
-                payee.put("bankcard_ext_info", Map.of("account_type",
-                        "public".equals(transfer.getAccountType()) ? "1" : "2"));
+                payee.put("bankcard_ext_info", Map.of("account_type", bankAccountType));
                 // 银行卡打款必须校验收款人姓名（cardNo 与姓名不符时上游拒绝打款）
                 if (isBlank(transfer.getCardName()))
                     return Responses.fail("PARAM_ERROR", "银行卡打款必须填写收款人姓名");

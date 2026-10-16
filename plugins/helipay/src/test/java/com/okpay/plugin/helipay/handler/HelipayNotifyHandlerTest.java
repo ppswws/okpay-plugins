@@ -28,7 +28,7 @@ import static org.mockito.Mockito.verify;
 
 /**
  * HelipayNotifyHandler 三类通知（支付/退款/打款）：验签与必填缺失 → fail、金额/单号不匹配按语义应答；
- * 打款完成推进失败仍应答 success（结果由查询轮询收敛）。未知单号由宿主拦截（实体缺失即 404，不进插件），
+ * 打款完成推进失败 → fail 交还渠道重发（与 joinpay 同形态，查询轮询仍为兜底）。未知单号由宿主拦截（实体缺失即 404，不进插件），
  * 本层不做判空。
  */
 @DisplayName("HelipayNotifyHandler 通知应答")
@@ -261,8 +261,8 @@ class HelipayNotifyHandlerTest {
     }
 
     @Test
-    @DisplayName("打款完成推进抛异常 → 仍应答 success（打款结果由查询轮询收敛，重试通知无意义）")
-    void transferNotifyCompleteFailureStillSuccess() {
+    @DisplayName("打款完成推进抛异常 → fail 交还渠道重发（与 joinpay 同形态；查询轮询仍为兜底）")
+    void transferNotifyCompleteFailureAcksFail() {
         var params = transferNotify("SUCCESS", "T1", "SN1");
         var cb = mock(HostCallback.class);
         org.mockito.Mockito.doThrow(new RuntimeException("db down")).when(cb).completeBiz(any());
@@ -270,7 +270,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().transferNotify(
                 notifyCtx(cb, transferNotifyBody(params), null, 0L, null, null, "T1"));
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(resp.getDataText()).isEqualTo("fail");
     }
 
     // =========================================================================

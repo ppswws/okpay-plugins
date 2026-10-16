@@ -1,6 +1,7 @@
 package com.okpay.plugin.wxpay.handler;
 
 import tools.jackson.databind.JsonNode;
+import com.okpay.plugin.enums.BizType;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.*;
 import com.okpay.plugin.wxpay.util.WxpayConfig;
@@ -25,13 +26,13 @@ public class WxpayNotifyHandler {
     // =========================================================================
 
     /** 应答成功：HTTP 200 + SUCCESS JSON（微信据此停止重试） */
-    private static PageResponse ackOk(InvokeContext ctx) {
-        return Responses.notifyOk(ctx, "{\"code\":\"SUCCESS\"}");
+    private static PageResponse ackOk(BizType bizType) {
+        return Responses.notifyOk("{\"code\":\"SUCCESS\"}", bizType);
     }
 
     /** 应答失败：HTTP 400 + FAIL JSON（微信据此按计划重试） */
-    private static PageResponse ackFail(InvokeContext ctx, String reason) {
-        return Responses.notifyFail(ctx, "{\"code\":\"FAIL\",\"message\":\"" + reason + "\"}");
+    private static PageResponse ackFail(String reason, BizType bizType) {
+        return Responses.notifyFail("{\"code\":\"FAIL\",\"message\":\"" + reason + "\"}", bizType);
     }
 
     /** 支付通知（APIv3） */
@@ -46,12 +47,12 @@ public class WxpayNotifyHandler {
 
             // 合单通知：顶层 combine_out_trade_no 判定（fail-closed：子单数/状态/金额任一不符拒收等重发）
             if (result.path("combine_out_trade_no").asString(null) != null) {
-                return handleCombineNotify(ctx, cfg, order, result);
+                return handleCombineNotify(ctx, cfg, order, BizType.T_PAY, result);
             }
 
             // 校验 out_trade_no 与订单一致
             if (!order.getTradeNo().equals(result.path("out_trade_no").asString(null))) {
-                return ackFail(ctx, "order_mismatch");
+                return ackFail("order_mismatch", BizType.T_PAY);
             }
 
             var tradeState = result.path("trade_state").asString("");
@@ -63,13 +64,13 @@ public class WxpayNotifyHandler {
                         || "PAYERROR".equals(tradeState)) {
                     Sdk.completeOrderFail(ctx, order.getTradeNo(), tradeState, tradeState);
                 }
-                return ackOk(ctx);
+                return ackOk(BizType.T_PAY);
             }
 
             // 校验金额（fail-closed：无金额或金额不匹配一律拒绝）
             var total = result.path("amount").path("total").asInt(-1);
             if (total < 0 || order.getReal() != (long) total) {
-                return ackFail(ctx, "amount_mismatch");
+                return ackFail("amount_mismatch", BizType.T_PAY);
             }
 
             // 微信官方通知，验签通过即可推进，无需二次查单。
@@ -82,14 +83,14 @@ public class WxpayNotifyHandler {
                         result.path("transaction_id").asString(null), buyer);
             } catch (Exception e) {
                 log.error("微信支付完成订单失败, tradeNo={}", order.getTradeNo(), e);
-                return ackFail(ctx, "complete_error");
+                return ackFail("complete_error", BizType.T_PAY);
             }
 
-            return ackOk(ctx);
+            return ackOk(BizType.T_PAY);
 
         } catch (Exception e) {
             log.error("微信支付通知处理失败, tradeNo={}", order.getTradeNo(), e);
-            return ackFail(ctx, "notify_error");
+            return ackFail("notify_error", BizType.T_PAY);
         }
     }
 
@@ -115,13 +116,13 @@ public class WxpayNotifyHandler {
                     log.debug("合单退款子单通知非成功, refundNo={}, refundStatus={}, 由查单续退兜底",
                             refund.getRefundNo(), refundStatus);
                 }
-                return ackOk(ctx);
+                return ackOk(BizType.T_REF);
             }
             if (subs.isEmpty()) {
                 // 单笔退款通知
                 Sdk.completeRefundOk(ctx, refund.getRefundNo(),
                         result.path("transaction_id").asString(null));
-                return ackOk(ctx);
+                return ackOk(BizType.T_REF);
             }
             // 合单退款通知：out_refund_no = refundNo_序号 → 累计对应子单（通知重发 → 超限=已累计，幂等）
             var outRefundNo = result.path("out_refund_no").asString("");
@@ -153,10 +154,10 @@ public class WxpayNotifyHandler {
         } catch (Exception e) {
             // 与支付通知对称：处理失败（验签/解密/落库异常）回 FAIL 让微信重发，不吞异常假确认
             log.error("微信退款通知处理失败, refundNo={}", refund.getRefundNo(), e);
-            return ackFail(ctx, "notify_error");
+            return ackFail("notify_error", BizType.T_REF);
         }
 
-        return ackOk(ctx);
+        return ackOk(BizType.T_REF);
     }
 
     // =========================================================================
@@ -165,16 +166,17 @@ public class WxpayNotifyHandler {
 
     /** 合单支付通知：子单数一致 + 全部 SUCCESS + 逐单金额一致 + 合计==实付，全部通过才推进 */
     private PageResponse handleCombineNotify(InvokeContext ctx, WxpayConfig cfg, OrderSnapshot order,
+                                           BizType bizType,
                                              JsonNode result) {
         if (!order.getTradeNo().equals(result.path("combine_out_trade_no").asString(null))) {
-            return ackFail(ctx, "order_mismatch");
+            return ackFail("order_mismatch", bizType);
         }
         var subs = Sdk.getSubOrders(ctx, order.getTradeNo());
         var subArray = result.path("sub_orders");
         if (subs.isEmpty() || !subArray.isArray() || subArray.size() != subs.size()) {
             log.debug("合单通知子单数量不符, tradeNo={}, notify={}, db={}",
                     order.getTradeNo(), subArray.isArray() ? subArray.size() : -1, subs.size());
-            return ackFail(ctx, "amount_mismatch");
+            return ackFail("amount_mismatch", bizType);
         }
         long total = 0;
         String firstApi = null;
@@ -183,32 +185,32 @@ public class WxpayNotifyHandler {
         for (var item : subArray) {
             var subNo = item.path("out_trade_no").asString(null);
             if (subNo == null || subNo.isBlank() || bySubNo.putIfAbsent(subNo, item) != null) {
-                return ackFail(ctx, "amount_mismatch");
+                return ackFail("amount_mismatch", bizType);
             }
         }
         for (var sub : subs) {
             var item = bySubNo.get(sub.getSubTradeNo());
             if (item == null) {
                 log.debug("合单通知缺少子单, tradeNo={}, sub={}", order.getTradeNo(), sub.getSubTradeNo());
-                return ackFail(ctx, "amount_mismatch");
+                return ackFail("amount_mismatch", bizType);
             }
             if (!"SUCCESS".equals(item.path("trade_state").asString(""))) {
                 log.debug("合单通知子单未成功, tradeNo={}, sub={}, state={}",
                         order.getTradeNo(), sub.getSubTradeNo(),
                         item.path("trade_state").asString(null));
-                return ackFail(ctx, "amount_mismatch");
+                return ackFail("amount_mismatch", bizType);
             }
             var amount = item.path("amount").path("total_amount").asLong(-1);
             if (amount < 0 || amount != sub.getMoney()) {
                 log.debug("合单通知子单金额不符, tradeNo={}, sub={}, notify={}, db={}",
                         order.getTradeNo(), sub.getSubTradeNo(), amount, sub.getMoney());
-                return ackFail(ctx, "amount_mismatch");
+                return ackFail("amount_mismatch", bizType);
             }
             total += amount;
         }
         if (total != order.getReal()) {
             log.debug("合单通知合计金额不符, tradeNo={}, notify={}, real={}", order.getTradeNo(), total, order.getReal());
-            return ackFail(ctx, "amount_mismatch");
+            return ackFail("amount_mismatch", bizType);
         }
         // 全部校验通过：逐子单已付标记（apiTradeNo 已有值不覆盖，通知重发幂等）+ 主单完成
         for (var sub : subs) {
@@ -227,9 +229,9 @@ public class WxpayNotifyHandler {
             Sdk.completeOrderOk(ctx, order.getTradeNo(), firstApi, buyer);
         } catch (Exception e) {
             log.error("微信合单完成订单失败, tradeNo={}", order.getTradeNo(), e);
-            return ackFail(ctx, "complete_error");
+            return ackFail("complete_error", bizType);
         }
-        return ackOk(ctx);
+        return ackOk(bizType);
     }
 
     // =========================================================================

@@ -5,7 +5,8 @@ import static com.okpay.plugin.sdk.PaymentUtils.*;
 import com.okpay.plugin.helipay.util.*;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.*;
-import org.slf4j.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.net.*;
@@ -66,7 +67,7 @@ public class HelipayCreateHandler {
             if (HttpHelper.isMobile(ua)) {
                 return Sdk.lockCreate(ctx, () -> {
                     var resp = createOrder(ctx, wapParams(ctx, cfg, "wxpay"), cfg.getAppkey());
-                    var payInfo = reverseToOpenlink(ctx, payInfoOf(resp));
+                    var payInfo = reverseToOpenlink(ctx, payInfoOf(resp, "rt8_payInfo"));
                     // 逆向失败时 payInfo 仍是 h5pay 域名完整支付页，可直接跳转；
                     // 逆向成功则是 openlink，走 wxpay_h5 页拉起支付
                     var page = payInfo.contains(H5_PAY_HOST)
@@ -162,7 +163,7 @@ public class HelipayCreateHandler {
 
     /** JSAPI 调起页：渠道 payInfo 是调起参数 JSON 串，解析成对象后按 wxpay_jspay + js_api_parameters 下发 */
     private static Sdk.FetchResult jspayResult(HttpHelper.HttpResponse resp) throws Exception {
-        var payInfo = payInfoOf(resp);
+        var payInfo = payInfoOf(resp, "rt8_payInfo");
         if (payInfo.isBlank()) throw new Sdk.BizFailException("下单成功但未返回支付参数", resp);
         // 模板直接喂 WeixinJSBridge.invoke 须为对象；解析不出归因渠道（不冒泡成插件内部错误）
         final Object jsParams;
@@ -180,26 +181,26 @@ public class HelipayCreateHandler {
     private Sdk.FetchResult publicOrder(InvokeContext ctx, HelipayConfig cfg, String payType) throws Exception {
         var resp = createOrder(ctx, publicParams(ctx, cfg, payType, "1", "0", "1"), cfg.getAppkey());
         var page = "bank".equals(payType) ? "bank_qrcode" : "alipay_qrcode";
-        return Sdk.FetchResult.of(Responses.respPageURL(page, payInfoOf(resp)), resp);
+        return Sdk.FetchResult.of(Responses.respPageURL(page, payInfoOf(resp, "rt8_payInfo")), resp);
     }
 
     /** 小程序下单（微信专属；支付宝侧小程序也走此预下单但产物是二维码链接） */
     private Sdk.FetchResult appletOrder(InvokeContext ctx, HelipayConfig cfg, String payType) throws Exception {
         var resp = createOrder(ctx, appletParams(ctx, cfg, payType, "1", "0", "1"), cfg.getAppkey());
-        return Sdk.FetchResult.of(Responses.respPageURL("alipay_qrcode", payInfoOf(resp)), resp);
+        return Sdk.FetchResult.of(Responses.respPageURL("alipay_qrcode", payInfoOf(resp, "rt10_payInfo")), resp);
     }
 
     /** 扫码下单（支付宝/微信共用，二维码页按支付方式区分） */
     private Sdk.FetchResult scanOrder(InvokeContext ctx, HelipayConfig cfg, String payType) throws Exception {
         var resp = createOrder(ctx, scanParams(ctx, cfg, payType), cfg.getAppkey());
         var page = "wxpay".equals(payType) ? "wxpay_qrcode" : "alipay_qrcode";
-        return Sdk.FetchResult.of(Responses.respPageURL(page, payInfoOf(resp)), resp);
+        return Sdk.FetchResult.of(Responses.respPageURL(page, payInfoOf(resp, "rt8_qrcode")), resp);
     }
 
     /** H5 下单（支付宝：直接跳转支付链接；微信走调用方内联分支） */
     private Sdk.FetchResult wapOrder(InvokeContext ctx, HelipayConfig cfg, String payType) throws Exception {
         var resp = createOrder(ctx, wapParams(ctx, cfg, payType), cfg.getAppkey());
-        return Sdk.FetchResult.of(Responses.respJump(payInfoOf(resp)), resp);
+        return Sdk.FetchResult.of(Responses.respJump(payInfoOf(resp, "rt9_wapurl")), resp);
     }
 
     // =========================================================================
@@ -315,11 +316,21 @@ public class HelipayCreateHandler {
         return resp;
     }
 
-    /** 支付地址提取：扫码 rt8_qrcode / 公众号 rt8_payInfo / 小程序 rt10_payInfo / H5 rt9_wapurl */
-    private static String payInfoOf(HttpHelper.HttpResponse resp) {
+    /**
+     * 支付地址提取：字段位由调用场景声明（扫码 rt8_qrcode / 公众号 rt8_payInfo / 小程序 rt10_payInfo /
+     * H5 rt9_wapurl），不再按「第一个非空」猜字段——后者在渠道同时返回多值时会把用户导向错误入口。
+     * 声明位为空时按其余候选回退，并告警（渠道字段位变化需要暴露，不静默吞掉）。
+     */
+    private static String payInfoOf(HttpHelper.HttpResponse resp, String expectedField) {
         var respMap = PaymentUtils.parseJsonMap(resp.bodyAsString());
-        return firstNotEmpty(respMap.get("rt8_qrcode"), respMap.get("rt8_payInfo"),
+        var value = respMap.get(expectedField);
+        if (value != null && !value.isBlank()) return value;
+        var fallback = firstNotEmpty(respMap.get("rt8_qrcode"), respMap.get("rt8_payInfo"),
                 respMap.get("rt10_payInfo"), respMap.get("rt9_wapurl"));
+        if (!fallback.isBlank())
+            log.warn("Helipay 支付地址字段位与预期不符, expected={}, fallback命中, bizType={}",
+                    expectedField, respMap.get("rt1_bizType"));
+        return fallback;
     }
 
     // =========================================================================

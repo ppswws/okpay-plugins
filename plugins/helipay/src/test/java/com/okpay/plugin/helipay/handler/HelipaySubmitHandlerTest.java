@@ -249,7 +249,22 @@ class HelipaySubmitHandlerTest {
     }
 
     private InvokeContext transferCtx(String bankCode, String cardNo, String cardName, String cnapsNo) {
-        return transferCtx(bankCode, cardNo, cardName, cnapsNo, null);
+        // accountType 为必填契约（host 校验 + 插件单点判定双重把关），默认对私
+        return transferCtx(bankCode, cardNo, cardName, cnapsNo, "private");
+    }
+
+    @Test
+    @DisplayName("打款账户类型缺失或未知 → 显式拒绝 S_FAIL（不静默默认对私）")
+    void transferRejectsUnknownAccountType() throws Exception {
+        var missing = transferCtx("ABC", "6222021234567890", "张三", null, null);
+        var missingResult = new HelipaySubmitHandler().handle(missing, req(BizType.T_XFER));
+        assertThat(missingResult.getState()).isEqualTo(BizState.S_FAIL);
+        assertThat(missingResult.getMsg()).contains("未知打款账户类型");
+
+        var unknown = transferCtx("ABC", "6222021234567890", "张三", null, "corp");
+        var unknownResult = new HelipaySubmitHandler().handle(unknown, req(BizType.T_XFER));
+        assertThat(unknownResult.getState()).isEqualTo(BizState.S_FAIL);
+        assertThat(unknownResult.getMsg()).contains("未知打款账户类型");
     }
 
     private InvokeContext transferCtx(String bankCode, String cardNo, String cardName, String cnapsNo,

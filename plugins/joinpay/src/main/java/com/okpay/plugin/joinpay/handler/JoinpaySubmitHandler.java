@@ -98,8 +98,8 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
         // 契约：T_XFER submit 时内核恒填 transfer（tradeNo 恒非空），缺失即宿主缺陷——不再判空兜底
         var transfer = ctx.getTransfer();
         var cfg = JoinpayConfig.from(ctx);
-        // 平台语义 private 对私 / public 对公 → JOINPAY 代付 receiverAccountType：201 对私 / 204 对公
-        var accountType = "public".equals(transfer.getAccountType()) ? "204" : "201";
+                // 未知账户类型显式拒绝（PaymentUtils 单点判定）；平台语义 private 对私 / public 对公 → JOINPAY 201/204
+        var accountType = com.okpay.plugin.sdk.PaymentUtils.isPublicAccount(transfer.getAccountType()) ? "204" : "201";
         // 对公代付必须提供联行号（receiverBankChannelNo）
         if ("204".equals(accountType) && (transfer.getCnapsNo() == null || transfer.getCnapsNo().isBlank()))
             return fail("对公打款必须提供联行号");

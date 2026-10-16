@@ -78,8 +78,15 @@ public class HelipaySubmitHandler extends AbstractBizHandler {
         params.put("P5_bankCode", transfer.getBankCode());
         params.put("P6_bankAccountNo", transfer.getCardNo() != null ? transfer.getCardNo() : "");
         params.put("P7_bankAccountName", transfer.getCardName() != null ? transfer.getCardName() : "");
-        // 对公/对私决定业务类型：B2B 对公（联行号必填）、B2C 对私（联行号可选携带）
-        var isPublic = "public".equals(transfer.getAccountType());
+        // 对公/对私决定业务类型：B2B 对公（联行号必填）、B2C 对私（联行号可选携带）。
+        // 未知账户类型显式拒绝并转 S_FAIL（PaymentUtils 单点判定），不静默默认对私；
+        // 参数契约错误不回吐为内部异常，与本方法其余前置校验（缺少银行编码）同形态
+        final boolean isPublic;
+        try {
+            isPublic = com.okpay.plugin.sdk.PaymentUtils.isPublicAccount(transfer.getAccountType());
+        } catch (IllegalArgumentException e) {
+            return fail(e.getMessage());
+        }
         var cnapsNo = transfer.getCnapsNo() != null ? transfer.getCnapsNo() : "";
         if (isPublic && cnapsNo.isBlank())
             return fail("对公打款须填写联行号");

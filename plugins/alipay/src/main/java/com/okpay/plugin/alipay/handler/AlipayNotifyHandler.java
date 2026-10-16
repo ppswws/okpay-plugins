@@ -1,5 +1,6 @@
 package com.okpay.plugin.alipay.handler;
 
+import com.okpay.plugin.enums.BizType;
 import static com.okpay.plugin.sdk.PaymentUtils.toCents;
 
 import tools.jackson.databind.JsonNode;
@@ -27,23 +28,23 @@ public class AlipayNotifyHandler {
         var order = ctx.getOrder();
         var cfg = AlipayConfig.from(ctx);
         var params = parseNotifyParams(ctx);
-        if (params.isEmpty()) return Responses.notifyFail(ctx, "invalid_params");
+        if (params.isEmpty()) return Responses.notifyFail("invalid_params", BizType.T_PAY);
 
         try {
             // RSA2 验签（AlipayOpenApiClient 内置，对照官方 rsaCheckV1）
             if (!cfg.client().verifyNotify(params)) {
                 log.debug("支付宝通知验签失败, tradeNo={}", order.getTradeNo());
-                return Responses.notifyFail(ctx, "sign_error");
+                return Responses.notifyFail("sign_error", BizType.T_PAY);
             }
 
             // app_id 校验
             if (!cfg.getAppId().equals(params.get("app_id"))) {
-                return Responses.notifyFail(ctx, "app_mismatch");
+                return Responses.notifyFail("app_mismatch", BizType.T_PAY);
             }
 
             // 商户订单号交叉校验（fail-closed）：验签通过仅证明来自支付宝，不保证回调就是这笔本地订单
             if (!order.getTradeNo().equals(params.get("out_trade_no"))) {
-                return Responses.notifyFail(ctx, "order_mismatch");
+                return Responses.notifyFail("order_mismatch", BizType.T_PAY);
             }
 
             // 合单支付通知（直付通 merge 协议）：merge_pay_status 判定，order_detail_results 参与 RSA2 签名
@@ -58,13 +59,13 @@ public class AlipayNotifyHandler {
                 if ("TRADE_CLOSED".equals(tradeStatus)) {
                     Sdk.completeOrderFail(ctx, order.getTradeNo(), tradeStatus, tradeStatus);
                 }
-                return Responses.notifyOk(ctx, "success");
+                return Responses.notifyOk("success", BizType.T_PAY);
             }
 
             // 校验金额（fail-closed）
             var notifyAmount = params.get("total_amount");
             if (notifyAmount == null || order.getReal() != toCents(notifyAmount)) {
-                return Responses.notifyFail(ctx, "amount_mismatch");
+                return Responses.notifyFail("amount_mismatch", BizType.T_PAY);
             }
 
             // 推进状态机
@@ -73,14 +74,14 @@ public class AlipayNotifyHandler {
                         params.get("trade_no"), buyerIdOf(params));
             } catch (Exception e) {
                 log.error("支付宝完成订单失败, tradeNo={}", order.getTradeNo(), e);
-                return Responses.notifyFail(ctx, "complete_error");
+                return Responses.notifyFail("complete_error", BizType.T_PAY);
             }
 
-            return Responses.notifyOk(ctx, "success");
+            return Responses.notifyOk("success", BizType.T_PAY);
 
         } catch (Exception e) {
             log.error("支付宝通知处理失败, tradeNo={}", order.getTradeNo(), e);
-            return Responses.notifyFail(ctx, "notify_error");
+            return Responses.notifyFail("notify_error", BizType.T_PAY);
         }
     }
 
@@ -90,24 +91,24 @@ public class AlipayNotifyHandler {
         var refund = ctx.getRefund();
         var cfg = AlipayConfig.from(ctx);
         var params = parseNotifyParams(ctx);
-        if (params.isEmpty()) return Responses.notifyFail(ctx, "invalid_refund_params");
+        if (params.isEmpty()) return Responses.notifyFail("invalid_refund_params", BizType.T_REF);
 
         try {
             if (!cfg.client().verifyNotify(params))
-                return Responses.notifyFail(ctx, "refund_sign_error");
+                return Responses.notifyFail("refund_sign_error", BizType.T_REF);
 
             var refundStatus = params.get("refund_status");
             if (!"REFUND_SUCCESS".equals(refundStatus)) {
                 log.debug("支付宝退款通知非成功, refundNo={}, status={}",
                         refund.getRefundNo(), refundStatus);
-                return Responses.notifyOk(ctx, "success");
+                return Responses.notifyOk("success", BizType.T_REF);
             }
             var tradeNo = refund.getTradeNo();
             var subs = Sdk.getSubOrders(ctx, tradeNo);
             if (subs.isEmpty()) {
                 // 单笔退款通知：REFUND_SUCCESS 即终态
                 Sdk.completeRefundOk(ctx, refund.getRefundNo(), params.get("trade_no"));
-                return Responses.notifyOk(ctx, "success");
+                return Responses.notifyOk("success", BizType.T_REF);
             }
             // 合单退款通知：out_request_no = refundNo_序号 → 累计对应子单（通知重发 → 超限=已累计，幂等）
             var idx = PaymentUtils.refundIdx(params.get("out_request_no"), refund.getRefundNo());
@@ -138,7 +139,7 @@ public class AlipayNotifyHandler {
             log.error("支付宝退款通知处理失败, refundNo={}", refund.getRefundNo(), e);
         }
 
-        return Responses.notifyOk(ctx, "success");
+        return Responses.notifyOk("success", BizType.T_REF);
     }
 
     /** 退款金额（元字符串）→ 分；缺失/非法 → null（不累计，防误推进，靠查单兜底） */
@@ -162,35 +163,35 @@ public class AlipayNotifyHandler {
                                            Map<String, String> params, String mergeStatus) {
         if (!"FINISHED".equals(mergeStatus)) {
             log.debug("支付宝合单通知非终态, tradeNo={}, status={}", order.getTradeNo(), mergeStatus);
-            return Responses.notifyOk(ctx, "success");
+            return Responses.notifyOk("success", BizType.T_PAY);
         }
         var subs = Sdk.getSubOrders(ctx, order.getTradeNo());
         if (subs.isEmpty()) {
             log.debug("支付宝合单通知无子单记录, tradeNo={}", order.getTradeNo());
-            return Responses.notifyFail(ctx, "order_mismatch");
+            return Responses.notifyFail("order_mismatch", BizType.T_PAY);
         }
         try {
             var results = HttpHelper.MAPPER.readTree(params.get("order_detail_results"));
             if (results == null || !results.isArray() || results.size() != subs.size())
-                return Responses.notifyFail(ctx, "amount_mismatch");
+                return Responses.notifyFail("amount_mismatch", BizType.T_PAY);
             var bySubNo = new LinkedHashMap<String, JsonNode>();
             for (var r : results) {
                 var no = r.path("out_trade_no").asString("");
                 if (no.isEmpty() || !"SUCCESS".equals(r.path("result_code").asString(""))
                         || bySubNo.put(no, r) != null) {
-                    return Responses.notifyFail(ctx, "amount_mismatch");
+                    return Responses.notifyFail("amount_mismatch", BizType.T_PAY);
                 }
             }
             String firstApi = null;
             for (var sub : subs) {
                 var r = bySubNo.get(sub.getSubTradeNo());
-                if (r == null) return Responses.notifyFail(ctx, "amount_mismatch");
+                if (r == null) return Responses.notifyFail("amount_mismatch", BizType.T_PAY);
                 // 子单金额校验（fail-closed）：通知金额与库内子单不一致拒绝推进
                 var subAmount = r.path("total_amount").asString(null);
                 if (subAmount == null || sub.getMoney() != toCents(subAmount)) {
                     log.debug("支付宝合单通知子单金额不符, tradeNo={}, sub={}",
                             order.getTradeNo(), sub.getSubTradeNo());
-                    return Responses.notifyFail(ctx, "amount_mismatch");
+                    return Responses.notifyFail("amount_mismatch", BizType.T_PAY);
                 }
                 var api = r.path("trade_no").asString("");
                 if (firstApi == null) firstApi = api;
@@ -199,10 +200,10 @@ public class AlipayNotifyHandler {
                         .apiTradeNo(api).status(SubOrderSnapshot.STATUS_PAID).build());
             }
             Sdk.completeOrderOk(ctx, order.getTradeNo(), firstApi, buyerIdOf(params));
-            return Responses.notifyOk(ctx, "success");
+            return Responses.notifyOk("success", BizType.T_PAY);
         } catch (Exception e) {
             log.error("支付宝合单通知解析失败, tradeNo={}", order.getTradeNo(), e);
-            return Responses.notifyFail(ctx, "notify_error");
+            return Responses.notifyFail("notify_error", BizType.T_PAY);
         }
     }
 
