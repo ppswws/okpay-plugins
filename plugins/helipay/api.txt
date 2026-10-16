@@ -1,0 +1,963 @@
+【来源（2026-10-17）】自 okpay-pro/services/plugins/helipay-go/api.txt 迁入（okpay-pro 已停维护，okpay-plugins 为唯一真源）。
+文档抄录版本可能落后于线上，动手前对照线上文档。
+
+====================================================================
+元数据（2026-10-17 整理，供 AI 会话快速定位；字段序一律以 src/main/java/.../util/HelipaySignUtil.java 为准，
+本块与代码不一致时以代码为准）
+====================================================================
+
+【接口清单与实现位置】
+- 统一入口（POST form）：正式 https://pay.trx.helipay.com/trx/app/interface.action
+  商户级 https://pay.trx.helipay.com/trx/merchant/interface.action
+  按 P1_bizType 区分：AppPay 下单 / AppPayH5WFT / AppPayPublic（公众号+小程序共用字段表） /
+  AppPayRefund 退款 / AppPayQuery 订单查询 / AppPayRefundQuery 退款查询 /
+  Transfer 打款 / TransferQuery 打款查询 / MerchantAccountQuery 商户余额
+  → handler/Helipay*.java；请求字段序 REQ_ORDERS，响应字段序 RESP_ORDERS（均按 bizType 查表）
+- 通知接收：POST 优先 JSON body、回退 form query → handler/HelipayNotifyHandler.java；
+  字段序 NOTIFY_ORDER（支付）/ NOTIFY_REFUND（退款）/ NOTIFY_TRANSFER（转账），由报文内容特征判定
+
+【签名规则（官方）】`&` 分隔按参数名顺序拼值（&P1值&P2值…），空值也拼 `&`、中文不 Encode；末尾拼商户密钥做 MD5。
+
+【已知坑（均为实战核对过的判断，改动签名相关代码前先读）】
+1. 文档标注「不参与签名」的字段必须从字段序中排除，代码在 HelipaySignUtil 内有逐处标记：
+   请求 P4_serialNumber（查询类）、响应 rt3_retMsg、转账通知 rt12_amount、余额应答 rt15_amountToBeSettled
+   （回复「rtN 起不参与签名」）；照文档全表拼接会签错。
+2. 同步响应验签：应答无 sign 字段时按生产实现直接放行（verifyResponse）；通知验签一律要求 sign 存在（verifyNotify）。
+  这是刻意的非对称，改动前先看生产行为。
+3. 单笔代付的 notifyUrl：文档标注不参与签名，代码按生产实测将其纳入签名（REQ_TRANSFER 末尾）。
+   以实测为准；若代付签名报错，第一个怀疑对象是这里。
+4. signNotify 按报文内容特征判定字段序（先 Transfer+rt7_orderStatus → 再 rt3_refundOrderId → 否则支付），
+   改判定条件会连带影响三类通知的验签。
+5. 本文档多张参数表被排版截断（字符间混入空格/换行、字段名断行），字段名一律以代码字段表为准；
+   拆文档表前先跑一遍 HelipaySignUtil。
+6. 签名算法 MD5；部分接口文档另列国密证书（SM3WITHSM2）方案，现有实现只用 MD5——若未来切换，
+   签名与验签需整体重做，勿在现有 sign() 上打补丁。
+
+###1.接口规则
+测试请求地址	https://test.trx.helipay.com/trx/app/interface.action
+生产请求地址	https://pay.trx.helipay.com/trx/app/interface.action
+传输方式	采用HTTP传输
+提交方式	采用POST方法提交
+字符编码	统一采用UTF-8字符编码
+签名算法	MD5
+签名要求	请求和接收数据在要求必签名的均需要校验签名,排除签名参数不签名
+
+###2.签名规则
+①国密 签名
+无论是请求还是应答，签名原始串按以下方式组装成字符串：
+1、除 sign 参数值外，其他需参与签名的参数值按照参数名的顺序（&P1参数值&P2参数值&P3参数值…）进行拼接。
+2、签名原始串中，字段值都采用原始值，中文不需要URL Encode编码。
+3、参数值为空也需要拼接签名(&P1参数值&P2参数值&P3参数值&&P5参数值…)，除接口中明确规定不参与签名的参数值。
+4、同步响应签名时，传送的sign参数不参与签名，其他参数按照规则拼接待签名串，使用平台公钥进行SM3WITHSM2验签。
+
+参数原文串拼接示例：
+
+假设提交的参数值如下:
+P1_bizType : AppPay
+P2_orderId : 20170302191815
+P3_customerNumber : C1800000002
+P4_payType : SCAN
+P5_orderAmount : 0.01
+P6_currency : CNY
+P7_authcode : 0
+P8_appType : WXPAY
+P9_notifyUrl : http://localhost
+P10_successToUrl : http://localhost
+P11_orderIp : 127.0.0.1
+P12_goodsName : 商品名称
+P13_goodsDetail :
+P14_desc :备注
+
+拼接的原文串如下：
+&AppPay&p_20170302191815&C1800000002&SCAN&0.01&CNY&0&WXPAY&http://localhost&http://localhost&127.0.0.1&商品名称&&备注
+
+②MD5 签名
+MD5 是一种摘要生成算法，通过在签名原始串后加上商户通信密钥的内容，进行 MD5 运算，形成的摘要字符串即为签名结果。
+注意：签名时将字符串转化成字节流时指定的编码字符集应与参数 charset 一致。
+
+MD5 签名计算公式：
+sign = Md5(原文串&商户密钥)
+
+签名示例：
+假设商户密钥如下：
+rV8u3c2n2hlTCIDWyzei7iz66DiQlYTH
+拼接的原文串加上商户密钥（原文串&rV8u3c2n2hlTCIDWyzei7iz66DiQlYTH）进行MD5计算，结果如下：
+sign = 84533392d768af905bebc19ddf932f47
+
+###3.加密、数字签名
+加密：对敏感信息字段进行 SM4 算法加密，对称加密的秘钥 Key 由商户生成随机 128 比特流构成，然后使用平台公钥（由平台提供）对 Key 进行 SM2WITHSM3 加密，交易时上送
+签名：使用商户私钥进行SM3WITHSM2签名，平台使用商户公钥进行验签；响应时服务端使用平台私钥进行SM3WITHSM2签名，商户使用平台公钥进行验签。
+
+###3.1 签名算法
+SM3WITHSM2：国密算法签名
+
+证书**密钥**获取：
+登录商户后台，进行证书申请操作，在页面下载证书，从证书获取私钥，具体操作请参考《商户后台证书下载指引.doc》
+签名使用说明：
+商户拿到请求时的待签名字符串后，把待签名字符串与商户的私钥一同放入 SM2 签名方法中进行签名运算，从而得到签名结果字符串。
+
+待签名字符串：
+&AppPay&p_20170302191815&C1800000002&SCAN&0.01&CNY&0&WXPAY&http://localhost&http://localhost&127.0.0.1&商品名称&&备注
+
+签名方法：
+签名串 = SM2（待签名字符串，商户SM2私钥）。
+计算**签名串(sign)：**
+MEUCIQDRhEdGQfim/8e9yMwRa9L4ybbgf1IWLH8QIC1FuepAtAIgdar2LYZmbz+1ubZsYjakoUm/4RPRfdDVIBJ+IIPR1cU=
+备注：签名串的生成详情可参考各版本demo中签名方法。
+
+###3.2 加解密算法
+SM3WITHSM2：国密SM4算法
+接口参数中包含银行卡等敏感信息，为保证敏感信息的安全传输，需要对敏感信息使用SM4/CBC/PKCS7Padding 进行对称加密。
+1，请求时商户随机生成的加密密钥sm4 key需要使用平台公钥进行SM2加密后通过encryptionKey字段上送给平台。
+2，平台返回时随机生成加密密钥sm4 key，使用商户公钥进行SM2加密后通过encryptionKey字段响应，商户使用自己的私钥解密。
+CBC模式要求加解密时使用同样的向量（IV）值，故双方固定 IV 值为：AQ4Zvt54xKn9QaW86ZzWdg== （base64 格式，使用前需解码）
+
+
+###4. 扫码、刷卡下单接口
+应用场景
+
+主扫:商户通过本接口将订单信息上送至合利宝，合利宝调用微信或支付宝下单接口生成二维码返回给商户，商户将二维码信息展示给用户，由用户扫描二维码完成订单支付。
+
+刷卡(被扫): 用户展示微信钱包，支付宝内的“刷卡条码/二维码”给商户系统(商户扫描枪等工具)扫描后直接完成支付的模式。商户调用合利宝刷卡接口,主要应用线下面对面收银的场景。
+
+请求参数
+
+字段名	变量名	必填	类型	实例值	说明
+交易类型	P1_bizType	是	String (20)	AppPay	交易类型;下单接口
+商户订单号	P2_orderId	是	String (50)	p_2017030 2185347	商户系统内部订单号，要 求50字符以内，同一商 户号下订单号唯一
+商户编号	P3_customerNumber	是	String (15)	C18000000 02	合利宝分配的商户号
+支付类型	P4_payType	是	String (15)	SCAN	SWIPE:刷卡(被扫 );SCAN:扫码(主 扫)
+交易金额	P5_orderAmount	是	Number (10,2)	0.01	订单金额，以元为单位， 最小金额为0.01
+币种类型	P6_currency	是	String (30)	CNY	CNY:人民币
+授权码	P7_authcode	是	String (50)	123456789 0	payType为刷卡( 被扫)时传入一组字符串 (付款码),主扫支付类 型传入1即可.微信:( 注:用户刷卡条形码规则 :18位纯数字，以10 、11、12、13、1 4、15开头).支付宝 :支付授权码，25~3 0开头的长度为16~2 4位的数字，实际字符串 长度以开发者获取的付款 码长度为准银联:62开 头的数字京东:62开头 的数字;;预授权支付场 景下必填由4.19.3 /4.19.5接口返回 的channelOrd erNum;
+客户端类型	P8_appType	是	String (20)	WXPAY	ALIPAY：支付宝W XPAY:微信UNIO NPAY:银联JDPA Y:京东钱包QQPAY :QQ钱包;HELIF U:合利付,详见7.1
+通知回调地 址	P9_notifyUrl	否	String (300)	http://wa p.helipay .com/noti fy.php	异步接收合利宝支付结果 通知的回调地址，通知u rl必须为外网可访问的 url，不能携带参数。
+成功跳转U RL	P10_successToUrl	否	String (300)	http://wa p.helipay .com/succ ess.php	支付完成后，展示支付结 果的页面地址(暂不用)
+商户IP	P11_orderIp	是	String (40)	192.168.1 0.1	用户下单IP，IP格式，请勿传其他内容
+商品名称	P12_goodsName	是	String (128)	Iphone7	商品名称,账单上显示
+商品详情	P13_goodsDetail	否	String (8000)	xxxxxxxx	商品的优惠活动:单品优 惠活动该字段必传，且必 须按照规范上传，JSO N字符串格式，详见附录 【6.3单品优惠活动字 段说明】
+备注	P14_desc	否	String (100)	备注	订单备注信息，原样返回
+公众号ap pId	P16_appId	否	String (30)	wxdeaaaa2 311	刷卡时可传.(不参与签 名)
+是否限制借 贷记	P17_limitCreditPay	否	String (10)	1	1:禁用贷记卡,0:不 限,2:针对支付宝禁用 借记;;不传以平台为准 .(不参与签名)
+商品标记	P18_goodsTag	否	String (255)	xxxxxxxx	商品标记，微信平台配置 的商品标记，用于优惠券 或者满减使用..(不参 与签名)
+微信进件时 上送的唯一 号	P19_guid	否	String (50)	123456789	此值非必填,必填时必须 是商户侧做微信进件时上 送的唯一号.传错或不匹 配的交易失败.(不参与 签名)
+营销参数规 则	P20_marketingRule	否	String (512)	明串示例:{“ma rketingMe rchantNo” :”E180000 001”,”mar ketingAmo unt”:10.0 0,”coupon MerchantN o”:”C1800 000001”}	营销参数规则,JSON 格式字符串，des加密 传输,详见5.3营销参 数规则说明(不参与签名 )
+实名参数	P21_identity	否	String (256)	{“number” :”4416221 99203xxxx xx”,”name “:”XXX”,” type”:”ID CARD”}	实名支付功能，用于公安 和保险类商户使用，该字 段为JSON格式数据。 微信、支付宝格式不同详 见附录6.9(不参与签 名)
+分账类型	splitBillType	否	String (15)	FIXED_AMO UNT	FIXED_AMOUN T：固定金额（默认，目 前只支持固定金额）；; RATE：比率(不参与 签名)
+分账规则串	ruleJson	否	String (1024)	[{“splitB illMercha ntNo”:”E1 8xxxxxxxx “,”splitB illAmount “:0.3},{“ splitBill MerchantN o”:”E18xx xxxxxx”,” splitBill Amount”:0 .3}]	分账规则要做加密,Js on格式字符串，详见分 账规则说明5.4(分账 类型和分账规则串出现时 须2个字段都要上送)( 不参与签名)
+花呗分期数	hbfqNum	否	String (10)	3	目前仅支持3,6,12 期(不参与签名);见e xtendParams 字段
+终端号	deviceInfo	否	String (60)	xxxxxxxx	终端号(银联固定8位, 支持英文+数字,;微信 是1-32个字符，支付 宝1-60,终端号是商 户唯一的，只要商户不变 ，所有交易都要求是同一 个终端号)(不参与签名 )
+商户门店编 号	storeId	否	String (32)	NJ200	商户自定义的门店编码; (不参与签名)
+支付宝店铺 编号	alipayStoreId	否	String (64)	xxxxxxxx	支付宝店铺编号;(不参 与签名)
+超时时间	timeExpire	否	String (20)	微信、银联:60; 支付宝:1m	详细规则见6.2.4订 单超时时间参数规则(不 参与签名)
+支付宝行业 数据回流信 息	industryRefluxInfo	否	String (512)	{\”scene_ code\”:\” metro_tra deorder\” ,\”channe l\”:\”xxx x\”,\”sce ne_data\” :{\”asset _name\”:\ “ALIPAY\” }}	支付宝行业数据回流信息 ,json字符串格式详 见6.3.4(不参与签 名);见extendP arams字段
+银联终端信 息	termInfo	否	String (300)	{“deviceT ype”:”02” ,”secretT ext”:”121 23456”,”a ppVersion “:”000000 01”,”seri alNum”:”1 2”,”encry ptRandNum “:”12”,”l atitude”: “+31.2213 45”,”netw orkLicens e”:”P3100 “,”longit ude”:”121 .483527”}	参加银联官方单品营销必 送,json字符串格式 详见6.3.3.3(不 参与签名)
+用户id	openId	否	String (100)	123333443 43343	预授权场景必填,由4. 19.3/4.19.5 接口返回的userId (不参与签名)
+预授权确认 模式	authConfirmMode	否	String (64)	COMPLETE	预授权场景必填COMP LETE:转交易支付完 成结束预授权;NOT_ COMPLETE:转交 易支付完成不结束预授权 (不参与签名)
+终端绑定号	terminalSysBindNo	否	String (8)	12345678	在平台已报备过的终端信 息的绑定号(采集接口返 回);线下场景时必填
+加密随机因 子	encryptRandNum	否	String (10)	xxxxxxxx	仅在被扫支付类交易报文 中出现：若付款码为19 位数字，则取后6;位； 若付款码码为EMV二维 码，则取其tag57的 卡号/token号的后 6位
+密文数据	secretText	否	String (16)
+场景信息	sceneInfo	否	String (512)	{“store_i nfo”:{“id “:”SZTX00 1”,”name” :”腾大餐厅”,” area_code “:”440305 “,”addres s”:”科技园中一 路腾讯大厦”}}	该字段用于上报场景信息 ，目前支持上报实际门店 信息。该字段为JSON 对象数据，字段详细见附 录6.8;(不参与签名 )
+学校名称、 场景名称	eduSubject	否	String (200)	学校名称场景名称 其它描述信息	该参数传入学校名称、场 景名称，格式要求：“学 校名称场景名称其它 描述信息”，其中“其它 描述信息部分”不做要求 。;(不参与签名)
+商户传入业 务信息，具 体值要和支 付宝约定	businessParams	否	String (1024)	{“edu_sch ool_id”:” 208800091 3220823”, “edu_scen e”:”SCHOO L_CANTEEN “}	传入json格式的学校 ID和场景ID数据A. eduschool id，学校ID或者校区 ID，从支付宝学校库查 询到到学校I/校区ID ，如果有校区ID则优先 传校区ID，例如：20 88000913220 823；B.edu_s cene，服务场景，教 育行业定义的校园内服务 场景，例如：SCHOO L_CANTEEN；; (不参与签名)
+业务扩展参 数	extendParams	否	String (5000)	{“hbfq_n um”:”3”,” hb_fq_sel ler_perce nt”:”0”,” industry reflux_in fo”:”{\”s cene_code \”:\”metr o_tradeor der\”,\”c hannel\”: \”xxxx\”, \”scene_d ata\”:{\” asset_nam e\”:\”ALI PAY\”}}”, “food_ord er_type”: “qr_order “,”DYNAMI C_TOKEN_O UT_BIZ_NO “:”123456 789”}	扩展参数目前是扫码支付 宝用:https:// open.alipay .com/api(不参 与签名);详见附录6. 10
+服务商pi d	pid	否	String (32)	123456	服务商pid,不传以平 台配置为准(仅银联二维 码生效);(不参与签名 )
+分账计费类 型	splitCalcFeeType	否	String (20)	xxxxxxxx	STANDARD或空： 标准计费INDEPEN DENT：独立计费分账 交易时该参数有效。;( 不参与签名)
+加密密钥	encryptionKey	否	String (512)	Mssdsqqeq eqdad1324 2dsscscsw e2ee22e	不参与签名;见5.2. 1
+签名方式	signatureType	是	String (30)	SM3WITHSM 2(国密)；MD5 (MD5签名)	不参与签名
+签名	sign	是	String (512)	d3382b9a9 b08cefc1a 79d276ec0 3d83a	国密SM2签名结果，详 见“第5章数字签名”
+返回参数
+
+字段名	变量名	必填	类型	实例值	说明
+交易类型	rt1_bizType	是	String (20)	AppPay	下单接口
+返回码	rt2_retCode	是	String (20)	0000	参考附录：返回码
+返回信息	rt3_retMsg	否	String (200)	成功	返回信息，不用参与签名
+商户编号	rt4_customerNumber	是	String (15)	C18000000 02	合利宝分配的商户号
+商户订单号	rt5_orderId	是	String (50)	p_2017030 2185347	商户系统内部订单号，要 求50字符以内，同一商 户号下订单号唯一
+平台流水号	rt6_serialNumber	否	String (50)	201702241 400010002	合利宝交易订单号
+支付类型	rt7_payType	是	String (15)	SCAN	SWIPE:刷卡SCA N:扫码WAP:WAP ;PUBLIC:公众号 支付
+二维码信息	rt8_qrcode	否	String (64)	weixin:// wxpay/biz payurl?pr =DDPfbOH	用于生成二维码图片，展 示给用户进行扫码支付( 下单成功返回)
+支付地址	rt9_wapurl	否	String (300)	http://ww w.heliapa y.com/sho w_qcode.h tml	商户系统显示二维码页面 地址(暂不用)
+交易金额	rt10_orderAmount	是	String (300)	0.01	订单金额，以元为单位， 最小金额为0.01
+币种类型	rt11_currency	是	String (300)	CNY	CNY:人民币
+用户ope nId	rt12_openId	否	String (40)	o-Rj7wCKM UFF7dSbWa oPlssEtDq Q	微信openId不参与 签名
+订单状态	rt13_orderStatus	否	String (20)	SCCUESS	刷卡支付时响应状态.( 不参与签名)
+交易支付使 用的资金渠 道和优惠信 息-支付宝	rt14_fundBillList	否	String (255)	{“xxx”,”y yy”}	支付宝的资金渠道;(不 参与签名)
+上游返回码	rt15_channelRetCod e	否	String (20)	xxxxxxxx	失败时透传上游返回码, 仅供参考,请以订单状态 为准;(不参与签名)
+微信/支付 宝/云闪付 等交易单号	rt16_outTransactio nOrderId	否	String (40)	123456789 012345	成功时有返回(不参与签 名)
+用户付款银 行	rt17_bankType	否	String (40)	Icbc-cred it	用户付款银行,成功时有 返回(不参与签名),具 体见附件:
+subOp enId	rt18_subOpenId	否	String (40)	aaRj7wCKM UFF7dSbWa oPlssTsx/ 201833535 35353	微信子商户subOpe nId.或支付宝子商户 用户buyer_id( 不参与签名)
+通道订单属 性	rt19_orderAttribut e	否	String (30)	UNDIRECT_ DEFAULT	标记通道订单属性UND IRECT_DEFAU LT:间连通道;DIR ECT_CHANNEL 直连通道(不参与签名)
+营销参数规 则	rt20_marketingRule	否	String (512)	{“marketi ngMerchan tNo”:”E18 0000001”, ”marketin gAmount”: 10.00,”co uponMerch antNo”:”C 180000000 1”}	营销参数规则,JSON 格式字符串，des加密 传输,详见5.3营销参 数规则说明(不参与签名 )
+优惠信息详 情	rt21_promotionDeta il	否	String (1024)	JSON串	上游返回的优惠详情(不 参与签名)
+入账面额	rt22_creditAmount	否	Number (10,2)	xxxxxxxx	入账面额(不扣手续费) (不参与签名)
+实际支付金 额	rt23_paymentAmount	否	Number (10,2)	xxxxxxxx	用户实际支付金额-(不 参与签名)
+订单完成时 间	rt24_orderComplete Date	否	String (30)	2018-03-1 200:00:00	格式:yyyy-MM- ddHH:mm:ss( 不参与签名)
+客户端类型	rt25_appPayType	否	String (30)	WXPAY	客户端类型(不参与签名 )
+子商户公众 号sub_ appid	rt26_appId	否	String (30)	wxdeaaaa2 311	子商户公众号sub_a ppid(不参与签名)
+分账规则及 状态	ruleJson	否	String (1024)	[{“splitB illMercha ntNo”:”E1 8xxxxxxxx “,”splitB illAmount “:0.3,”sp litBillMe rchantEma il”:”xxxx x@163.com “,”splitB illOrderN um”:”1556 013197418 CBoywwwq” ,”splitBi llOrderSt atus”:”FA ILED”},{“ splitBill MerchantN o”:”E18xx xxxxxx”,” splitBill Amount”:0 .3,”split BillMerch antEmail” :”xxxxx@1 63.com”,” splitBill OrderNum” :”1556013 197418CBo ywwwq”,”s plitBillO rderStatu s”:”FAILE D”}]	响应分账结果规则以及对 应状态(不参与签名)
+交易手续费	productFee	否	Number (10,2)	0.01	该笔交易产生的手续费, 成功时返回(不参与签名 )
+渠道结算金 额	channelSettlementA mount	否	Number (10,2)	1	渠道结算金额,成功时返 回(不参与签名)
+商户实际入 账发生额	realCreditAmount	否	Number (10,2)	0.09	该笔交易成功后收单商户 实际入账发生额,成功时 返回(不参与签名)
+微信交易类 型	tradeType	否	String (32)	MICROPAY	刷卡成功时有返回,见7 .5(不参与签名)
+渠道支付宝 费率活动标 识	chargeFlag	否	String (64)	bluesea_1	刷卡成功时有返回,见7 .6(不参与签名)
+银联二维码 返回的付款 方附加数据	upAddData	否	String (3000)	xxxx	Base64编码的(不 参与签名)
+银联二维码 返回的保留 数据	resvData	否	String (1000)	xxxxxxxx	Base64编码的(不 参与签名)
+支付卡类型	onlineCardType	否	String (20)	CFT/CREDI T	DEBIT(借记卡)C REDIT(贷记卡); UNKNOWN(未知) CFT(钱包零钱);不 参与签名
+渠道子商户 号(U/A /T)	subMerchantNo	否	String (32)	208810115 64298xx	(不参与签名)
+商户费率	feeRate	否	Number (10,4)	0.0001	商户交易的费率,被扫支 付成功时返回;(不参与 签名)
+平台商补贴 的手续费	feeAccountAmt	否	Number (10,2)	0.01	单位:元,被扫支付成功 时返回;(不参与签名)
+支付宝优惠 信息详情	voucherDetailList	否	String	[{“amount “:”0.50”, “merchant Contribut e”:”0.50” ,”name”:” 0.50元代金券” ,”otherCo ntribute” :”0.00”,” type”:”AL IPAYBIZ VOUCHER”, “voucherI d”:”20221 230000730 0284910F0 60LKB”}]	支付宝优惠券信息列表
+实收手续费	receiverFee	否	Number (10,2)	0.01	交易成功时返回(不参与 签名)
+后收手续费	offlineFee	否	Number (10,2)	0.01	交易成功时返回(不参与 签名)
+签名方式	signatureType	是	String (30)	SM3WITHSM 2	不参与签名
+签名	sign	是	String (512)	2612b2160 bcb8cd189 0954fe22c efae9	国密SM2签名结果，详 见“第5章数字签名”
+
+
+###4.1 公众号、JS、服务窗预下单接口
+应用场景
+
+商户系统先调用该接口生成预支付订单，
+微信、支付宝、合利付客户端时获取返回正确的预支付交易回话标识生成交易串，通过原生态/非原生态js支付信息接口调起支付。
+银联云闪付客户端时获取返回银联js的重定向地址，执行302重定向唤起银联收银台。
+
+请求参数列表
+字段名	变量名	必填	类型	实例值	说明
+交易类型	P1_bizType	是	String (20)	AppPayPublic	交易类型;公众号为AppPayPublic
+商户订单号	P2_orderId	是	String (50)	p_20170321185347	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+商户编号	P3_customerNumber	是	String (15)	C1800000002	合利宝分配的商户号
+支付类型	P4_payType	是	String (15)	PUBLIC	PUBLIC:公众号/服务窗/JS
+公众账号ID	P5_appid	是	String (32)	wxd951efh567ht3698	微信支付填公众账号ID;支付宝填1;银联云闪付填1;合利付填应用编号appNo;
+设备号	P6_deviceInfo	否	String (32)	WEB	可以为终端设备号(门店号或 收银设备ID)，PC网页或公众号内支付可以传”WEB”
+是否原生态	P7_isRaw	否	String (10)	1	是否原生态1：是;0：否不传 默认是1
+用户标识	P8_openid	是	String (100)	o-Rj7wCKMUFF7dSbWaoP lssEtDqQ	微信用户关注商家公众号的 openidopenid如何获取,可参 考6.2注意事项OpenID获取 ;当P7_isRaw=0微信公众号非 原生态时openid上送1即可 ；;当使用银联二维码云梯计 划时，该字段必填，需要上 送在微信调起支付的公众号 /小程序下的openId
+交易金额	P9_orderAmount	是	Number (10.2)	0.01	订单金额，以元为单位，最 小金额为0.01
+币种类型	P10_currency	是	String (30)	CNY	人民币:CNY
+客户端类型	P11_appType	是	String (20)	WXPAY	WXPAY:微信;见附录7.1
+通知回调地 址	P12_notifyUrl	否	String (300)	http://h5.helipay.com/notify.php	异步接收合利宝支付结果通 知的回调地址，通知url必须 为外网可访问
+页面跳转地 址	P13_successToUrl	否	String (300)	http://h5.helipay.com/success.php	支付完成后，展示支付结果 的页面地址;1,为原生态时该 地址请忽略,需要商户自己 在js页面控制跳转;;2,当P7 _isRaw=0微信公众号非原生 态时支付完会跳转到该地址
+下单IP	P14_orderIp	是	String (40)	1270.0.01	下单机器IP
+商品名称	P15_goodsName	是	String (128)	苹果7	商品名称.
+商品详情	P16_goodsDetail	否	String (8000)	xxxxxxxx	商品的优惠活动:单品优惠活 动该字段必传，且必须按照 规范上传，JSON字符串格式 ，详见附录【6.3单品优惠 活动字段说明】
+能否使用信用卡	P17_limitCreditPay	否	String (10)	0	值为1，禁用信用卡；值为0 不限,不传以平台为准
+备注	P18_desc	否	String (100)	xxxxxxxx	备注原样返回
+关注appId	P19_subscribeAppId	否	String (40)	xxxxxxxx	微信参数;此参数排除签名
+商品标记	P21_goodsTag	否	String (255)	xxxxxxxx	商品标记，微信平台配置的 商品标记，用于优惠券或者 满减使用..(不参与签名)
+微信进件时上送的唯一号	P22_guid	否	String (50)	123456789	此值非必填,必填时必须是商户侧做微信进件时上送的唯 一号.传错或不匹配的交易失败.(不参与签名)
+营销参数规 则	P23_marketingRule	否	String (512)	{“marketingMerchantN o”:”E180000001”,”mar ketingAmount”:10.00, ”couponMerchantNo”:” C1800000001”}	营销参数规则,JSON格式字符 串，des加密传输,详见5.3 营销参数规则说明(不参与签 名)
+实名参数	P24_identity	否	String (256)	{“number”:”441622199 203xxxxxx”,”name”:”X XX”,”type”:”IDCARD”}	实名支付功能，用于公安和 保险类商户使用，该字段为 JSON格式数据。微信、支付 宝格式不同详见附录6.9(不 参与签名)
+二维码	qrcode	否	String (256)	xxxxxxxx	银联js必须填(不参与签名)
+分账类型	splitBillType	否	String (15)	FIXED_AMOUNT	FIXED_AMOUNT：固定金额（ 默认，目前只支持固定金额 ）；;RATE：比率(不参与签 名)
+分账规则串	ruleJson	否	String (1024)	[“splitBillMerchantN o”:”E18xxxxxxxx”,”sp litBillAmount”:0.3}, ;{“splitBillMerchant No”:”E18xxxxxxxx”,”s plitBillAmount”:0.3} ]	分账规则,Json格式字符串， 详见分账规则说明5.4(分账 类型和分账规则串出现时须 2个字段都要上送)(不参与 签名)
+超时时间	timeExpire	否	String (20)	微信、银联:60;支付宝 :1m	详细规则见6.2.4订单超时时 间参数规则(不参与签名)
+花呗分期数	hbfqNum	否	String (10)	3	目前仅支持3,6,12期支付宝 参数(不参与签名);见exten dParams字段
+支付宝行业 数据回流信 息	industryRefluxInfo	否	String (512)	{\”scene_code\”:\”me tro_tradeorder\”,\”c hannel\”:\”xxxx\”,\” scene_data\”:{\”asse t_name\”:\”ALIPAY\”} }	支付宝行业数据回流信息,j son字符串格式详见6.3.4(不 参与签名);见extendParam s字段
+支付宝点餐 码	foodOrderType	否	String (30)	qr_order	（店内扫码点餐）支付宝点 餐码详见7.7(不参与签名); 见extendParams字段
+银联终端信 息	termInfo	否	String (300)	{“deviceType”:”02”,” secretText”:”1212345 6”,”appVersion”:”000 00001”,”serialNum”:” 12”,”encryptRandNum” :”12”,”latitude”:”+3 1.221345”,”networkLi cense”:”P3100”,”long itude”:”121.483527”}	参加银联官方单品营销必送 ,json字符串格式详见6.3.3 .3银联参数;(不参与签名)
+银联用户代 理	userAgent	否	String (100)	UnionPay/1.0CloudPay	银联JS识别用户的客户端,不 填默认是UnionPay/1.0Clo udPay详见6.2.3.4银联参数 ;(不参与签名)
+银联js用户 id类型	openIdType	否	String (50)	userAuthCode或openId	userAuthCode(临时授权码) /openId(用户id),此参表示 上送的P8_openid值的类型; 不填默认是userAuthCode银 联参数;(不参与签名)
+商户门店编 号	storeId	否	String (32)	NJ200	商户自定义的门店编码;(不 参与签名)
+支付宝店铺 编号	alipayStoreId	否	String (64)	xxxxxxxx	支付宝店铺编号;(不参与签 名)
+终端绑定号	terminalSysBindNo	否	String (8)	12345678	在平台已报备过的终端信息 的绑定号(采集接口返回);线 下场景时必填；(不参与 签名)
+场景信息	sceneInfo	否	String (512)	{“store_info”:{“id”: “SZTX001”,”name”:”腾 大餐厅”,”area_code”: “440305”,”address”:” 科技园中一路腾讯大厦 “}}	该字段用于上报场景信息， 目前支持上报实际门店信息 。该字段为JSON对象数据， 字段详细见附录6.8;(不参与 签名)
+学校名称、 场景名称	eduSubject	否	String (200)	学校名称场景名称其 它描述信息	该参数传入学校名称、场景 名称，格式要求：“学校名称 场景名称其它描述信息” ，其中“其它描述信息部分” 不做要求。;(不参与签名)
+商户传入业务信息，具体值要和支付宝约定	businessParams	否	String (1024)	{“edu_school_id”:”20 88000913220823”,”edu _scene”:”SCHOOL_CANT EEN”}	传入json格式的学校ID和场 景ID数据A.edu_school_id， 学校ID或者校区ID，从支付 宝学校库查询到到学校I/校 区ID，如果有校区ID则优先 传校区ID，例如：2088000 913220823；B.edu_scene， 服务场景，教育行业定义的 校园内服务场景，例如：SC HOOL_CANTEEN；;(不参与签 名)
+业务扩展参 数	extendParams	否	String (5000)	{“hb_fq_num”:”3”,”hb _fq_seller_percent”: “0”,”industry_reflux _info”:”{\”scene_cod e\”:\”metro_tradeord er\”,\”channel\”:\”x xxx\”,\”scene_data\” :{\”asset_name\”:\”A LIPAY\”}}”,”food_ord er_type”:”qr_order”, “DYNAMIC_TOKEN_OUT_B IZ_NO”:”123456789”}	扩展参数目前是扫码支付宝 用:https://open.alipay.c om/api(不参与签名);详见附 录6.10
+服务商pid	pid	否	String (32)	123456	服务商pid,不传以平台配置 为准(仅银联二维码生效);( 不参与签名)
+分账计费类 型	splitCalcFeeType	否	String (20)	xxxxxxxx	STANDARD或空：标准计费IN DEPENDENT：独立计费分账交 易时该参数有效。;(不参与 签名)
+银联云梯支付类型	unionPayChannelType	否	String (2)	01	01云闪付微信小程序02云闪 付微信公众号;(不参与签名 )
+加密密钥	encryptionKey	否	String (512)	Mssdsqqeqeqdad13242d sscscswe2ee22e	不参与签名;见5.2.1
+签名方式	signatureType	是	String (30)	SM3WITHSM2	不参与签名
+签名	sign	是	String (512)	d3382b9a9b08cefc1a79 d276ec03d83a	国密SM2签名结果，详见“第 5章数字签名”
+
+
+返回参数列表
+字段名	变量名	必填	类型	实例值	说明
+交易类型	rt1_bizType	是	String (20)	AppPayPublic	下单接口
+返回码	rt2_retCode	是	String (20)	0000	参考附录：返回码
+返回信息	rt3_retMsg	否	String (200)	成功	返回信息，不用参与签名
+商户编号	rt4_customerNumber	是	String (15)	C1800000002	合利宝分配的商户号
+商户订单号	rt5_orderId	是	String (50)	p_20170302185347	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+平台流水号	rt6_serialNumber	否	String (50)	201702241400010002	合利宝交易订单号
+支付类型	rt7_payType	是	String (15)	PUBLIC	PUBLIC:公众号/服务窗/JS支 付
+公众账号ID	rt8_appid	否	String (32)	wxd951efh567ht3698	公众账号ID
+动态口令	rt9_tokenId	否	String (64)	xxxxxxxx	预支付ID,用于后续接口调用 中使用,预留参数
+原生态js支 付信息	rt10_payInfo	是	String (255)	{“appId”：”wx2421b1c 437ee0ec43b”,”timeSt amp”：”1395712654”,” nonceStr”：”e61463f8 efa94090b1f366cccfbb b444”,”package”：”pr epay_id=u802345jgfjs dfgsdg888”,”signType “：”MD5”,”paySign”： “70EA570631E4BB79628 FBCA90534C63FF7FADD8 9”}注：json串格式	is_raw为1时返回，json格式 的字符串，作;用于原生态 js支付时的参数;为小程序时 返回的json串集成小程序j s接口时需要
+交易金额	rt11_orderAmount	是	Number (10,2)	0.01	订单金额，以元为单位，最 小金额为0.01
+币种类型	rt12_currency	是	String (10)	CNY	CNY:人民币
+上游返回码	rt13_channelRetCode	否	String (20)	xxxxxxxx	失败时透传上游返回码,仅供 参考,请以订单状态为准;( 不参与签名)
+客户端类型	rt14_appPayType	否	String (30)	WXPAY	客户端类型(不参与签名)
+渠道子商户 号(U/A/T)	subMerchantNo	否	String (32)	20881011564298xx	(不参与签名)
+签名方式	signatureType	是	String (30)	SM3WITHSM2	不参与签名
+签名	sign	是	String (512)	2612b2160bcb8cd18909 54fe22cefae9	国密SM2签名结果，详见“第 5章数字签名”
+
+###4.2  WAP(h5)预下单接口
+应用场景
+
+商户通过本接口将订单信息上送至合利宝，合利宝调用微信/支付宝,返回URL或预支付信息给商户。
+提供原生模式和非原生模式，原生模式官方暂不支持，如需用非原生请联系商务或技术支持。
+
+请求参数列表
+字段名	变量名	必填	类型	实例值	说明
+交易类型	P1_bizType	是	String (20)	AppPayH5WFT	交易类型;下单接口
+商户订单号	P2_orderId	是	String (50)	p_2017030 2185347	商户系统内部订单号，要 求50字符以内，同一商 户号下订单号唯一
+商户编号	P3_customerNumber	是	String (15)	C18000000 02	合利宝分配的商户号
+交易金额	P4_orderAmount	是	Number (10,2)	0.01	订单金额，以元为单位， 最小金额为0.01
+币种类型	P5_currency	是	String (30)	CNY	CNY:人民币
+商户IP	P6_orderIp	是	String (40)	192.168.1 0.1	用户下单IP
+通知回调地 址	P7_notifyUrl	否	String (300)	http://wa p.helipay .com/noti fy.php	异步接收合利宝支付结果 通知的回调地址，通知u rl必须为外网可访问的 url，不能携带参数。
+客户端类型	P8_appPayType	是	String (20)	WXPAY	WXPAY:微信 ALIPAY:支付宝
+支付类型	P9_payType	是	String (15)	WAP	WAP:H5支付类型	
+应用名	P10_appName	是	String (50)	王者荣耀	如果是用于苹果或安卓a pp应用中，传分别对应 在AppStore和安 桌分发市场中的应用名; （如：王者荣耀）如果是 用于手机网站，传对应的 网站名(如：京东官网)
+应用类型	P11_deviceInfo	是	String (50)	iOS_SDK	如果是用于苹果app应 用里值为iOS_SDK ；如果是用于安卓app 应用里值为AND_SD K；如果是用于手机网站 ，值为iOS_WAP或 AND_WAP均可
+应用标识	P12_applicationId	是	String (50)	com.tence nt.wzryIO S	如果是用于苹果或安卓a pp应用中，苹果传IO S应用唯一标识(如：c om.tencent. wzryIOS)安卓传 包名(：com.ten cent.tmgp.s game);如果是用于 手机网站，传网站首页U RL地址,必须保证公网 能正常访问(如：htt ps://m.jd.c om)
+商品名称	P13_goodsName	否	String (100)	Iphone7	名称
+商品描述	P14_goodsDetail	否	String (8000)	Iphone7	商品的优惠活动:单品优 惠活动该字段必传，且必 须按照规范上传，JSO N字符串格式，详见附录 【6.3单品优惠活动字 段说明】
+备注	P15_desc	否	String (100)	备注	订单备注信息，原样返回
+是否限制借 贷记卡	P16_limitCreditPay	否	String (10)	1	1,禁用,0不限,不传 以平台为准,此参数排除 签名
+商品标记	P17_goodsTag	否	String (255)	xxxxxxxx	商品标记，微信平台配置 的商品标记，用于优惠券 或者满减使用..(不参 与签名)
+微信进件时 上送的唯一 号	P18_guid	否	String (50)	123456789	此值非必填,必填时必须 是商户侧做微信进件时上 送的唯一号.传错或不匹 配的交易失败.(不参与 签名)
+营销参数规 则	P19_marketingRule	否	String (512)	{“marketi ngMerchan tNo”:”E18 0000001”, ”marketin gAmount”: 10.00,”co uponMerch antNo”:”C 180000000 1”}	营销参数规则,JSON 格式字符串，des加密 传输,详见5.3营销参 数规则说明(不参与签名 )
+实名参数	P20_identity	否	String (256)	{“number” :”4416221 99203xxxx xx”,”name “:”XXX”,” type”:”ID CARD”}	实名支付功能，用于公安 和保险类商户使用，该字 段为JSON格式数据。 微信、支付宝格式不同详 见附录6.9(不参与签 名)
+分账类型	splitBillType	否	String (15)	FIXED_AMO UNT	FIXED_AMOUN T：固定金额（默认，目 前只支持固定金额）；; RATE：比率(不参与 签名)
+分账规则串	ruleJson	否	String (1024)	[“splitBi llMerchan tNo”:”E18 xxxxxxxx” ,”splitBi llAmount” :0.3},;{“ splitBill MerchantN o”:”E18xx xxxxxx”,” splitBill Amount”:0 .3}]	分账规则要加密,Jso n格式字符串，详见分账 规则说明5.4(分账类 型和分账规则串出现时须 2个字段都要上送)(不 参与签名)
+是否原生模 式	isRaw	否	String (1)	1	0否,1是不传默认是1 。(不参与签名)
+微信appId	appId	否	String (64)	wxidxxxxy yyysss	注意appId的i是大写I 如需要传,请联系商务或 技术支持配置。(不参与 签名)
+终端绑定号	terminalSysBindNo	否	String (8)	12345678	在平台已报备过的终端信 息的绑定号(采集接口返 回)线下场景时必填;( 不参与签名)
+场景信息	sceneInfo	否	String (512)	{“store_i nfo”:{“id “:”SZTX00 1”,”name” :”腾大餐厅”,” area_code “:”440305 “,”addres s”:”科技园中一 路腾讯大厦”}}	该字段用于上报场景信息 ，目前支持上报实际门店 信息。该字段为JSON 对象数据，字段详细见附 录6.8;(不参与签名 )
+成功跳转u rl地址	successToUrl	否	String (300)	http://wa p.helipay .com/succ ess.php	支付完成后，展示支付结 果的页面地址；暂只有非 原生模式才有效(不参与 签名)使用http协议 统一链接;格式：（正常 浏览器可打开的链接即可 ）如https://x xxx
+分账计费类 型	splitCalcFeeType	否	String (20)	xxxxxxxx	STANDARD或空： 标准计费INDEPEN DENT：独立计费分账 交易时该参数有效。;( 不参与签名)
+微信支付模 式	nonRawMode	否	String (10)	0	0小程序模式， 1微信客服H5支付模式，不传默认0(不参与签名)
+加密密钥	encryptionKey	否	String (512)	Mssdsqqeq eqdad1324 2dsscscsw e2ee22e	不参与签名;见5.2. 1
+签名方式	signatureType	是	String (30)	SM3WITHSM2	不参与签名
+签名	sign	是	String (512)	d3382b9a9 b08cefc1a 79d276ec0 3d83a	国密SM2签名结果，详 见“第5章数字签名”
+
+返回参数列表
+字段名	变量名	必填	类型	实例值	说明
+交易类型	rt1_bizType	是	String (20)	AppPayH5WFT	下单接口
+返回码	rt2_retCode	是	String (20)	0000	参考附录：返回码
+返回信息	rt3_retMsg	否	String (200)	成功	返回信息，不用参与签名
+商户编号	rt4_customerNumber	是	String (15)	C1800000002	合利宝分配的商户号
+商户订单号	rt5_orderId	是	String (50)	p_20170302185347	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+平台流水号	rt6_serialNumber	否	String (50)	201702241400010002	合利宝交易订单号
+应用名	rt7_appName	否	String (15)	xxxxxxxx	王者荣耀
+支付链接地 址	rt8_payInfo	是	String (64)	weixin://wxpay/bizpa yurl?pr=DDPfbOH	给用户进行WAP支付
+交易金额	rt9_orderAmount	是	String (300)	0.01	订单金额，以元为单位，最 小金额为0.01
+币种类型	rt10_currency	是	String (300)	CNY	CNY:人民币
+支付类型	rt11_payType	是	String (15)	WAP	WAP:WAP
+上游返回码	rt12_channelRetCode	否	String (20)	xxxxxxxx	失败时透传上游返回码,仅供 参考,请以订单状态为准;( 不参与签名)
+客户端类型	rt13_appPayType	否	String (30)	WXPAY	客户端类型(不参与签名)
+子商户公众 号sub_appi d	rt14_appId	否	String (30)	wxdeaaaa2311	子商户公众号sub_appid(不 参与签名)
+渠道子商户 号(U/A/T)	subMerchantNo	否	String (32)	20881011564298xx	(不参与签名)
+签名方式	signatureType	是	String (30)	SM3WITHSM2	不参与签名
+签名	sign	是	String (512)	2612b2160bcb8cd18909 54fe22cefae9	国密SM2签名结果，详见“第 5章数字签名”
+
+
+###4.3  小程序预下单接口
+应用场景
+
+商户系统先调用该接口生成预支付订单，获取返回正确的预支付交易回话标识生成交易串，通过小程序原生态js支付接口调起支付。
+
+请求参数列表
+字段名	变量名	必填	类型	实例值	说明
+交易类型	P1_bizType	是	String (20)	AppPayApp let	交易类型;下单接口小程 序为AppPayApplet
+商户订单号	P2_orderId	是	String (50)	p_2017032 1185347	商户系统内部订单号，要 求50字符以内，同一商 户号下订单号唯一
+商户编号	P3_customerNumber	是	String (15)	C18201322或者 E1264313132	合利宝分配的商户号
+支付类型	P4_payType	是	String (15)	APPLET	APPLET:小程序
+app的I D	P5_appid	是	String (32)	138666688 88@163.co m	支付宝买家账号账号ID .(注:P5_appi d,能获取买家账号账号 ID就送,反之填1); 微信时填小程序id;云 闪付时填1;;非原生模 式时填1；
+设备号	P6_deviceInfo	否	String (60)	WEB	可以为终端设备号(门店 号或收银设备ID)，P C网页或服务窗内支付可 以传”WEB”
+是否原生态	P7_isRaw	否	String (10)	1	是否原生态1：是;0： 否不传默认是1
+用户标识	P8_openid	是	String (100)	txxccjcjl jljojojoj —jijxjnk nhoi	用户id获取方法:如何 获取,可参考6.2注意 事项;非原生模式时填1 ；
+交易金额	P9_orderAmount	是	Number (10.2)	0.01	订单金额，以元为单位， 最小金额为0.01
+币种类型	P10_currency	是	String (30)	CNY	人民币:CNY
+客户端类型	P11_appType	是	String (20)	ALIPAY	ALIPAY：支付宝; 详见附录7.1
+通知回调地 址	P12_notifyUrl	否	String (300)	http://h5 .helipay. com/notif y.php	异步接收合利宝支付结果 通知的回调地址，通知u rl必须为外网可访问
+页面跳转地 址	P13_successToUrl	否	String (300)	http://h5 .helipay. com/succe ss.php	支付完成后，展示支付结 果的页面地址。;非原生 模式时才有效
+下单IP	P14_orderIp	是	String (40)	1270.0.01	下单机器IP
+商品名称	P15_goodsName	是	String (128)	苹果7	商品名称,支付时账单显 示
+商品详情	P16_goodsDetail	否	String (8000)	xxxxxxxx	商品的优惠活动:单品优 惠活动该字段必传，且必 须按照规范上传，JSO N字符串格式，详见附录 【6.3单品优惠活动字 段说明】
+能否使用信 用卡	P17_limitCreditPay	否	String (10)	0	1:禁用信用卡；0:不 限,2:针对支付宝禁用 借记;;不传以平台为准
+备注	P18_desc	否	String (100)	xxxxxxxx	商户备注,原样返回
+商品标记	P21_goodsTag	否	String (255)	xxxxxxxx	商品标记，支付宝平台配 置的商品标记，用于优惠 券或者满减使用..(不 参与签名)
+营销参数规 则	P23_marketingRule	否	String (512)	{“marketi ngMerchan tNo”:”E18 0000001”, ”marketin gAmount”: 10.00,”co uponMerch antNo”:”C 180000000 1”}	营销参数规则,JSON 格式字符串，des加密 传输,详见5.3营销参 数规则说明(不参与签名 )
+实名参数	P24_identity	否	String (256)	{“number” :”4416221 99203xxxx xx”,”name “:”XXX”,” type”:”ID CARD”}	实名支付功能，用于公安 和保险类商户使用，该字 段为JSON格式数据。 微信、支付宝格式不同详 见附录6.9(不参与签 名)
+分账类型	splitBillType	否	String (15)	FIXED_AMOUNT	FIXED_AMOUNT：固定金额（默认，目 前只支持固定金额）；; RATE：比率(不参与 签名)
+分账规则串	ruleJson	否	String (1024)	[“splitBi llMerchan tNo”:”E18 xxxxxxxx” ,”splitBi llAmount” :0.3},;{“ splitBill MerchantN o”:”E18xx xxxxxx”,” splitBill Amount”:0 .3}]	分账规则要加密,Jso n格式字符串，详见分账 规则说明5.4(分账类 型和分账规则串出现时须 2个字段都要上送)(不 参与签名)
+花呗分期数	hbfqNum	否	String (10)	3	目前仅支持3,6,12 期(不参与签名);见e xtendParams 字段
+超时时间	timeExpire	否	String (20)	微信、银联:60; 支付宝:1m	详细规则见6.2.4订 单超时时间参数规则(不 参与签名)
+支付宝行业 数据回流信 息	industryRefluxInfo	否	String (512)	{\”scene_ code\”:\” metro_tra deorder\” ,\”channe l\”:\”xxx x\”,\”sce ne_data\” :{\”asset _name\”:\ “ALIPAY\” }}	支付宝行业数据回流信息 ,json字符串格式详 见6.3.4(不参与签 名);见extendP arams字段
+支付宝点餐 码	foodOrderType	否	String (30)	qr_order	（店内扫码点餐）支付宝 点餐码详见7.7(不参 与签名);见exten dParams字段
+商户门店编 号	storeId	否	String (32)	NJ200	商户自定义的门店编码; (不参与签名)
+支付宝店铺 编号	alipayStoreId	否	String (64)	xxxxxxxx	支付宝店铺编号;(不参 与签名)
+银联用户代 理	userAgent	否	String (100)	UnionPay/ 1.0CloudP ay	银联JS识别用户的客户 端,不填默认是Unio nPay/1.0Clo udPay详见6.2. 3.4银联参数;(不参 与签名)
+银联js用 户id类型	openIdType	否	String (50)	userAuthC ode或openI d	userAuthCod e(临时授权码)/op enId(用户id), 此参表示上送的P8_o penid值的类型;不 填默认是userAut hCode银联参数;( 不参与签名)
+终端绑定号	terminalSysBindNo	否	String (8)	12345678	在平台已报备过的终端信 息的绑定号(采集接口返 回);线下场景时必填; (不参与签名)
+场景信息	sceneInfo	否	String (512)	{“store_i nfo”:{“id “:”SZTX00 1”,”name” :”腾大餐厅”,” area_code “:”440305 “,”addres s”:”科技园中一 路腾讯大厦”}}	该字段用于上报场景信息 ，目前支持上报实际门店 信息。该字段为JSON 对象数据，字段详细见附 录6.8;(不参与签名 )
+学校名称、 场景名称	eduSubject	否	String (200)	学校名称场景名称 其它描述信息	该参数传入学校名称、场 景名称，格式要求：“学 校名称场景名称其它 描述信息”，其中“其它 描述信息部分”不做要求 。;(不参与签名)
+商户传入业 务信息，具 体值要和支 付宝约定	businessParams	否	String (1024)	{“edu_sch ool_id”:” 208800091 3220823”, “edu_scen e”:”SCHOO L_CANTEEN “}	传入json格式的学校 ID和场景ID数据A. eduschool id，学校ID或者校区 ID，从支付宝学校库查 询到到学校I/校区ID ，如果有校区ID则优先 传校区ID，例如：20 88000913220 823；B.edu_s cene，服务场景，教 育行业定义的校园内服务 场景，例如：SCHOO L_CANTEEN；; (不参与签名)
+业务扩展参 数	extendParams	否	String (5000)	{“hbfq_n um”:”3”,” hb_fq_sel ler_perce nt”:”0”,” industry reflux_in fo”:”{\”s cene_code \”:\”metr o_tradeor der\”,\”c hannel\”: \”xxxx\”, \”scene_d ata\”:{\” asset_nam e\”:\”ALI PAY\”}}”, “food_ord er_type”: “qr_order “,”DYNAMI C_TOKEN_O UT_BIZ_NO “:”123456 789”}	扩展参数目前是扫码支付 宝用:https:// open.alipay .com/api(不参 与签名);详见附录6. 10
+分账计费类 型	splitCalcFeeType	否	String (20)	xxxxxxxx	STANDARD或空： 标准计费INDEPEN DENT：独立计费分账 交易时该参数有效。;( 不参与签名)
+加密密钥	encryptionKey	否	String (512)	Mssdsqqeq eqdad1324 2dsscscsw e2ee22e	不参与签名;见5.2. 1
+签名方式	signatureType	是	String (30)	SM3WITHSM 2	不参与签名
+签名	sign	是	String (512)	d3382b9a9 b08cefc1a 79d276ec0 3d83a	国密SM2签名结果，详 见“第5章数字签名”
+跳转小程序渠道	noneRawAppletMode	String (30)	否	CHANNEL	跳转到合利宝小程序专用 参数必传，不参与签名
+
+
+返回参数列表
+字段名	变量名	必填	类型	实例值	说明
+交易类型	rt1_bizType	是	String (20)	AppPayApp let	小程序支付
+返回码	rt2_retCode	是	String (20)	0000	参考附录：返回码
+返回信息	rt3_retMsg	否	String (200)	成功	返回信息，不用参与签名
+商户编号	rt4_customerNumber	是	String (15)	C18000000 02	合利宝分配的商户号
+商户订单号	rt5_orderId	是	String (50)	p_2017030 2185347	商户系统内部订单号，要 求50字符以内，同一商 户号下订单号唯一
+平台流水号	rt6_serialNumber	否	String (50)	201702241 400010002	合利宝交易订单号
+支付类型	rt7_payType	是	String (15)	APPLET	APPLET:小程序支 付
+账号ID	rt8_appid	否	String (32)	wxd951efh 567ht3698	app账号ID
+动态口令	rt9_tokenId	否	String (64)	xxxxxxxx	预支付ID,用于后续接 口调用中使用,预留参数
+原生态js 支付信息	rt10_payInfo	是	String (255)	{“tradeNO “:”201607 112100100 461028428 7324”,”st atus”:”0” };注：json串 格式	返回，json格式的字 符串，唤起钱包支付控件
+交易金额	rt11_orderAmount	是	Number (10,2)	0.01	订单金额，以元为单位， 最小金额为0.01
+币种类型	rt12_currency	是	String (10)	CNY	CNY:人民币
+上游返回码	rt13_channelRetCod e	否	String (20)	xxxxxxxx	失败时透传上游返回码, 仅供参考,请以订单状态 为准;(不参与签名)
+客户端类型	rt14_appPayType	否	String (30)	ALIPAY	客户端类型(不参与签名 )
+渠道子商户 号(U/A /T)	subMerchantNo	否	String (32)	208810115 64298xx	(不参与签名)
+签名方式	signatureType	是	String (30)	SM3WITHSM 2	不参与签名
+签名	sign	是	String (512)	2612b2160 bcb8cd189 0954fe22c efae9	国密SM2签名结果，详 见“第5章数字签名”
+
+
+###5.支付交易结果异步通知
+用户支付完成后，合利宝以post请求方式把扫码支付结果推送给商户系统，商户需要接收处理，并返回应答（响应success字符串）。
+重发机制
+对后台通知交互时，如果收到商户的应答不是成功或超时，合利宝认为通知失败，合利宝重新发起通知，五次回调通知间隔时间为15秒、15秒、30秒、180秒、3600秒；尽可能提高通知的成功率，但不保证通知最终能成功。
+由于存在重新发送后台通知的情况，因此同样的通知可能会多次发送给商户系统。商户系统必须能够正确处理重复的通知。
+推荐的做法是，当收到通知进行处理时，首先检查对应订单的状态，判断该通知是否已经处理过，如果没有处理过再进行处理，如果处理过直接返回结果成功。
+特别注意：商户后台接收到支付结果通知参数后，要对接收到通知参数里的订单号rt5_orderId和订单金额rt10_orderAmount和自身业务系统的订单和金额做校验，校验一致后才更新数据库订单状态。
+
+通知地址
+该地址是通过【下单接口】中请求参数P{x}_notifyUrl设置，通知url必须可直接访问的url,不可以携带参数。
+通知结果参数
+
+字段名	变量名	必填	类型	实例值	说明
+商户号	rt1_customerNumber	是	String (15)	C1800000002	合利宝分配的商户号
+商户订单号	rt2_orderId	是	String (50)	p_2017030 2185347	商户系统内部订单号，要 求50字符以内，同一商 户号下订单号唯一
+平台流水号	rt3_systemSerial	否	String (50)	201702241 400010002	合利宝系统唯一支付流水 号
+订单状态	rt4_status	是	String (20)	SUCCESS	INIT:已接收DOI NG:处理中SUCCE SS:成功FAIL:失 败CLOSE:关闭;C ANCEL:撤销
+订单金额	rt5_orderAmount	是	Number (10.2)	0.01	订单金额，以元为单位， 最小金额为0.01
+币种	rt6_currency	是	String (10)	CNY	CNY:人民币
+通知时间	rt7_timestamp	是	String (20)	148844620 4985	精确到通知时间的毫秒数
+备注	rt8_desc	是	String (100)	备注	备注
+用户ope nId	rt10_openId	否	String (40)	o-Rj7wCKM UFF7dSbWa oPlssEtDq Q	微信用户openId( 暂不用),不参与签名
+第三方平台 订单号	rt11_channelOrderN um	否	String (40)	123456789 0	第三方平台订单号,不参 与签名
+订单完成时 间	rt12_orderComplete Date	否	String (60)	2018-03-1 200:00:00	格式:yyyy-MM- ddHH:mm:ss( 不参与签名)
+支付卡类型	rt13_onlineCardTyp e	是	String (20)	CFT/CREDI T	DEBIT(借记卡)C REDIT(贷记卡); UNKNOWN(未知) CFT(钱包零钱);不 参与签名
+上游返回: 现金支付金 额	rt14_cashFee	否	Number (10.2)	100	上游返回:现金支付金额 ,(订单总金额-现金券 金额=现金支付金额), 不参与签名
+上游返回: 现金券金额	rt15_couponFee	否	Number (10.2)	88	上游返回:现金券金额, 不参与签名
+支付宝使用 的资金渠道 和优惠信息	rt16_fundBillList	否	String (255)	{“aaa;”,” bbb”}	支付宝时返回(不参与签 名)
+微信/支付 宝/云闪付 等交易单号	rt17_outTransactio nOrderId	否	String (40)	123456789 0	成功时有返回(不参与签 名)
+用户付款银	rt18_bankType	否	String (40)	Icbc-cred it	用户付款银行,成功时有 返回(不参与签名),具 体见附件:
+subOp enId	rt19_subOpenId	否	String (40)	aaRj7wCKM UFF7dSbWa oPlssTsx/ 201833535 35353	微信子商户subOpe nId.或支付宝子商户 用户buyer_id( 不参与签名)
+通道订单属 性	rt20_orderAttribut e	否	String (30)	UNDIRECT_ DEFAULT	标记通道订单属性UND IRECT_DEFAU LT:间连通道;DIR ECT_CHANNEL 直连通道(不参与签名)
+营销参数规 则	rt21_marketingRule	否	String (512)	{“marketi ngMerchan tNo”:”E18 0000001”, ”marketin gAmount”: 10.00,”co uponMerch antNo”:”C 180000000 1”}	营销参数规则,JSON 格式字符串，des加密 传输,详见5.3营销参 数规则说明(不参与签名 )
+优惠信息详 情	rt22_promotionDeta il	否	String (1024)	JSON串	上游返回的优惠详情(不 参与签名)
+实际支付金 额	rt23_paymentAmount	否	Number (10,2)	xxxxxxxx	用户实际支付金额-(不 参与签名)
+入账面额	rt24_creditAmount	否	Number (10,2)	xxxxxxxx	入账面额(不扣手续费) (不参与签名)
+子商户公众 号sub_ appid	rt25_appId	否	String (30)	wxdeaaaa2 311	子商户公众号sub_a ppid(不参与签名)
+客户端类型	rt26_appPayType	否	String (30)	WXPAY	客户端类型(不参与签名 )
+支付类型	rt27_payType	否	String (30)	SCAN	支付类型(不参与签名)
+分账规则及 状态	ruleJson	否	String (1024)	[{“splitB illMercha ntNo”:”E1 8xxxxxxxx “,”splitB illAmount “:0.3,”sp litBillMe rchantEma il”:”xxxx x@163.com “,”splitB illOrderN um”:”1556 013197418 CBoywwwq” ,”splitBi llOrderSt atus”:”FA ILED”},{“ splitBill MerchantN o”:”E18xx xxxxxx”,” splitBill Amount”:0 .3,”split BillMerch antEmail” :”xxxxx@1 63.com”,” splitBill OrderNum” :”1556013 197418CBo ywwwq”,”s plitBillO rderStatu s”:”FAILE D”}]	响应分账结果规则以及对 应状态(不参与签名)
+交易手续费	productFee	否	Number (10,2)	0.01	该笔交易产生的手续费, 成功时返回(不参与签名 )
+渠道结算金 额	channelSettlementA mount	否	Number (10,2)	1	渠道结算金额,成功时返 回(不参与签名)
+商户实际入 账发生额	realCreditAmount	否	Number (10,2)	0.09	该笔交易成功后收单商户 实际入账发生额,成功时 返回(不参与签名)
+微信交易类 型	tradeType	否	String (32)	MICROPAY	微信成功时有返回,见7 .5(不参与签名)
+渠道支付宝 费率活动标 识	chargeFlag	否	String (64)	bluesea_1	支付宝活动通道成功时有 返回,见7.6(不参与 签名)
+银联二维码 返回的付款 方附加数据	upAddData	否	String (3000)	xxxx	Base64编码的(不 参与签名)
+银联二维码 返回的保留 数据	resvData	否	String (1000)	xxxxxxxx	Base64编码的(不 参与签名)
+渠道子商户 号(U/A /T)	subMerchantNo	否	String (32)	208810115 64298xx	(不参与签名)
+商户费率	feeRate	否	Number (10,4)	0.0001	商户交易的费率,被扫支 付成功时返回;(不参与 签名)
+平台商补贴 的手续费	feeAccountAmt	否	Number (10,2)	0.01	单位:元,被扫支付成功 时返回;(不参与签名)
+加密密钥	encryptionKey	否	String (512)	Mssdsqqeq eqdad1324 2dsscscsw e2ee22e	不参与签名;见5.2. 1
+支付宝优惠 信息详情	voucherDetailList	否	String	[{“amount “:”0.50”, “merchant Contribut e”:”0.50” ,”name”:” 0.50元代金券” ,”otherCo ntribute” :”0.00”,” type”:”AL IPAYBIZ VOUCHER”, “voucherI d”:”20221 230000730 0284910F0 60LKB”}]	支付宝优惠券信息列表; (不参与签名)
+实收手续费	receiverFee	否	Number (10,2)	0.01	交易成功时返回(不参与 签名)
+后收手续费	offlineFee	否	Number (10,2)	0.01	交易成功时返回(不参与 签名)
+签名方式	signatureType	是	String (30)	SM3WITHSM 2	不参与签名
+签名	sign	是	String (512)	d2eb1570ea8fb8d560c354fa1b5db103	国密SM2签名结果。
+通知结果响应
+
+合利宝后台把支付结果通知商户，商户根据支付结果做业务处理，商户处理后需以字符串的形式反馈处理结果,如一直未有效接收回调和响应,该商户会进入平台通知黑名单,不再发异步通知：
+
+返回结果	结果说明
+success	处理成功，合利宝系统收到此响应结果后不会再重发通知
+fail或其他字符	处理不成功，合利宝系统收到此响应结果或没有响应，系统安装通知重发机制（见上文重发机制）重发通知。
+
+###6.退款接口
+应用场景
+
+本接口提供所有合利宝微信、支付宝条码支付成功订单的退款功能.
+
+请求参数
+
+字段名	变量名	必填	类型	实例值	说明
+交易类型	P1_bizType	是	String (20)	AppPayRefund	退款接口
+商户订单号	P2_orderId	否	String (50)	p_20170302185347	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一与”合利宝原订单 号”二选一
+商户编号	P3_customerNumber	是	String (15)	C1800000002	合利宝分配的商户号
+退款订单号	P4_refundOrderId	是	String (50)	t_20170302185347	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+退款金额	P5_amount	是	Number (10,2)	0.01	订单金额，以元为单位，最 小金额为0.01
+通知回调地 址	P6_callbackUrl	否	String (300)	http://wap.helipay.c om/notify.php	异步接收合利宝退款结果通 知的回调地址，通知url必须 为外网可访问的url，不能 携带参数。
+退款原因/备 注	P7_desc	否	String (80)	不想要了,退款	若商户传入，会在下发给用 户的退款账单消息中体现退 款原因(不参与签名)
+合利宝原订 单号	P8_orderSerialNumber	否	String (50)	xxxxxxxx	合利宝平台原订单与”商户订 单号”二选一(不参与签名)
+退款规则串	ruleJson	否	String (1024)	[{“merchantNo”:”E18x xxxxxxx”,”refundAmou nt”:0.01},{“merchant No”:”E18xxxxxxxx”,”r efundAmount”:0.01}]	分账退款规则JSON串。单元 结构：merchantNo(String值 类型)refundAmount(Numbe r值类型)需使用DES进行对称 加密;URLEncoder.encode( P19_ruleJson,”UTF-8”)，只 能传入原分账订单成功的商 户邮箱，可以传商户自己； (不参与签名)
+银联二维码 平台收款方 附加数据	acqAddnData	否	String (8000)	详见6.3	收款方附加数据;退款请求， 上送参加银联二维码通道营 销商品维度信息。(不参与 签名);银联二维码平台参加 单品营销的订单发生退款时 必须上送
+加密密钥	encryptionKey	否	String (512)	Mssdsqqeqeqdad13242d sscscswe2ee22e	不参与签名;见5.2.1
+签名方式	signatureType	是	String (30)	SM3WITHSM2	不参与签名
+签名	sign	是	String (512)	75A989CC9985E6D2BC2D53D9EDA3C31F	国密SM2签名结果。
+返回参数
+
+字段名	变量名	必填	类型	实例值	说明
+交易类型	rt1_bizType	是	String (20)	AppPayRefund	退款接口
+返回码	rt2_retCode	是	String (20)	0000	参考附录：返回码
+返回信息	rt3_retMsg	否	String (200)	成功	返回信息，不用参与签名
+商户编号	rt4_customerNumber	是	String (15)	C1800000002	合利宝分配的商户号
+商户订单号	rt5_orderId	是	String (50)	p_20170302185347	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+商户退款订 单号	rt6_refundOrderNum	是	String (50)	t_20170302185347	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+平台流水号	rt7_serialNumber	否	String (50)	100000000000123456	合利宝平台唯一流水号
+交易金额	rt8_amount	否	Number (10,2)	0.01	订单金额，以元为单位，最 小金额为0.01
+币种类型	rt9_currency	否	String (30)	CNY	CNY:人民币
+签名方式	signatureType	是	String (30)	SM3WITHSM2	不参与签名
+签名	sign	是	String (512)	75A989CC9985E6D2BC2D53D9EDA3C31F	国密SM2签名结果。
+
+###7.退款结果异步通知
+用户退款请求处理完成后，合利宝以post请求方式把结果推送给商户系统，商户需要接收处理。
+
+退款通知地址
+
+该地址是通过【退款下单接口】中请求参数P6_callbackUrl设置，通知url必须可直接访问的url,不可以携带参数。
+
+通知结果参数
+
+字段名	变量名	必填	类型	实例值	说明
+商户号	rt1_customerNumber	是	String (15)	C1800000002	合利宝分配的商户号
+商户订单号	rt2_orderId	是	String (50)	p_20170302185347	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+商户退款订 单号	rt3_refundOrderId	是	String (50)	201702241400010002	商户系统唯一退款订单号
+平台退款流 水号	rt4_systemSerial	是	String (20)	1233455	合利宝平台唯一退款流水号
+退款订单状 态	rt5_status	是	String (20)	SUCCESS	INIT:已接收DOING:处理中S UCCESS:成功FAIL:失败;CLO SE:关闭
+退款订单金 额	rt6_amount	是	Number (10.2)	0.01	退款订单金额，以元为单位 ，最小金额为0.01
+币种	rt7_currency	是	String (10)	CNY	CNY:人民币
+通知时间	rt8_timestamp	是	String (20)	1488446204985	精确到通知时间的毫秒数
+订单完成时 间	rt9_refundOrderCompleteDat e	否	String (60)	2018-03-1200:00:00	格式:yyyy-MM-ddHH:mm:ss( 不参与签名)
+第三方平台 退款订单号	rt10_refundChannelOrderNum	否	String (50)	12345678	第三方平台退款订单号(排除 签名)
+退款原因/备 注	rt11_desc	否	String (80)	不想要了,退款	若商户传入，会在下发给用 户的退款账单消息中体现退 款原因(不参与签名)
+通道订单属 性	rt12_refundOrderAttribute	否	String (30)	UNDIRECT_DEFAULT	标记通道订单属性UNDIRECT _DEFAULT:间连通道;DIRECT _CHANNEL直连通道(不参与签 名)
+客户端类型	rt13_appPayType	否	String (30)	WXPAY	客户端类型(不参与签名)
+支付类型	rt14_payType	否	String (30)	SCAN	支付类型(不参与签名)
+退款营销规 则串	refundMarketingRule	否	String (256)	明串示例:{refundMark etingMerchantNo:”E18 0000001”,refundMarke tingAmount:10.00,ref undCouponMerchantNo: ”E1800000002”}	营销参数规则,JSON格式字符 串，des加密返回,详见5.3 营销参数规则说明(不参与签 名)
+退款优惠详 情	refundPromotionDetail	否	String (512)	微信/支付宝等卡券优惠 详情串	(不参与签名)
+退款面额	debitAmount	否	Number (10,2)	0.01	订单金额，以元为单位，最 小金额为0.01(不参与签名)
+用户实际退 款到账金额	refundCashAmount	否	Number (10,2)	0.01	订单金额，以元为单位，最 小金额为0.01(不参与签名)
+通道上游业 务结果描述	retReasonDesc	否	String (255)	结果信息描述	(不参与签名)
+银联二维码 平台付款方 附加数据	upAddData	否	String (8000)	详见6.3.3.2	(不参与签名)
+退还手续费	productFee	否	Number (10,2)	0.01	本次退款成功,退还手续费, 单位:元;(不参与签名)
+退还平台商 补贴的手续 费	feeAccountAmt	否	Number (10,2)	0.01	本次退款成功,退还平台商补 贴的手续费,单位:元;(不参 与签名)
+退款分账规 则串	ruleJson	否	String (1024)	[{“refundAmount”:2,” splitBillMerchantNo” :”E18xxxxxxxx”,”spli tBillMerchantEmail”: “1111@163.com”,”spli tBillOrderNum”:”1556 013197418CBoywwwq”,” withPayAdvanceTrx”:” false”,”refundStatus “:”FAILED”},{“refund Amount”:2.53,”mercha ntNo”:”E18xxxxxxxx”, “splitBillMerchantEm ail”:”33@qq.com”,”sp litBillOrderNum”:”15 56013197468fpGHnuET” ,”withPayAdvanceTrx” :”false”,”refundStat us”:”SUCCESS”}]	退款分账规则串及状态，见 附录5.4;(不参与签名)
+是否垫付	withPayAdvanceTrx	否	String (10)	false	分账退款是否垫付true：是 ，false：否;(不参与签名)
+退还实收手 续费	receiverFee	否	Number (10,2)	0.01	成功时返回(不参与签名)
+退还后收手 续费	offlineFee	否	Number (10,2)	0.01	成功时返回(不参与签名)
+签名方式	signatureType	是	String (30)	SM3WITHSM2	不参与签名
+签名	sign	是	String (512)	d2eb1570ea8fb8d560c354fa1b5db103	国密SM2签名结果。
+
+4.1单笔代付
+请求参数
+字段名	变量名	必填	类型	示例	说明
+交易类型	P1_bizType	是	String (20)	Transfer	单笔代付接口
+商户订单号	P2_orderId	是	String (50)	120000000000001	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+商户编号	P3_customerNumber	是	String (15)	C1800000002/EXXXX	合利宝分配商户号
+金额	P4_amount	是	Number (10.2)	0.01	金额单位为元，最少值0.01
+银行编码	P5_bankCode	是	String (20)	CCB	见附录银行编码表
+银行账户号	P6_bankAccountNo	是	String	SxtwUQ8tohS6qmcjVP CEKGsJ8qunwZXTBHda szF1LBDVPnaa7xggET RqM7JKc	银行账户号；SM4算法加密
+银行账户名	P7_bankAccountName	是	String (50)	张三	银行账户名
+业务类型	P8_biz	是	String (10)	B2C	B2B:对公;B2C:对私
+银行联行号	P9_bankUnionCode	否	String (20)	102100004951	银行联行号;对公联行号必填
+手续费收取 方式	P10_feeType	是	String (20)	PAYER	PAYER:付款方收取手续费; RECEIVER:收款方收取手续费
+是否加急	P11_urgency	是	String (20)	true	固定值;true：加急
+打款备注	P12_summary	否	String (50)	结算款	打款备注
+付款方信息	P13_payerInfo	否	String	{“payerAccountNo":"付款方商户编号","payerName":"付款方名称", “payerShowName":"展示名","payerAccountNo":" 付款方账户号"}	JSON字符串，结构如下所示 不参与签名;SM4算法加密
+订单状态通知地址	notifyUrl	是	String (200)	http://192.168.33. 50:8062/transfer/n otify	商户用于接收合利宝通知代 付结果的地址,本文档中4.3 节中代付结果通知地址即:n otifyUrl;特别地,notifyUr l接收通知成功后必须返回: “success”;;notifyUrl不参 与签名
+签名	sign	是	String (200)	SxtwUQ8tohS6qmcjVP CEKGsJ8qunwZXTBHda szF1LBDVPnaa7xggET RqM7JKc	SM2签名结果，详见“5.4节S M2签名”;URLEncoder.encod e(sign,”UTF-8”)
+签名类型	signatureType	是	Sting	SM3WITHSM2	SM3WITHSM2;固定值，不参与 签名
+加密秘钥	encryptionKey	是	String	SxtwUQ8tohS6qmcjVP CEKGsJ8qunwZXTBHda szF1LBDVPnaa7xggET RqM7JKc	参数加密秘钥，不参与签名
+付款方信息：
+
+字段名	变量名	必填	类型	示例	说明
+付款方名称	payerName	是	String (30)	xxxxxxxx	xxxxxxxx
+付款方简称	payerShowName	是	String (30)	xxxxxxxx	xxxxxxxx
+付款方编号	payerAccountNo	是	String (50)	xxxxxxxx	xxxxxxxx
+响应参数
+字段名	变量名	必填	类型	示例	说明
+交易类型	rt1_bizType	是	String (20)	Transfer	单笔代付接口
+返回码	rt2_retCode	是	String (20)	0000	详情见附录-返回码
+返回信息	rt3_retMsg	否	String (200)	成功	不参与签名;详情见附录-返 回码
+商户编号	rt4_customerNumber	是	String (15)	C1800000002	合利宝分配商户号
+商户订单号	rt5_orderId	是	String (50)	20170302000001	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+平台流水号	rt6_serialNumber	否	String (50)	1217030200000001	合利宝系统唯一流水号
+签名	sign	是	String (200)	0533368b60e9d826b0 66105affccf7bc	SM2签名结果，详见“5.4节S M2签名”;URLEncoder.encod e(sign,”UTF-8”)
+签名类型	signatureType	是	Sting	SM3WITHSM2	SM3WITHSM2;固定值，不参与 签名
+
+代付附录-银行编码表
+编码	描述
+ABC	中国农业银行	
+CMBCHINA	招商银行	
+CCB	中国建设银行	
+BOCO	交通银行	
+BOC	中国银行	
+CMBC	中国民生银行	
+CGB	广发银行	
+HXB	华夏银行	
+POST	中国邮政储蓄银行	
+ECITIC	中信银行	
+CEB	中国光大银行	
+PINGAN	平安银行	
+CIB	兴业银行	
+SPDB	浦发银行	
+BCCB	北京银行	
+BON	南京银行	
+NBCB	宁波银行	
+BEA	东亚银行	
+SRCB	上海农商银行	
+SHB	上海银行	
+CZB	浙商银行	
+TCCB	天津银行	
+HSBANK	徽商银行	
+HFBANK	恒丰银行	
+CBHB	渤海银行	
+JSB	江苏银行	
+CITI	花旗银行	
+THX	贵阳银行	
+HANGSENGBANK	恒生银行	
+GDNYBANK	南粤银行	
+LZBANK	兰州银行
+
+附录-返回码
+返回码	描述	说明
+0000	接收成功	
+0001	订单已存在	
+0002	接收失败	
+0003	账户余额不足	
+0004	账户状态异常	
+0005	订单不存在	
+0006	打款超过限额
+打款备注
+注:代付接口中的打款备注内容，必须要按照通用或商户定制的内容填写上传，不传或错传则默认为“结算”。
+
+4.3代付结果通知(主动通知，无请求参数)
+响应参数
+字段名	变量名	必填	类型	示例	说明
+交易类型	rt1_bizType	是	String (20)	Transfer	代付
+返回码	rt2_retCode	是	String (20)	0000	详情见附录-返回码
+返回信息	rt3_retMsg	是	String (200)	成功	详情见附录-返回码
+商户编号	rt4_customerNumber	是	String (15)	201703020 00001	订单编号商
+商户订单号	rt5_orderId	是	String (50)	100000000 000001	户系统内部订单号，要求 50字符以内，同一商户 号下订单号唯一
+平台流水号	rt6_serialNumber	是	String (50)	121703020 0000001	通知记录合利宝系统唯一 流水号
+打款状态	rt7_orderStatus	是	String (50)	DOING	RECEIVE已接收 INIT初始化 DOING处理中 SUCCESS成功 FAIL失败; REFUND退款
+通知类型	rt8_notifyType	是	String (50)	RETURN_RE MITTANCE	ORDER_STATUS:普通通知； RETURN_REMITTANCE:退汇通知
+返回信息	rt9_reason	是	String (100)	成功	成功或者失败的原因
+订单创建时 间	rt10_createDate	是	String (100)	2018-09-1019:58:00	订单创建时间
+订单完成时 间	rt11_completeDate	是	String (100)	2018-09-1019:59:00	订单完成时间
+订单金额	rt12_amount	否	String (50)	0.01	不参与签名，订单金额
+签名	sign	是	String (200)	75a989cc9 985e6d2bc 2d53d9eda 3c31f	SM2签名结果，详见“ 5.4节SM2签名”U RLEncoder.e ncode(sign, “UTF-8”)
+签名类型	signatureType	是	Sting	SM3WITHSM 2	SM3WITHSM2固 定值，不参与签名
+
+
+扫码产品(除了代付其他都属于扫码产品)返回码
+返回码	描述	说明
+0000	成功	
+0001	接收成功	退款请求接口返回
+0002	已存在	
+0003	失败	具体见实际返回
+0004	不存在	
+0005	单笔金额超过最大限额	
+0006	单笔金额小于最低限额	
+0007	日限额超限	
+0008	系统维护中，请联系管理员	
+0009	订单状态非法，不能进行关闭/撤销操作	
+0010	退款金额超过可退金额	
+0011	请检查请求报文参数	
+0012	调渠道退款接口查询二级商户号为空	**新增码
+0013	交易金额须大于手续费金额	当前订单金额不可小于手续费金额
+0014	退款金额有误	
+0015	该笔订单有退款正在处理中	
+0016	分账规则解析失败	
+0017	原订单不存在或状态异常	
+0018	账户余额不足	
+0019	扣减账户失败	
+0020	退款金额解析失败	
+0021	详见接口返回信息	详情见返回信息说明
+0022	通道成本未设置	
+0023	手续费未设置	
+0024	商户报备未成功，请联系服务商处理后重试	
+0025	未找到通道路由	
+0026	系统内部错误，请联系管理员	
+0027	上游通道请求异常	注意:刷卡时请调查询接口，查询当前订单状态，并根据订单的状态决定下一步的操作。
+0028	报备失败	
+0029	上游通道响应异常	注意:刷卡时请调查询接口，查询当前订单状态，并根据订单的状态决定下一步的操作。
+0030	上游响应数据验签失败	注意:刷卡时请调查询接口，查询当前订单状态，并根据订单的状态决定下一步的操作。
+0031	上游返回订单金额不匹配	
+0100	风控阻断该交易	
+0064	营销或卡券商户资金账户余额不足	**新增码
+0065	未上送卡券商编	**新增码
+0066	输入的退款申请金额较低，所以无法退款成功，建议将本订单进行整单退款或调整金额再重试	**新增码
+0067	支付后15s后再调用撤销订单接口！	**新增码
+0068	订单状态非处理中，不能进行撤销操作！	**新增码
+0070	通道路由未配置	**新增码
+0071	请求流水不唯一	**新增码
+0072	订单撤销中，请稍后查询	**新增码
+0073	订单已撤销	**新增码
+0074	交易状态未知，请查询对账结果	**新增码
+0075	订单待用户支付中，请发起查询	**新增码
+0076	二维码交易失败或失效	**新增码
+0077	用户不存在	**新增码
+0078	渠道商户状态异常	**新增码
+0079	银行卡无效，或验证失败，或卡状态异常	**新增码
+0080	不支持该版本的支付宝支付，请升级到最新版本	**新增码
+0084	渠道日切时间限制扫码退款置失败	**新增码
+0085	渠道日切时间限制扫码退款置已接收,请稍后查询	**新增码
+0086	撤销失败,超过有效期	**新增码
+0087	上游无明确终态,请重试撤销	**新增码
+0101	该时段禁止交易	**新增码
+
+5.1商户余额查询
+测试请求地址：
+http://test.trx.helipay.com/trx/merchant/interface.action
+生产请求地址：
+http://pay.trx.helipay.com/trx/merchant/interface.action
+
+请求参数列表
+字段名	变量名	必填	类型	实例值	说明
+交易类型	P1_bizType	是	String (20)	MerchantAccountQuery	商户账户查询接口
+商户编号	P2_customerNumber	是	String (15)	C1800000002	商户号由合利宝分配
+时间戳	P3_timestamp	是	String (15)	20170708155310	格式：yyyyMMddHHmmss;14位 数字，精确到秒
+签名	sign	是	String (40)	0533368B60E9D826B066 105AFFCCF7BC	MD5签名结果，详见“第4章数 字签名”
+签名方式	signatureType	否	String(30)	MD5或者SM3WITHSM2	不参与签名(不传默认是MD5)
+返回参数列表
+字段名	变量名	必填	类型	实例值	说明
+交易类型	rt1_bizType	是	String (20)	MerchantAccountQuery	确认支付接口
+返回码	rt2_retCode	是	String (20)	0000	返回0000即为成功,只有当成 功时，才会有账户信息
+返回信息	rt3_retMsg	否	String (200)	成功	返回信息
+商户编号	rt4_customerNumber	是	String (15)	C1800000002	商户号由合利宝分配
+账户状态	rt5_accountStatus	是	String (50)	AVAILABLE	AVAILABLE(“正常”,1),FROZ EN(“冻结”,2),FREEZE_DEBI T(“冻结出帐”,3),FREEZE_C REDIT(“冻结入账”,4),;CAN CELLED(“已注销”,5);
+账户余额	rt6_balance	是	String (50)	0.01	订单金额，以元为单位，最 小金额为0.01；
+冻结余额	rt7_frozenBalance	否	String (15)	0.01	订单金额，以元为单位，最 小金额为0.01；;因触犯风控 规则而进行冻结的金额；
+D0余额	rt8_d0Balance	是	Number (10,2)	0.01	订单金额，以元为单位，最 小金额为0.01
+T1余额	rt9_T1Balance	是	String (20)	0.01	订单金额，以元为单位，最 小金额为0.01
+币种	rt10_currency	是	String (20)	xxxxxxxx	CNY
+创建时间	rt11_createDate	是	Date	2017-06-2014:02:17	格式：yyyy-MM-ddHH:mm:ss
+备注	rt12_desc	否	String (255)	备注信息	备注信息
+D1余额	rt13_d1Balance	是	Number (10,2)	0.01	D1余额,不参与签名
+充值金额	rt14_rechargeBalance	是	Number (10,2)	xxxxxxxx	充值金额，根据结算周期清 0（T1则次工作日清0，D1则 次日清0）不参与签名
+可结算金额	rt15_amountToBeSettled	是	Number	0.01	商户可出款金额；计算公式 ：可结算金额（D1结算周期 ）=D1余额+充值金额-冻结余 额；可结算金额（T1结算周 期）=T1余额+充值金额-冻 结余额；可结算金额（D0结 算周期）=账户余额–冻结余 额；不参与签名
+签名	sign	是	String (40)	0533368B60E9D826B066 105AFFCCF7BC	MD5签名结果，详见“第4章数 字签名”
+签名方式	signatureType	否	String(30)	MD5或者SM3WITHSM2	不参与签名(有传才有值)
+
+
+5.2交易订单查询接口
+应用场景
+
+本接口提供所有合利宝微信、支付宝条码支付订单的查询功能，商户可以通过查询订单接口主动查询订单信息。
+
+请求参数
+
+字段名	变量名	必填	类型	实例值	说明
+交易类型	P1_bizType	是	String (20)	AppPayQuery	订单查询接口
+商户订单号	P2_orderId	否	String (50)	p_2017030 2185347	商户系统内部订单号，要 求50字符以内，同一商 户号下订单号唯一与”合 利宝订单流水号”二选一
+商户编号	P3_customerNumber	是	String (15)	C18000000 02	合利宝分配的商户号
+合利宝订单 流水号	P4_serialNumber	否	String (50)	xxxxxxxx	合利宝平台返回的订单流 水号与”商户订单号”二 选一(不参与签名)
+签名方式	signatureType	是	String (30)	SM3WITHSM 2	不参与签名
+签名	sign	是	String (512)	0533368B6 0E9D826B0 66105AFFC CF7BC	国密SM2签名结果，详 见“第5章数字签名”
+返回参数
+
+字段名	变量名	必填	类型	实例值	说明
+交易类型	rt1_bizType	是	String (20)	AppPayQue ry	订单查询接口
+返回码	rt2_retCode	是	String (20)	0000	返回码
+返回信息	rt3_retMsg	否	String (200)	成功	返回信息；不参与签名
+商户编号	rt4_customerNumber	是	String (15)	C18000000 02	合利宝分配的商户号
+商户订单号	rt5_orderId	是	String (50)	p_2017030 2185347	商户系统内部订单号，要 求50字符以内，同一商 户号下订单号唯一
+平台流水号	rt6_serialNumber	否	String (50)	100000000 000123456	合利宝平台唯一流水号
+订单状态	rt7_orderStatus	否	String (10)	SUCCESS	INIT：已接收DOI NG：处理中SUCCE SS：成功FAIL：失 败CLOSE：关闭;C ANCEL:撤销
+交易金额	rt8_orderAmount	否	Number (10,2)	0.01	订单金额，以元为单位， 最小金额为0.01
+币种类型	rt9_currency	否	String (30)	CNY	CNY:人民币
+订单描述	rt10_desc	否	String (100)	Iphone7	不参与签名
+用户ope nId	rt11_openId	否	String (40)	o-Rj7wCKM UFF7dSbWa oPlssEtDq Q	微信用户openId( 暂不用),不参与签名
+第三方平台 订单号	rt12_channelOrderN um	否	String (40)	123456789 0	第三方平台订单号,不参 与签名
+订单完成时 间	rt13_orderComplete Date	否	String (60)	2018-03-1 200:00:00	格式:yyyy-MM- ddHH:mm:ss( 不参与签名)
+上游返回: 现金支付金 额	rt14_cashFee	否	Number (10.2)	100	上游返回:现金支付金额 ,(订单总金额-现金券 金额=现金支付金额), 不参与签名
+上游返回: 现金券金额	rt15_couponFee	否	Number (10.2)	88	上游返回:现金券金额, 不参与签名
+支付卡类型	rt16_onlineCardTyp e	是	String (20)	CFT/CREDI T	DEBIT(借记卡)C REDIT(贷记卡); UNKNOWN(未知) CFT(钱包零钱);不 参与签名
+支付宝使用 的资金渠道 和优惠信息	rt17_fundBillList	否	String (255)	{“aaa;”,” bbb”}	支付宝时返回(不参与签 名)
+微信/支付 宝/云闪付 等交易单号	rt18_outTransactio nOrderId	否	String (40)	123456789 0	成功时有返回(不参与签 名)
+用户付款银 行	rt19_bankType	否	String (40)	Icbc-cred it	用户付款银行,成功时有 返回(不参与签名),具 体见附件:
+subOp enId	rt20_subOpenId	否	String (40)	aaRj7wCKM UFF7dSbWa oPlssTsx/ 201833535 35353	微信子商户subOpe nId.或支付宝子商户 用户buyer_id( 不参与签名)
+通道订单属 性	rt21_orderAttribut e	否	String (30)	UNDIRECT_ DEFAULT	标记通道订单属性UND IRECT_DEFAU LT:间连通道;DIR ECT_CHANNEL 直连通道(不参与签名)
+营销参数规 则	rt22_marketingRule	否	String (512)	{“marketi ngMerchan tNo”:”E18 0000001”, ””:10.00, ”couponMe rchantNo” :”C180000 0001”}	营销参数规则,JSON 格式字符串，des加密 传输,详见5.3营销参 数规则说明(不参与签名 )
+优惠信息详 情	rt23_promotionDeta il	否	String (1024)	JSON串	上游返回的优惠详情(不 参与签名)
+入账面额	rt24_creditAmount	否	Number (10,2)	xxxxxxxx	入账面额(不扣手续费) (不参与签名)
+实际支付金 额	rt25_paymentAmount	否	Number (10,2)	xxxxxxxx	用户实际支付金额-(不 参与签名)
+客户端类型	rt26_appPayType	否	String (30)	WXPAY	客户端类型(不参与签名 )
+支付类型	rt27_payType	否	String (30)	SCAN	支付类型(不参与签名)
+子商户公众 号sub_ appid	rt28_appId	否	String (30)	wxdeaaaa2 311	子商户公众号sub_a ppid(不参与签名)
+退款状态	rt29_refundStatus	否	String (30)	NOT_YET	PREREFUND: 转入退款PART_RE FUND:部分退款AL L_REFUND:全额 退款FAIL_REFU ND:退款失败NOT YET:尚未退款(不参 与签名);(转入退款, 部分退款,全额退款,退 款失败均表示这笔订单发 起过退款)
+二级商编	rt30_subMerchantNo	否	String (300)	xxxxxxxx	(不参与签名)
+分账规则及 状态	ruleJson	否	String (1024)	[{“splitB illMercha ntNo”:”E1 8xxxxxxxx “,”splitB illAmount “:0.3,”sp litBillMe rchantEma il”:”xxxx x@163.com “,”splitB illOrderN um”:”1556 013197418 CBoywwwq” ,”splitBi llOrderSt atus”:”FA ILED”},{“ splitBill MerchantN o”:”E18xx xxxxxx”,” splitBill Amount”:0 .3,”split BillMerch antEmail” :”xxxxx@1 63.com”,” splitBill OrderNum” :”1556013 197418CBo ywwwq”,”s plitBillO rderStatu s”:”FAILE D”}]	响应分账结果规则以及对 应状态(不参与签名)
+交易手续费	productFee	否	Number (10,2)	0.01	该笔交易产生的手续费, 成功时返回(不参与签名 )
+渠道结算金 额	channelSettlementA mount	否	Number (10,2)	1	渠道结算金额,成功时返 回(不参与签名)
+商户实际入 账发生额	realCreditAmount	否	Number (10,2)	0.09	该笔交易成功后收单商户 实际入账发生额,成功时 返回(不参与签名)
+微信交易类 型	tradeType	否	String (32)	MICROPAY	微信成功时有返回,见7 .5(不参与签名)
+渠道支付宝 费率活动标 识	chargeFlag	否	String (64)	bluesea_1	支付宝活动通道成功时有 返回,见7.6(不参与 签名)
+银联二维码 返回的付款 方附加数据	upAddData	否	String (3000)	xxxx	Base64编码的(不 参与签名)
+银联二维码 返回的保留 数据	resvData	否	String (1000)	xxxxxxxx	Base64编码的(不 参与签名)
+渠道子商户 号(U/A /T)	subMerchantNo	否	String (32)	208810115 64298xx	(不参与签名)
+商户费率	feeRate	否	Number (10,4)	0.0001	商户交易的费率,被扫支 付成功时返回;(不参与 签名)
+平台商补贴 的手续费	feeAccountAmt	否	Number (10,2)	0.01	单位:元,被扫支付成功 时返回;(不参与签名)
+实收手续费	receiverFee	否	Number (10,2)	0.01	交易成功时返回(不参与 签名)
+后收手续费	offlineFee	否	Number (10,2)	0.01	交易成功时返回(不参与 签名)
+加密密钥	encryptionKey	否	String (512)	Mssdsqqeq eqdad1324 2dsscscsw e2ee22e	不参与签名;见5.2. 1
+签名方式	signatureType	是	String (30)	SM3WITHSM 2	不参与签名
+签名	sign	是	String (512)	75A989CC9 985E6D2BC 2D53D9EDA 3C31F	国密SM2签名结果，详 见“第5章数字签名”
+
+
+------新增-------
+
+退款订单查询接口
+应用场景
+
+本接口提供所有合利宝微信、支付宝扫码退款订单的退款订单查询功能.商户可以通过退款查询接口主动查询退款订单信息。
+
+请求参数
+
+字段名	变量名	必填	类型	实例值	说明
+交易类型	P1_bizType	是	String (20)	AppPayRefundQuery	退款查询接口
+商户退款订 单号	P2_refundOrderId	否	String (50)	t_20170302185347	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一与合利宝退款订 单流水号二选一
+商户编号	P3_customerNumber	是	String (15)	C1800000002	合利宝分配的商户号
+合利宝退款 订单流水号	P4_serialNumber	否	String (50)	xxxxxxxx	合利宝平台返回的退款订单 流水号与商户退款订单号二 选一(不参与签名)
+签名方式	signatureType	是	String (30)	SM3WITHSM2	不参与签名
+签名	sign	是	String (512)	75A989CC9985E6D2BC2D 53D9EDA3C31F	国密SM2签名结果，详见“第 5章数字签名”
+返回参数
+
+字段名	变量名	必填	类型	实例值	说明
+交易类型	rt1_bizType	是	String (20)	AppPayRefundQuery	退款查询接口
+返回码	rt2_retCode	是	String (20)	0000	参考附录：返回码
+返回信息	rt3_retMsg	否	String (200)	成功	返回信息，不用参与签名
+商户编号	rt4_customerNumber	是	String (15)	C1800000002	合利宝分配的商户号
+商户订单号	rt5_orderId	是	String (50)	p_20170302185347	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+商户退款订 单号	rt6_refundOrderNum	是	String (50)	t_20170302185347	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+平台流水号	rt7_serialNumber	否	String (50)	100000000000123456	合利宝平台唯一流水号
+订单状态	rt8_orderStatus	是	String (10)	SUCCESS	BEFORERECEIVE:等待处理RE CEIVE:接收成功INIT：初始 化DOING：处理中SUCCESS： 成功FAIL：失败;CLOSE：关 闭
+退款金额	rt9_amount	否	Number (10,2)	0.01	订单金额，以元为单位，最 小金额为0.01
+币种类型	rt10_currency	否	String (30)	CNY	CNY:人民币
+退款完成时 间	rt11_refundOrderCompleteDa te	否	String (30)	2018-03-1100:00:00	退款完成时间(排除签名)
+第三方平台 退款订单号	rt12_refundChannelOrderNum	否	String (50)	123455	上游退款订单号(排除签名)
+退款原因/备 注	rt13_desc	否	String (80)	不想要了,退款	若商户传入，会在下发给用 户的退款账单消息中体现退 款原因(不参与签名)
+通道订单属 性	rt14_refundOrderAttribute	否	String (30)	UNDIRECT_DEFAULT	标记通道订单属性UNDIRECT _DEFAULT:间连通道;DIRECT _CHANNEL直连通道(不参与签 名)
+客户端类型	rt15_appPayType	否	String (30)	WXPAY	客户端类型(不参与签名)
+支付类型	rt16_payType	否	String (30)	SCAN	支付类型(不参与签名)
+退款营销规 则串	refundMarketingRule	否	String (256)	明串示例:{refundMark etingMerchantNo:”E18 0000001”,refundMarke tingAmount:10.00,ref undCouponMerchantNo: ”E1800000002”}	营销参数规则,JSON格式字符 串，des加密返回,详见5.3 营销参数规则说明(不参与签 名)
+退款优惠详 情	refundPromotionDetail	否	String (512)	微信/支付宝等卡券优惠 详情串	(不参与签名)
+退款面额	debitAmount	否	Number (10,2)	0.01	订单金额，以元为单位，最 小金额为0.01(不参与签名)
+用户实际退 款到账金额	refundCashAmount	否	Number (10,2)	0.01	订单金额，以元为单位，最 小金额为0.01(不参与签名)
+通道上游业 务结果描述	retReasonDesc	否	String (255)	结果信息描述	(不参与签名)
+银联二维码 平台付款方 附加数据	upAddData	否	String (8000)	详见6.3.3.2	(不参与签名)
+退还手续费	productFee	否	Number (10,2)	0.01	本次退款成功,退还手续费, 单位:元;(不参与签名)
+退还平台商 补贴的手续 费	feeAccountAmt	否	Number (10,2)	0.01	本次退款成功,退还平台商补 贴的手续费,单位:元;(不参 与签名)
+退款分账规 则串	ruleJson	否	String (1024)	[{“refundAmount”:2,” splitBillMerchantNo” :”E18xxxxxxxx”,”spli tBillMerchantEmail”: “1111@163.com”,”spli tBillOrderNum”:”1556 013197418CBoywwwq”,” withPayAdvanceTrx”:” false”,”refundStatus “:”FAILED”},{“refund Amount”:2.53,”mercha ntNo”:”E18xxxxxxxx”, “splitBillMerchantEm ail”:”33@qq.com”,”sp litBillOrderNum”:”15 56013197468fpGHnuET” ,”withPayAdvanceTrx” :”false”,”refundStat us”:”SUCCESS”}]	退款分账规则串及状态，见 附录5.4;(不参与签名)
+是否垫付	withPayAdvanceTrx	否	String (10)	false	分账退款是否垫付true：是 ，false：否;(不参与签名)
+退还实收手 续费	receiverFee	否	Number (10,2)	0.01	成功时返回(不参与签名)
+退还后收手 续费	offlineFee	否	Number (10,2)	0.01	成功时返回(不参与签名)
+签名方式	signatureType	是	String (30)	SM3WITHSM2	不参与签名
+签名	sign	是	String (512)	75A989CC9985E6D2BC2D 53D9EDA3C31F	国密SM2签名结果，详见“第 5章数字签名”
+
+
+
+单笔代付查询
+请求参数
+字段名	变量名	必填	类型	示例	说明
+交易类型	P1_bizType	是	String (20)	TransferQuery	单笔代付查询
+商户订单号	P2_orderId	是	String (50)	20170302000001	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+商户编号	P3_customerNumber	是	String (15)	C1800000002	合利宝分配商户号
+签名	sign	是	String (200)	VSObTuoh8v9scYzIkE ckjg1jpTkrb7KYn95D tWlK6FAmGPI	SM2签名结果，详见“5.4节S M2签名”;URLEncoder.encod e(sign,”UTF-8”)
+签名类型	signatureType	是	Sting	SM3WITHSM2	SM3WITHSM2;固定值，不参与 签名
+响应参数
+字段名	变量名	必填	类型	示例	说明
+交易类型	rt1_bizType	是	String (20)	TransferQuery	单笔代付查询
+返回码	rt2_retCode	是	String (20)	0000	详情见附录-返回码
+返回信息	rt3_retMsg	是	String (200)	成功	不参与签名;详情见附录-返 回码
+商户编号	rt4_customerNumber	是	String (15)	20170302000001	商户系统内部订单号，要求 50字符以内，同一商户号下 订单号唯一
+商户订单号	rt5_orderId	是	String (50)	100000000000001	合利宝分配商户号
+平台流水号	rt6_serialNumber	否	String (50)	1217030200000001	合利宝系统唯一流水号
+打款状态	rt7_orderStatus	否	String (50)	DOING	RECEIVE已接收INIT初始化D OING处理中SUCCESS成功FAI L失败;REFUND退款
+返回信息	rt8_reason	否	String (100)	收款账号、户名不符	不参与签名;成功或者失败的 原因
+订单创建时 间	rt9_createDate	否	String (50)	2019-03-0811:11:11	不参与签名;创建时间:格式 为:yyyy-MM-ddHH:mm:ss
+订单完成时 间	rt10_completeDate	否	String (50)	2019-03-0811:11:11	不参与签名;完成时间:格式 为:yyyy-MM-ddHH:mm:ss
+订单金额	rt11_amount	否	String (50)	0.01	不参与签名;订单金额
+签名	sign	是	String (200)	75a989cc9985e6d2bc 2d53d9eda3c31f	SM2签名结果，详见“5.4节S M2签名”;URLEncoder.encod e(sign,”UTF-8”)
+签名类型	signatureType	是	Sting	SM3WITHSM2	SM3WITHSM2;固定值，不参与 签名
+备注:当商户成功接收到合利宝的通知请求后，商户必须返回:”success”，告知合利宝商户已经收到通知。代付结果通知，仅会通知5次。
+
+4.69 openid黑名单同步接口
+功能描述
+
+此接口用于新增openid，或用于修改openid拦截状态。
+
+测试请求地址	http://entry.trx.helipay.com/trx/merchantEntry/interface.action
+生产请求地址	http://entry.trx.helipay.com/trx/merchantEntry/interface.action
+传输方式	采用HTTP传输
+提交方式	采用POST方法提交
+字符编码	统一采用UTF-8字符编码
+签名算法	SM3WITHSM2
+签名要求	请求和接收数据均需要校验签名
+接口名称(interfaceName)：appInterceptSubOpenIdListSync
+
+body域
+
+字段名	变量名	必填	类型	实例值	说明
+客户端类型	appPayType	是	String (20）	WXPAY	客户端类型WXPAY:微信；;A LIPAY:支付宝
+请求编号	requestNo	是	String (50)	131313132131313131 3131	请求编号
+openid列表	openIdList	是	Set<String>	[]	需要同步的openid列表
+记录状态	statusEnum	是	String (20)	AVAILABLE	记录状态AVAILABLE：启用； DISABLED：;停用；
+返回参数data 域
+
+字段名	变量名	必填	类型	实例值	说明
+平台商或普 通商户商编	merchantNo	是	String (16)	E1800001025	平台商或普通商户商编
+请求编号	requestNo	是	String (50)	131313132131313131 3131	请求编号
+响应状态	status	是	String (10)	SUCCESS	响应状态
+响应信息	msg	是	String (50)	成功	响应信息
+
+
+
+4.70 openid黑名单查询接口
+测试请求地址	http://test.trx.helipay.com/trx/merchantEntry/interface.action
+生产请求地址	http://entry.trx.helipay.com/trx/merchantEntry/interface.action
+传输方式	采用HTTP传输
+提交方式	采用POST方法提交
+字符编码	统一采用UTF-8字符编码
+签名算法	MD5
+签名要求	请求和接收数据均需要校验签名
+body域
+接口名称(interfaceName)：appInterceptSubOpenIdListQuery
+
+字段名	变量名	必填	类型	实例值	说明
+客户端类型	appPayType	是	String (20）	WXPAY	客户端类型WXPAY:微信；;A LIPAY:支付宝
+openid列表	openIdList	否	Set<St ring>	[]	openid列表和查询时间范围 必须填写其中一种
+查询开始时 间	startTime	否	String (20)	yyyy-MM-dd	openid列表和查询时间范围 必须填写其中一种
+查询结束时 间	endTime	否	String (20)	yyyy-MM-dd	openid列表和查询时间范围 必须填写其中一种
+查询页码	pageNum	否	int	1	默认值为1
+返回参数data域
+字段名	变量名	必填	类型	示例值	说明
+平台商或普 通商户编号	merchantNo	是	String (16)	C18000xxxxx	平台商或普通商户编号
+查询开始时 间	startTime	是	String (20)	xxxxxxxx	yyyy-MM-dd
+查询结束时 间	endTime	是	String (20)	xxxxxxxx	yyyy-MM-dd
+当前页码	currentPage	是	int	xxxxxxxx	1
+总页数	totalPage	是	int	xxxxxxxx	2
+拦截openid 配置列表	appInterceptSubOpenIdList	是	JSONAr ray	[{}]	返回请求页码的拦截openid 配置列表
+appInterceptSubOpenIdList结构：
+字段名	变量名	必填	类型	实例值	说明
+客户端类型	appPayType	是	String (20）	WXPAY	客户端类型WXPAY:微信；;A LIPAY:支付宝
+openid	openId	是	String (128)	xxxxxxxx	openid
+记录状态	statusEnum	是	String (20)	AVAILABLE	记录状态AVAILABLE：启用； DISABLED：;停用；
+创建时间	createDate	是	String (20)	xxxxxxxx	yyyy-MM-dd
+更新时间	updateDate	是	String (20)	xxxxxxxx	yyyy-MM-dd
