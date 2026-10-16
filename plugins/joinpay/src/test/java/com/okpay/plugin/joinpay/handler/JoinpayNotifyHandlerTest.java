@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,6 +41,8 @@ import static org.mockito.Mockito.verify;
 class JoinpayNotifyHandlerTest {
 
     private static final String KEY = "JPKEY1";
+    /** 2026-10-16 生产截获的退款通知单号（报文其余字段见 realCapture） */
+    private static final String REAL_REFUND_NO = "R20261016024303046815477";
 
     // =========================================================================
     // 支付通知（GET query）
@@ -201,6 +204,82 @@ class JoinpayNotifyHandlerTest {
 
         assertThat(resp.getDataText()).isEqualTo("sign_error");
         verify(cb, never()).completeBiz(any());
+    }
+
+    /**
+     * 真实报文验签锚点：真实捕获（生产环境 2026-10-16，网关按报文序签名，已用生产密钥离线复算命中）。
+     * 捕获的 hmac 是生产密钥算的、不入库，故本地无法「硬编码 hmac」断言——由两条确定性测试锁字段序：
+     * ① 本测试（正例）：按 REFUND_NOTIFY_FIELDS 对真实报文签名 → 必须过；
+     * ② 两条负例：按文档旧序/查询应答序对同一报文签名 → 必须拒。
+     * 把 REFUND_NOTIFY_FIELDS 改回任何一种错序，②/③ 必挂；把 re_FundsAccount 加回，①② 的拼接串同样改变、必挂。
+     */
+    @Test
+    @DisplayName("退款通知真实报文（2026-10-16 生产截获）→ 按实际报文序验签通过 + success 推进")
+    void refundNotifyRealCaptureVerifies() {
+        var m = new LinkedHashMap<>(realCapture());
+        m.put("hmac", JoinpaySignUtil.sign(m, JoinpayNotifyHandler.REFUND_NOTIFY_FIELDS, KEY));
+
+        var cb = mock(HostCallback.class);
+        var resp = new JoinpayNotifyHandler().refundNotify(
+                ctx(cb, json(m), null, null, 0L, REAL_REFUND_NO, 100L, null));
+
+        assertThat(resp.getDataText()).isEqualTo("success");
+        var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
+        verify(cb).completeBiz(captor.capture());
+        assertThat(captor.getValue().getState()).isEqualTo(BizState.S_OK);
+        assertThat(captor.getValue().getApiNo()).isEqualTo("100626101697673109");
+    }
+
+    @Test
+    @DisplayName("退款通知真实报文 + 文档「退款应答通知」旧序 hmac → sign_error（修复前必然命中的错序）")
+    void refundNotifyOldDocumentOrderRejected() {
+        var m = new LinkedHashMap<>(realCapture());
+        m.put("hmac", JoinpaySignUtil.sign(m, List.of(
+                "r0_Version","r1_MerchantNo","r2_OrderNo","r3_RefundOrderNo","r4_RefundAmount","r5_RefundTrxNo",
+                "ra_Status","rb_Code","rc_CodeMsg","re_FundsAccount"), KEY));
+
+        var cb = mock(HostCallback.class);
+        var resp = new JoinpayNotifyHandler().refundNotify(
+                ctx(cb, json(m), null, null, 0L, REAL_REFUND_NO, 100L, null));
+
+        assertThat(resp.getDataText()).isEqualTo("sign_error");
+        verify(cb, never()).completeBiz(any());
+    }
+
+    @Test
+    @DisplayName("退款通知真实报文 + 退款查询应答序 hmac → sign_error（曾误推的候选，同样不成立）")
+    void refundNotifyQueryOrderRejected() {
+        var m = new LinkedHashMap<>(realCapture());
+        m.put("hmac", JoinpaySignUtil.sign(m, List.of(
+                "r0_Version","r1_MerchantNo","r2_RefundOrderNo","r3_RefundAmount","r4_RefundTrxNo",
+                "r5_RefundCompleteTime","r8_RefundWay","r9_ReceiveAccountNo","ra_Status","rb_Code",
+                "rc_CodeMsg","rd_MarketRefAmount","re_FundsAccount"), KEY));
+
+        var cb = mock(HostCallback.class);
+        var resp = new JoinpayNotifyHandler().refundNotify(
+                ctx(cb, json(m), null, null, 0L, REAL_REFUND_NO, 100L, null));
+
+        assertThat(resp.getDataText()).isEqualTo("sign_error");
+        verify(cb, never()).completeBiz(any());
+    }
+
+    /** 生产截获的真实退款通知（2026-10-16，R20261016024303046815477，金额 1.00） */
+    private static Map<String, String> realCapture() {
+        var m = new LinkedHashMap<String, String>();
+        m.put("r0_Version", "2.3");
+        m.put("r1_MerchantNo", "888126000000511");
+        m.put("r2_OrderNo", "P20261014185400801817719");
+        m.put("r3_RefundOrderNo", REAL_REFUND_NO);
+        m.put("r4_RefundAmount", "1.00");
+        m.put("r5_RefundTrxNo", "100626101697673109");
+        m.put("r6_RefundCompleteTime", "2026-10-16 02:43:11");
+        m.put("r7_RefundWay", "ORIGINAL");
+        m.put("r8_ReceiveAccountNo", "工商银行借记卡");
+        m.put("ra_Status", "100");
+        m.put("rb_Code", "100");
+        m.put("rc_CodeMsg", "");
+        m.put("rd_MarketRefAmount", "0.00");
+        return m;
     }
 
     // =========================================================================

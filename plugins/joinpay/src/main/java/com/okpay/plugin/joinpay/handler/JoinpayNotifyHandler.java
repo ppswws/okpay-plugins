@@ -26,10 +26,11 @@ public class JoinpayNotifyHandler {
             "r0_Version","r1_MerchantNo","r2_OrderNo","r3_Amount","r4_Cur","r5_Mp","r6_Status","r7_TrxNo",
             "r8_BankOrderNo","r9_BankTrxNo","ra_PayTime","rb_DealTime","rc_BankCode","rd_OpenId",
             "re_DiscountAmount","rh_cardType","rj_Fee","rk_FrpCode","rl_ContractId","rm_SpecialInfo","ro_SettleAmount");
-    /** 退款通知（退款应答通知参数列表；hmac 单独取不进表） */
+    /** 退款通知（实际通知比文档「退款应答通知参数列表」多 r6/r7/r8/rd、无 re，按实际报文序验签） */
     static final List<String> REFUND_NOTIFY_FIELDS = List.of(
             "r0_Version","r1_MerchantNo","r2_OrderNo","r3_RefundOrderNo","r4_RefundAmount","r5_RefundTrxNo",
-            "ra_Status","rb_Code","rc_CodeMsg","re_FundsAccount");
+            "r6_RefundCompleteTime","r7_RefundWay","r8_ReceiveAccountNo","ra_Status","rb_Code",
+            "rc_CodeMsg","rd_MarketRefAmount");
     /** 单笔代付异步通知（hmac 单独取不进表） */
     static final List<String> TRANSFER_NOTIFY_FIELDS = List.of(
             "status","errorCode","errorCodeDesc","userNo","tradeMerchantNo","merchantOrderNo","platformSerialNo",
