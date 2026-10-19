@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("WxpayConvert 投诉响应映射")
 class WxpayConvertTest {
@@ -119,6 +120,7 @@ class WxpayConvertTest {
                    "complaint_media_list":{"media_type":"USER_COMPLAINT_IMAGE","media_url":["m1","m2"]}},
                   {"log_id":"L2","operator":"商户A","operate_time":"2022-01-01T10:00:00+08:00",
                    "operate_type":"MERCHANT_RESPONSE",
+                   "image_list":["img2"],
                    "normal_message":{"blocks":[{"type":"TEXT","text":{"text":"已处理"}}]}},
                   {"log_id":"L3","operator":"平台","operate_time":"2022-01-01T11:00:00+08:00",
                    "operate_type":"PLATFORM_RESPONSE"},
@@ -132,16 +134,17 @@ class WxpayConvertTest {
 
         var msgs = WxpayConvert.toMessages(historys);
         assertThat(msgs).hasSize(5);
-        // 用户提交投诉：operate_details 优先，图片=image_list + complaint_media_list.media_url 合并
+        // 用户提交投诉：operate_details 优先；图片优先 complaint_media_list（image_list 废弃且会重复）
         assertThat(msgs.get(0).getRole()).isEqualTo(1);
         assertThat(msgs.get(0).getName()).isEqualTo("oUser1");
         assertThat(msgs.get(0).getContent()).isEqualTo("请退款");
         assertThat(msgs.get(0).getCreatedAt()).isEqualTo(java.time.LocalDateTime.of(2022, 1, 1, 9, 0, 0));
-        assertThat(msgs.get(0).getImages()).containsExactly("img1", "m1", "m2");
-        // 商户留言：operate_details 缺失 → normal_message TEXT 块拼接
+        assertThat(msgs.get(0).getImages()).containsExactly("m1", "m2");
+        // 商户留言：operate_details 缺失 → normal_message TEXT 块拼接；image_list 已废弃，不读
         assertThat(msgs.get(1).getRole()).isEqualTo(2);
         assertThat(msgs.get(1).getName()).isEqualTo("商户A");
         assertThat(msgs.get(1).getContent()).isEqualTo("已处理");
+        assertThat(msgs.get(1).getImages()).isEmpty();
         // 平台留言：无内容 → 不合成 operate_type 文案
         assertThat(msgs.get(2).getRole()).isEqualTo(3);
         assertThat(msgs.get(2).getContent()).isNull();
@@ -181,6 +184,30 @@ class WxpayConvertTest {
                 "https://api.mch.weixin.qq.com/v3/images/a1b2#frag")).isEqualTo("a1b2");
         assertThat(WxpayConvert.extractMediaId("https://api.mch.weixin.qq.com/v3/images/")).isNull();
         assertThat(WxpayConvert.extractMediaId("https://api.mch.weixin.qq.com/v3/images")).isEqualTo("images");
+    }
+
+    @Test
+    @DisplayName("decodeMediaId：还原已 URL 编码的 media_id，非法编码原样返回")
+    void decodeMediaId() {
+        assertThat(WxpayConvert.decodeMediaId("abc%3D%3D")).isEqualTo("abc==");
+        assertThat(WxpayConvert.decodeMediaId("abc==")).isEqualTo("abc==");
+        assertThat(WxpayConvert.decodeMediaId("a+b%3D%3D")).isEqualTo("a+b==");
+        assertThat(WxpayConvert.decodeMediaId("abc%")).isEqualTo("abc%");
+        assertThat(WxpayConvert.decodeMediaId(null)).isNull();
+    }
+
+    @Test
+    @DisplayName("上传文件名：校验 jpg/jpeg/png/bmp，保留原文件名")
+    void validateMediaFilename() {
+        assertThat(WxpayConvert.validateMediaFilename("20200606094839_8SKua.jpeg"))
+                .isEqualTo("20200606094839_8SKua.jpeg");
+        assertThat(WxpayConvert.validateMediaFilename("IMG_1.JPG")).isEqualTo("IMG_1.JPG");
+        assertThat(WxpayConvert.validateMediaFilename("a.PNG")).isEqualTo("a.PNG");
+        assertThat(WxpayConvert.validateMediaFilename("a.bmp")).isEqualTo("a.bmp");
+        assertThatThrownBy(() -> WxpayConvert.validateMediaFilename("a.heic"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> WxpayConvert.validateMediaFilename(null))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     private int state(String json) throws Exception {

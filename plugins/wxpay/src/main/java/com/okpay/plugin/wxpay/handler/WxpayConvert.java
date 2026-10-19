@@ -92,12 +92,10 @@ final class WxpayConvert {
         return click == null || click.isBlank() ? null : click;
     }
 
-    /** 协商历史图片：image_list（即将废弃）+ complaint_media_list.media_url（历史接口为单 object） */
+    /** 协商历史图片：只取官方推荐的 complaint_media_list.media_url（image_list 已废弃，不读）。 */
     private static List<String> historyImages(JsonNode h) {
-        var images = new ArrayList<String>(textList(h.path("image_list")));
         var media = h.path("complaint_media_list");
-        if (media.isObject()) images.addAll(textList(media.path("media_url")));
-        return images;
+        return media.isObject() ? new ArrayList<>(textList(media.path("media_url"))) : List.of();
     }
 
     /** 角色按操作类型前缀分类：*（系统消息后缀）→ 系统；USER_* → 用户；MERCHANT_* → 商户；PLATFORM_* → 平台 */
@@ -141,6 +139,31 @@ final class WxpayConvert {
         var idx = tail.lastIndexOf('/');
         var id = idx >= 0 ? tail.substring(idx + 1) : tail;
         return id.isBlank() ? null : id;
+    }
+
+    /** 微信支持 jpg/jpeg/png/bmp；仅校验后缀，保留原文件名（.jpeg 合法，不重写）。 */
+    static String validateMediaFilename(String filename) {
+        if (filename == null || filename.isBlank()) {
+            throw new IllegalArgumentException("图片文件名不能为空");
+        }
+        var dot = filename.lastIndexOf('.');
+        var ext = dot > 0 ? filename.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
+        if (!Set.of("jpg", "jpeg", "png", "bmp").contains(ext)) {
+            throw new IllegalArgumentException("仅支持 jpg/jpeg/png/bmp 图片");
+        }
+        return filename;
+    }
+
+    /** 上游 URL 末段可能已 URL 编码（如 base64 padding %3D%3D），下载前先还原一次再编码。 */
+    static String decodeMediaId(String mediaId) {
+        if (mediaId == null) return null;
+        try {
+            // URLDecoder 是 form 语义，会把字面量 + 变成空格；base64 的 + 必须先保护
+            return java.net.URLDecoder.decode(mediaId.replace("+", "%2B"),
+                    java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return mediaId;
+        }
     }
 
     private static String extractOutTradeNo(JsonNode orderInfo) {

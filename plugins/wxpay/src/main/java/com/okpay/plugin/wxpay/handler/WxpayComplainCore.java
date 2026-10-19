@@ -86,17 +86,19 @@ public class WxpayComplainCore {
 
     public String uploadMedia(ChannelConfig cfg, byte[] fileData, String filename) {
         try {
+            // 微信支持 jpg/jpeg/png/bmp；仅校验，保留原文件名
+            var mediaFilename = WxpayConvert.validateMediaFilename(filename);
             // meta 用 JSON 序列化而非字符串拼接：文件名含引号/反斜杠时拼出的 JSON 会损坏
             var metaNode = HttpHelper.MAPPER.createObjectNode();
-            metaNode.put("filename", filename);
+            metaNode.put("filename", mediaFilename);
             metaNode.put("sha256", sha256Hex(fileData));
             var resp = buildClient(cfg).postMultipart(
                     "/v3/merchant-service/images/upload",
-                    HttpHelper.MAPPER.writeValueAsString(metaNode), filename,
-                    "image/" + ext(filename).replace("jpg", "jpeg"),
+                    HttpHelper.MAPPER.writeValueAsString(metaNode), mediaFilename,
+                    "image/" + ext(mediaFilename).replace("jpg", "jpeg"),
                     fileData, null);
             var mediaId = resp.body().path("media_id").asString(null);
-            if (mediaId == null) throw new IllegalStateException("上传图片未返回 media_id");
+            if (mediaId == null || mediaId.isBlank()) throw new IllegalStateException("上传图片未返回 media_id");
             return mediaId;
         } catch (Exception e) { throw new IllegalStateException("上传图片失败", e); }
     }
@@ -107,6 +109,7 @@ public class WxpayComplainCore {
             if (mediaId != null && mediaId.startsWith("http")) {
                 mediaId = WxpayConvert.extractMediaId(mediaId);
             }
+            mediaId = WxpayConvert.decodeMediaId(mediaId);
             if (mediaId == null || mediaId.isBlank()) {
                 throw new IllegalArgumentException("mediaRef 为空，无法提取 media_id");
             }
