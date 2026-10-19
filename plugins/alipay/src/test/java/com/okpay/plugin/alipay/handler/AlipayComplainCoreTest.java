@@ -8,6 +8,8 @@ import com.okpay.plugin.sdk.RsaKeys;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.MockedStatic;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -18,6 +20,12 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Answers.CALLS_REAL_METHODS;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mockStatic;
 
 /**
  * 投诉响应 → ComplaintRecord 映射（交易投诉 tradecomplain 体系）：complaintId 取
@@ -218,6 +226,63 @@ class AlipayComplainCoreTest {
         assertThat(result.getAckStatus()).isEqualTo(500);
         assertThat(result.getAckContent()).isEqualTo("fail");
         assertThat(result.getComplaintId()).isNull();
+    }
+
+    // =========================================================================
+    // 图片上传
+    // =========================================================================
+
+    @Test
+    @DisplayName("uploadMedia：失败透出支付宝 sub_msg，不再返回 null")
+    void uploadMediaSurfacesUpstreamFailure() {
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class, CALLS_REAL_METHODS)) {
+            mocked.when(() -> HttpHelper.postBytes(any(), anyString(), any(byte[].class), anyString(), anyMap()))
+                    .thenReturn(jsonResponse("""
+                            {"alipay_merchant_image_upload_response":
+                              {"code":"40004","msg":"Business Failed","sub_code":"isv.image-format-error","sub_msg":"图片格式不支持"}}
+                            """));
+
+            assertThatThrownBy(() -> core.uploadMedia(cfg(), new byte[]{1, 2}, "a.jpg"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("图片格式不支持");
+        }
+    }
+
+    @Test
+    @DisplayName("uploadMedia：成功但缺 image_id 明确失败")
+    void uploadMediaRequiresImageId() {
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class, CALLS_REAL_METHODS)) {
+            mocked.when(() -> HttpHelper.postBytes(any(), anyString(), any(byte[].class), anyString(), anyMap()))
+                    .thenReturn(jsonResponse("""
+                            {"alipay_merchant_image_upload_response":{"code":"10000","msg":"Success"}}
+                            """));
+
+            assertThatThrownBy(() -> core.uploadMedia(cfg(), new byte[]{1, 2}, "a.jpg"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("未返回 image_id");
+        }
+    }
+
+    @Test
+    @DisplayName("uploadMedia：成功返回 image_id，文件字段名为 image_content")
+    void uploadMediaReturnsImageId() {
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class, CALLS_REAL_METHODS)) {
+            var bodyCaptor = ArgumentCaptor.forClass(byte[].class);
+            mocked.when(() -> HttpHelper.postBytes(any(), anyString(), bodyCaptor.capture(), anyString(), anyMap()))
+                    .thenReturn(jsonResponse("""
+                            {"alipay_merchant_image_upload_response":{"code":"10000","msg":"Success","image_id":"IMG-1"}}
+                            """));
+
+            assertThat(core.uploadMedia(cfg(), new byte[]{1, 2}, "a.jpg")).isEqualTo("IMG-1");
+            var multipart = new String(bodyCaptor.getValue(), StandardCharsets.ISO_8859_1);
+            assertThat(multipart)
+                    .contains("name=\"image_content\"")
+                    .doesNotContain("name=\"file_content\"");
+        }
+    }
+
+    private static HttpHelper.HttpResponse jsonResponse(String json) {
+        return new HttpHelper.HttpResponse(200, Map.of(), json.getBytes(StandardCharsets.UTF_8), "", 1L, 1);
     }
 
 }

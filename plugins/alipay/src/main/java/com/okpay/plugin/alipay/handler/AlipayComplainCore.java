@@ -141,17 +141,36 @@ public class AlipayComplainCore {
      * 返回 image_id（回复/反馈/补充凭证的 images 参数均消费该 id 列表）。
      */
     public String uploadMedia(ChannelConfig cfg, byte[] fileData, String filename) {
+        String imageId;
         try {
             var biz = new LinkedHashMap<String, Object>();
             biz.put("image_type", ext(filename));
             var resp = buildClient(cfg).executeMultipart(null,
-                    "alipay.merchant.image.upload", biz,
+                    "alipay.merchant.image.upload", biz, "image_content",
                     filename, "image/" + ext(filename).replace("jpg", "jpeg"),
                     fileData, authParams(cfg));
-            return resp.ok() ? resp.text("image_id") : null;
+            if (!resp.ok()) {
+                // 透传支付宝 sub_msg（最具体）→ msg → sub_code → code
+                throw new IllegalStateException("上传图片失败：" + alipayErrMsg(resp));
+            }
+            imageId = resp.text("image_id");
+        } catch (IllegalStateException e) {
+            throw e;
         } catch (Exception e) {
             throw new IllegalStateException("上传图片失败, filename=" + filename, e);
         }
+        if (imageId == null || imageId.isBlank()) {
+            throw new IllegalStateException("上传图片失败：支付宝未返回 image_id");
+        }
+        return imageId;
+    }
+
+    /** 渠道业务失败文案：sub_msg → msg → sub_code → code 逐级兜底，全缺 → 统一文案。 */
+    private static String alipayErrMsg(AlipayOpenApiClient.ApiResponse resp) {
+        for (var v : List.of(resp.subMsg(), resp.msg(), resp.subCode(), resp.code())) {
+            if (v != null && !v.isBlank()) return v;
+        }
+        return "支付宝返回未知错误";
     }
 
     /**
