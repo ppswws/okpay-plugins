@@ -74,8 +74,8 @@ public class WxpayNotifyHandler {
             }
 
             // 微信官方通知，验签通过即可推进，无需二次查单。
-            // 已配置系统公众号（统一OAuth首层已存 buyer 供风控）→ 渠道 openid 不覆盖身份；
-            // 未配置 → 渠道 openid 即 buyer（现状）
+            // 已配置系统公众号（统一 OAuth 首层已存 buyer 供风控）→ 渠道 openid 不覆盖身份；
+            // 未配置 → 渠道 openid 即 buyer
             var buyer = ctx.getConfig().isOauthWxConfigured()
                     ? null : result.path("payer").path("openid").asString(null);
             try {
@@ -161,7 +161,7 @@ public class WxpayNotifyHandler {
     }
 
     // =========================================================================
-    // 合单通知（修正 epay 两坑：不校验子单 trade_state、金额合计不校验 → fail-closed）
+    // 合单通知（fail-closed：子单数/状态/金额任一不符拒收等重发）
     // =========================================================================
 
     /** 合单支付通知：子单数一致 + 全部 SUCCESS + 逐单金额一致 + 合计==实付，全部通过才推进 */

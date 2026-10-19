@@ -41,7 +41,7 @@ import static org.mockito.Mockito.verify;
 class JoinpayNotifyHandlerTest {
 
     private static final String KEY = "JPKEY1";
-    /** 2026-10-16 生产截获的退款通知单号（报文其余字段见 realCapture） */
+    /** 真实退款通知样本的单号（报文其余字段见 realCapture） */
     private static final String REAL_REFUND_NO = "R20261016024303046815477";
 
     // =========================================================================
@@ -207,11 +207,8 @@ class JoinpayNotifyHandlerTest {
     }
 
     /**
-     * 真实报文验签锚点：真实捕获（生产环境 2026-10-16，网关按报文序签名，已用生产密钥离线复算命中）。
-     * 捕获的 hmac 是生产密钥算的、不入库，故本地无法「硬编码 hmac」断言——由两条确定性测试锁字段序：
-     * ① 本测试（正例）：按 REFUND_NOTIFY_FIELDS 对真实报文签名 → 必须过；
-     * ② 两条负例：按文档旧序/查询应答序对同一报文签名 → 必须拒。
-     * 把 REFUND_NOTIFY_FIELDS 改回任何一种错序，②/③ 必挂；把 re_FundsAccount 加回，①② 的拼接串同样改变、必挂。
+     * 真实报文验签锚点（网关按报文序签名）。捕获的 hmac 由渠道密钥计算、不入库，故无法硬编码断言，
+     * 改由正/负例测试锁定字段序：按 REFUND_NOTIFY_FIELDS 签名必须通过，按文档旧序/查询应答序签名必须拒绝。
      */
     @Test
     @DisplayName("退款通知真实报文（2026-10-16 生产截获）→ 按实际报文序验签通过 + success 推进")
@@ -263,7 +260,7 @@ class JoinpayNotifyHandlerTest {
         verify(cb, never()).completeBiz(any());
     }
 
-    /** 生产截获的真实退款通知（2026-10-16，R20261016024303046815477，金额 1.00） */
+    /** 真实退款通知样本（金额 1.00） */
     private static Map<String, String> realCapture() {
         var m = new LinkedHashMap<String, String>();
         m.put("r0_Version", "2.3");

@@ -13,7 +13,6 @@ public final class EpaySignUtil {
 
     private EpaySignUtil() {}
 
-    /** 签名 */
     public static String sign(Map<String, String> params, String key) {
         var keys = new ArrayList<>(params.keySet());
         Collections.sort(keys);

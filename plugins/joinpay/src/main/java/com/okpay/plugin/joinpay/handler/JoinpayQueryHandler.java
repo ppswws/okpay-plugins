@@ -164,7 +164,6 @@ public class JoinpayQueryHandler extends AbstractBizHandler {
             var data = flatten(m.get("data"));
             if (data.isEmpty())
                 return Responses.fail("BAL_ERROR", "响应解析失败", resp);
-            // 回包验签
             var signData = new LinkedHashMap<String, String>();
             signData.put("statusCode", statusCode);
             signData.put("message", message);

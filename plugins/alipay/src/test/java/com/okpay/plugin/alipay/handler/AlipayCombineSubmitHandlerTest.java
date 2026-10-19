@@ -151,7 +151,6 @@ class AlipayCombineSubmitHandlerTest {
 
             assertThat(result.getState()).isEqualTo(BizState.S_OK);
             assertThat(result.getApiNo()).isEqualTo("TXREF");
-            // 逐单退款：out_trade_no=子单号、out_request_no=refundNo_序号、金额=子单额度
             var bodies = bodyCaptor.getAllValues();
             assertThat(bodies).hasSize(2);
             assertThat(parseBizContent(bodies.get(0)))
@@ -309,7 +308,6 @@ class AlipayCombineSubmitHandlerTest {
 
             assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
             assertThat(result.getCode()).isEqualTo("REFUND_ERROR");
-            // 数据不一致必须显性暴露，不得回退单笔退款（防子单漏拆导致误退超限）
             mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
         }
     }

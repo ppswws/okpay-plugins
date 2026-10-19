@@ -125,7 +125,7 @@ class WxpayCombineNotifyHandlerTest {
         return "-----BEGIN " + header + "-----\n" + b64 + "\n-----END " + header + "-----";
     }
 
-    /** 平台证书下载 stub：client 懒加载，/v3/certificates 响应经 apiV3Key 加密。 */
+    /** 平台证书下载 stub（client 懒加载）。 */
     private static void stubPlatformCertDownload(MockedStatic<HttpHelper> mocked) throws Exception {
         var certPem = new String(
                 WxpayCombineNotifyHandlerTest.class.getResourceAsStream("/certs/platform_test_cert.pem")

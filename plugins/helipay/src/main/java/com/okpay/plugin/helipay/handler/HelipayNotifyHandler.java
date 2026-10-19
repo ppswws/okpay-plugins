@@ -96,8 +96,7 @@ public class HelipayNotifyHandler {
                 default -> { /* 未知状态不推进，交由查询轮询 */ }
             }
         } catch (Exception e) {
-            // 推进失败交还渠道重发（与 joinpay 打款通知同形态）：渠道重发触发同一状态机重试，
-            // 查询轮询仍为兜底——双保险优于单靠轮询
+            // 推进失败交还渠道重发：渠道重发触发同一状态机重试，查询轮询仍为兜底
             log.error("完成打款失败", e);
             return Responses.notifyFail("fail", BizType.T_XFER);
         }

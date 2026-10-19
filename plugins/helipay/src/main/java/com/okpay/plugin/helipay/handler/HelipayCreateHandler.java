@@ -31,7 +31,6 @@ public class HelipayCreateHandler {
     private static final String QBASE_URL = "https://servicewechat.com/wxa-qbase/jsoperatewxdata";
     private static final String H5_PAY_HOST = "h5pay.helipay.com";
 
-    /** 按支付方式分发并提取支付入口 URL（复用 createWithHandlers）。 */
     public com.okpay.plugin.model.BizResult submit(InvokeContext ctx) {
         return Sdk.createResult(ctx, Map.of(
             "alipay", this::alipay, "wxpay", this::wxpay, "bank", this::bank
@@ -68,8 +67,7 @@ public class HelipayCreateHandler {
                 return Sdk.lockCreate(ctx, () -> {
                     var resp = createOrder(ctx, wapParams(ctx, cfg, "wxpay"), cfg.getAppkey());
                     var payInfo = reverseToOpenlink(ctx, payInfoOf(resp, "rt8_payInfo"));
-                    // 逆向失败时 payInfo 仍是 h5pay 域名完整支付页，可直接跳转；
-                    // 逆向成功则是 openlink，走 wxpay_h5 页拉起支付
+                    // 逆向成功得到 openlink，走 wxpay_h5 页拉起支付；失败时 payInfo 仍是 h5pay 完整支付页，直接跳转
                     var page = payInfo.contains(H5_PAY_HOST)
                             ? Responses.respJump(payInfo)
                             : Responses.respPageURL("wxpay_h5", payInfo);
@@ -108,18 +106,14 @@ public class HelipayCreateHandler {
         var retUrl = buildPayUrl(ctx, cfg, Map.of("t", String.valueOf(System.currentTimeMillis() / 1000)));
         if (code.isBlank()) {
             if (HttpHelper.isWeChat(ua)) {
-                // 授权 URL 由 SDK 内置决策：统一公众号已配置 → 先经宿主 /oauth/wxmp 用系统公众号授权
-                //（风控身份落库 buyer + 黑名单），随后微信重定向到本通道公众号授权；未配置 → 直接
-                // 通道授权。两条路径最终兑换的 openid 恒为本通道公众号 openid（支付 appid 同源），
-                // buyer 由宿主/SDK 内部管理，插件不读不判。参数已由上下文保证非空，无需防御分支
+                // 授权 URL 由 SDK 决策：已配置系统公众号 → 先经宿主 /oauth/wxmp 授权（风控身份落库
+                // buyer），再重定向到本通道公众号授权；两条路径兑换的 openid 均属本通道公众号
                 return Responses.respJump(OAuthHelper.buildMpPayAuthUrl(ctx, cfg.getMp().getAppid(), retUrl,
                         ctx.getOrder().getTradeNo()));
             }
             return Responses.respPageURL("wxpay_qrcode", retUrl);
         }
-        // OAuth 兑换在锁外执行：lockOrderExt 只缓存真正下单结果，openid 不做缓存。
-        // 兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应全部内置 SDK（exchangeMpOpenid），
-        // 插件只提供「拿到 openid 后如何下单」的回调，无任何风控分支
+        // OAuth 兑换在锁外执行；兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应均由 SDK 处理
         return OAuthHelper.exchangeMpOpenid(ctx, cfg.getMp().getAppid(), cfg.getMp().getAppsecret(), code,
                 openid -> Sdk.lockCreate(ctx, () -> {
                     try {
@@ -146,9 +140,7 @@ public class HelipayCreateHandler {
                 return Responses.respPageURL("wxpay_h5", scheme);
             } catch (Exception e) { log.error("获取小程序 scheme 失败", e); return Responses.respError("小程序跳转失败"); }
         }
-        // OAuth 兑换在锁外执行：lockOrderExt 只缓存真正下单结果，openid 不做缓存。
-        // 兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应全部内置 SDK（exchangeMiniOpenid），
-        // 插件只提供「拿到 openid 后如何下单」的回调，无任何风控分支
+        // OAuth 兑换在锁外执行；兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应均由 SDK 处理
         return OAuthHelper.exchangeMiniOpenid(ctx, cfg.getMini().getAppid(), cfg.getMini().getAppsecret(), code,
                 openid -> Sdk.lockCreate(ctx, () -> {
                     try {
@@ -184,7 +176,7 @@ public class HelipayCreateHandler {
         return Sdk.FetchResult.of(Responses.respPageURL(page, payInfoOf(resp, "rt8_payInfo")), resp);
     }
 
-    /** 小程序下单（微信专属；支付宝侧小程序也走此预下单但产物是二维码链接） */
+    /** 小程序下单（支付宝侧产物为二维码链接） */
     private Sdk.FetchResult appletOrder(InvokeContext ctx, HelipayConfig cfg, String payType) throws Exception {
         var resp = createOrder(ctx, appletParams(ctx, cfg, payType, "1", "0", "1"), cfg.getAppkey());
         return Sdk.FetchResult.of(Responses.respPageURL("alipay_qrcode", payInfoOf(resp, "rt10_payInfo")), resp);
@@ -197,7 +189,7 @@ public class HelipayCreateHandler {
         return Sdk.FetchResult.of(Responses.respPageURL(page, payInfoOf(resp, "rt8_qrcode")), resp);
     }
 
-    /** H5 下单（支付宝：直接跳转支付链接；微信走调用方内联分支） */
+    /** H5 下单：直接跳转支付链接（微信 H5 由 wxpay 内联处理，不经此方法） */
     private Sdk.FetchResult wapOrder(InvokeContext ctx, HelipayConfig cfg, String payType) throws Exception {
         var resp = createOrder(ctx, wapParams(ctx, cfg, payType), cfg.getAppkey());
         return Sdk.FetchResult.of(Responses.respJump(payInfoOf(resp, "rt9_wapurl")), resp);
@@ -478,7 +470,7 @@ public class HelipayCreateHandler {
         return map;
     }
 
-    /** URL 编码：仅保留 RFC 3986 无保留字符（与 Go url.QueryEscape 一致） */
+    /** URL 编码：RFC 3986 无保留字符原样输出，其余按 UTF-8 字节转 %XX（空格编码为 %20） */
     private static String encodeQueryValue(String s) {
         var sb = new StringBuilder(s.length());
         for (byte b : s.getBytes(StandardCharsets.UTF_8)) {

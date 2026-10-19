@@ -10,11 +10,9 @@ import java.util.Map;
 /**
  * 合利宝 MD5 签名：拼接字段值（每字段前置 &）+ 尾部 &key，取 MD5 hex。
  *
- * <p>请求按 P1_bizType 分类型字段序、响应按 rt1_bizType 分类型字段序、通知按内容特征
+ * <p>字段序按渠道接口文档，请求按 P1_bizType、响应按 rt1_bizType、通知按内容特征
  * （转账 rt1_bizType=Transfer + rt7_orderStatus、退款 rt3_refundOrderId、其余为支付）。
- * 字段序取自 okpay-pro helipay-go 生产实现，并补全其缺失的
- * AppPayRefundQuery/TransferQuery 两型（按接口文档"不参与签名"排除 P4_serialNumber
- * 与 rt8 之后的响应字段）。</p>
+ * AppPayRefundQuery/TransferQuery 排除 P4_serialNumber 与 rt8 之后的字段。</p>
  */
 public final class HelipaySignUtil {
 
@@ -43,7 +41,7 @@ public final class HelipaySignUtil {
     /** P4_serialNumber 不参与签名（接口文档明确） */
     static final List<String> REQ_APP_PAY_REFUND_QUERY = List.of(
             "P1_bizType", "P2_refundOrderId", "P3_customerNumber");
-    /** 单笔代付：notifyUrl 按生产实现纳入签名（接口文档标注不参与，以实测为准） */
+    /** 单笔代付：notifyUrl 纳入签名（接口文档标注不参与，以实测为准） */
     static final List<String> REQ_TRANSFER = List.of(
             "P1_bizType", "P2_orderId", "P3_customerNumber", "P4_amount", "P5_bankCode",
             "P6_bankAccountNo", "P7_bankAccountName", "P8_biz", "P9_bankUnionCode", "P10_feeType",
@@ -159,7 +157,7 @@ public final class HelipaySignUtil {
         return sign(params, NOTIFY_ORDER, key);
     }
 
-    /** 响应验签：无 sign 字段时按生产实现直接放行 */
+    /** 响应验签：无 sign 字段时直接放行（fail-open；通知验签则缺失即拒绝） */
     public static boolean verifyResponse(Map<String, String> params, String key) {
         var sign = params.get("sign");
         if (sign == null || sign.isBlank()) return true;

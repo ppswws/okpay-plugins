@@ -27,7 +27,7 @@ public class AlipayComplainHandler extends AlipayComplainCore implements Complai
 
     @Override
     public ComplaintPluginInfo info() {
-        // 混合 jar：字段注册表与支付扩展共享（AlipayPluginInfo.fields，ADR-0013），投诉 modes/authModes 只引用其 key。
+        // 混合 jar：字段注册表与支付扩展共享（AlipayPluginInfo.fields），投诉 modes/authModes 只引用其 key。
         // 凭据字段（appkey/appsecret/证书三件）移入 authModes（认证维度），业务 modes 只留业务字段；
         // 证书模式仍需应用私钥（appsecret）签名，故同时出现在 key/cert 两认证模式。
         return ComplaintPluginInfo.builder()

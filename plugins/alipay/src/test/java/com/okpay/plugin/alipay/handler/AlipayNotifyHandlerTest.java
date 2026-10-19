@@ -276,12 +276,10 @@ class AlipayNotifyHandlerTest {
         var resp = new AlipayNotifyHandler().refundNotify(ctx);
         assertThat(resp.getDataText()).isEqualTo("success");
 
-        // 子单累计一次
         var captor = ArgumentCaptor.forClass(UpdateSubOrderRequest.class);
         verify(cb).updateSubOrder(captor.capture());
         assertThat(captor.getValue().getSubTradeNo()).isEqualTo("S1");
         assertThat(captor.getValue().getRefundDelta()).isEqualTo(15000);
-        // 尚未全退完 → 主退款单不终态
         verify(cb, never()).completeBiz(any());
     }
 
@@ -315,7 +313,6 @@ class AlipayNotifyHandlerTest {
 
         var resp = new AlipayNotifyHandler().refundNotify(ctx);
         assertThat(resp.getDataText()).isEqualTo("success");
-        // 超限被拒且未全退完 → 不触发 completeBiz（等子单2通知/查单续退）
         verify(cb, never()).completeBiz(any());
     }
 

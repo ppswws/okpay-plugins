@@ -28,7 +28,7 @@ import static org.mockito.Mockito.verify;
 
 /**
  * HelipayNotifyHandler 三类通知（支付/退款/打款）：验签与必填缺失 → fail、金额/单号不匹配按语义应答；
- * 打款完成推进失败 → fail 交还渠道重发（与 joinpay 同形态，查询轮询仍为兜底）。未知单号由宿主拦截（实体缺失即 404，不进插件），
+ * 打款完成推进失败 → fail 交还渠道重发（查询轮询仍为兜底）。未知单号由宿主拦截（实体缺失即 404，不进插件），
  * 本层不做判空。
  */
 @DisplayName("HelipayNotifyHandler 通知应答")
@@ -348,7 +348,6 @@ class HelipayNotifyHandlerTest {
         }
     }
 
-    /** 支付通知用例重载：无退款/打款单。 */
     private static InvokeContext notifyCtx(HostCallback cb, byte[] body, String orderTradeNo, long orderReal) {
         return notifyCtx(cb, body, orderTradeNo, orderReal, null, null, null);
     }

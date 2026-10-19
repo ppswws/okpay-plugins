@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 微信支付插件元信息 — 字段注册表 + 窗口引用（ADR-0013）。
+ * 微信支付插件元信息 — 字段注册表 + 窗口引用。
  *
  * <p>{@code fields} 是全量字段注册表（支付配置），{@code modes}（支付通道配置）是窗口，
  * 只引用注册表 key。混合同 jar 投诉扩展（{@link WxpayComplainHandler}）也引用本注册表 key。</p>
@@ -24,7 +24,7 @@ import java.util.Map;
  * 本维度只管响应/回调验签凭据——平台证书模式（自动下载）/ 微信支付公钥模式（新商户默认）。</p>
  *
  * <p>注：微信官方商家转账能力限制较多（新版须场景ID+报备+小程序内确认收款），
- * 本插件已移除付款能力，仅保留收款（支付）。</p>
+ * 本插件不提供付款能力，仅保留收款（支付）。</p>
  */
 final class WxpayPluginInfo {
 

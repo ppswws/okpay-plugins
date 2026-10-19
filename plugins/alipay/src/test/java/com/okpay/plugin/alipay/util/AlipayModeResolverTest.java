@@ -49,7 +49,7 @@ class AlipayModeResolverTest {
     void pcWithoutPageFallsBackToQrcode() {
         assertThat(AlipayModeResolver.resolve(UA_PC, Set.of("3"), false)).isEqualTo(Mode.QRCODE);
         assertThat(AlipayModeResolver.resolve(UA_PC, Set.of("7"), false)).isEqualTo(Mode.QRCODE);
-        // 只开 Wap（无扫码类）：不再无条件 QRCODE，落配置兜底
+        // 只开 Wap（无扫码类）→ 落配置兜底
         assertThat(AlipayModeResolver.resolve(UA_PC, Set.of("2"), false)).isNull();
         assertThat(AlipayModeResolver.resolve(UA_PC, Set.of("2", "5"), false)).isEqualTo(Mode.APP);
     }

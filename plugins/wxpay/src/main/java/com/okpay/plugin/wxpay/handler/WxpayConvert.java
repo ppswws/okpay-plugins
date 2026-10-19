@@ -42,8 +42,7 @@ final class WxpayConvert {
                 .build();
     }
 
-    /** 协商历史：query_historys 字段已从投诉详情接口移除，恒为空列表；协商历史由
-     *  WxpayComplainCore 调独立接口 /negotiation-historys 后经 {@link #toMessages} 组装 */
+    /** 恒为空：详情接口已无 query_historys；协商历史由 WxpayComplainCore 调独立接口 /negotiation-historys 后经 {@link #toMessages} 组装 */
     private static List<ComplaintRecord.MessageRecord> extractMessages(JsonNode item) {
         return List.of();
     }
@@ -132,13 +131,11 @@ final class WxpayConvert {
     }
 
     /**
-     * 从图片 URL 提取 media_id（URL 末段）：如
-     * {@code https://api.mch.weixin.qq.com/v3/merchant-service/images/{media_id}}。
-     * 先剥离 {@code ?}/{@code #} 后缀（上游可能返回带签名 query 的变体），末段为空返回 null。
+     * 从图片 URL（{@code .../v3/merchant-service/images/{media_id}}）提取末段 media_id。
+     * 先剥离上游可能追加的 {@code ?}/{@code #} 后缀，末段为空返回 null。
      */
     static String extractMediaId(String mediaUrl) {
         if (mediaUrl == null) return null;
-        // 只剥离 query/fragment 后缀，末尾段取最后一个 '/' 之后（media_id 本身不含 '/'）
         int cut = mediaUrl.length();
         for (char c : new char[]{'?', '#'}) {
             int i = mediaUrl.indexOf(c);
@@ -158,7 +155,7 @@ final class WxpayConvert {
         return "";
     }
 
-    /** 订单金额（分）：投诉关联订单的订单金额 */
+    /** 投诉关联订单的订单金额（分） */
     private static Long extractOrderAmount(JsonNode orderInfo) {
         if (orderInfo != null && orderInfo.isArray() && !orderInfo.isEmpty()) {
             var amount = orderInfo.get(0).path("amount");

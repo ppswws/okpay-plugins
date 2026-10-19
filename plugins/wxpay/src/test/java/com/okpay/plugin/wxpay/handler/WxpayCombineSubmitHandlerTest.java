@@ -128,7 +128,7 @@ class WxpayCombineSubmitHandlerTest {
         return out;
     }
 
-    /** mock /v3/certificates 下载响应（client 懒加载平台证书）。 */
+    /** 平台证书下载 stub（client 懒加载）。 */
     private static void stubPlatformCertDownload(MockedStatic<HttpHelper> mocked) throws Exception {
         var certPem = new String(
                 WxpayCombineSubmitHandlerTest.class.getResourceAsStream("/certs/platform_test_cert.pem")

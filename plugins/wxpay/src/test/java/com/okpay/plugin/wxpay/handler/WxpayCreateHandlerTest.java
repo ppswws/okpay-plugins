@@ -36,7 +36,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * WxpayCreateHandler 支付方式分发（epay 编号 1/2/3/5 + UA 分流）。
+ * WxpayCreateHandler 支付方式分发（编号 1/2/3/4 + UA 分流）。
  *
  * <p>公众号授权 URL 决策内置 SDK（已配置系统公众号 → 跳 /oauth/wxmp 包装的通道授权 URL，双 OAuth；
  * 未配置 → 直接通道授权 URL），buyer 由宿主/SDK 管理、插件不读不判；与小程序/扫码/APP 分发。</p>
@@ -204,7 +204,7 @@ class WxpayCreateHandlerTest {
 
         assertThat(resp.getType()).isEqualTo("jump");
         var url = resp.getUrl();
-        // 首层入口基地址恒为平台网关域（系统公众号绑定的授权域名），非通道前端域
+        // 首层入口基地址为平台网关域（系统公众号绑定的授权域名），非通道前端域
         assertThat(url).startsWith("https://gw.example.com/oauth/wxmp?redirect_uri=");
         // redirect_uri 是通道公众号授权 URL（第二层 OAuth 的发起方是通道自己的公众号）
         assertThat(URLDecoder.decode(url, StandardCharsets.UTF_8))
@@ -368,7 +368,7 @@ class WxpayCreateHandlerTest {
             letRealUaChecks(mocked);
             mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv -> {
                 var url = inv.getArgument(1).toString();
-                // access_token 现走 stable_token（POST），对齐 epay 多实例安全
+                // access_token 走 stable_token（POST），多实例安全
                 if (url.contains("stable_token")) {
                     return new HttpHelper.HttpResponse(200, Map.of(),
                             "{\"access_token\":\"TOKEN1\",\"expires_in\":7200}"
@@ -400,8 +400,7 @@ class WxpayCreateHandlerTest {
         var cb = ctx.getCallback();
         when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
 
-        // 真实 OAuthHelper.getMpOpenid（真实 HTTP 流程）：自动风控在方法体内真实执行，
-        // 可验证 cb.recordOAuthIdentity 被内部自动调用（插件没有显式调用代码）
+        // 走真实 OAuthHelper.getMpOpenid：自动风控在方法体内执行，验证 cb.recordOAuthIdentity 被内部调用
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             letRealUaChecks(mocked);
             stubPlatformCertDownload(mocked);
@@ -456,7 +455,7 @@ class WxpayCreateHandlerTest {
             assertThat(resp.getType()).isEqualTo("jump");
             assertThat(resp.getUrl()).isEqualTo("https://pay.example.com/pay/result/T1");
         }
-        // 命中后插件未做任何拦截判断——兑换方法内部已抛异常终止；被拦截：不发起支付、不写 ext
+        // 拦截由兑换方法内部抛异常完成，插件无拦截分支：被拦截即不发起支付、不写 ext
         verify(cb).recordOAuthIdentity(any());
         verify(cb, never()).lockOrderExt(any());
     }

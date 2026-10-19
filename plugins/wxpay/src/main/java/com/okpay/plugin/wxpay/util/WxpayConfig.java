@@ -49,7 +49,7 @@ public class WxpayConfig implements ChannelConfig {
 
     /**
      * 通用 AppId：优先配置 appid（服务号/小程序/开放平台）→ 绑定公众号 → 绑定小程序。
-     * 不回退商户号——商户号当 appid 上送微信必然拒绝（曾以 mchId 兜底的坏点）。
+     * 不回退商户号——商户号当 appid 上送微信必然拒绝。
      */
     public String genericAppId() {
         if (wxAppId != null && !wxAppId.isBlank()) return wxAppId;

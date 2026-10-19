@@ -17,7 +17,6 @@
     <description>支付宝支付通道插件（零第三方 SDK，RSA2 原生签名）</description>
 
     <dependencies>
-        <!-- 只需依赖 okpay-plugin SDK 即可独立开发（含 AlipayOpenApiClient 通道封装） -->
         <dependency>
             <groupId>com.okpay</groupId>
             <artifactId>okpay-plugin</artifactId>

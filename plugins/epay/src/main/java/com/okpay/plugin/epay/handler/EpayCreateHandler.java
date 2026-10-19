@@ -19,7 +19,6 @@ public class EpayCreateHandler {
 
     private static final Logger log = LoggerFactory.getLogger(EpayCreateHandler.class);
 
-    /** 按支付方式分发并提取支付入口 URL（复用 createWithHandlers）。 */
     public com.okpay.plugin.model.BizResult submit(InvokeContext ctx) {
         return Sdk.createResult(ctx, Map.of(
             "alipay", this::alipay,
@@ -42,8 +41,7 @@ public class EpayCreateHandler {
             var order = ctx.getOrder();
             var params = buildParams(cfg, order, ctx);
             if (cfg.isSubmitMode()) {
-                // Submit 模式：不请求渠道，拼接支付链接（GET 带签名参数直达渠道收银台）直接跳转；
-                // 无实际 HTTP 请求，轨迹正常写 0（未写入渠道侧 ext 但请求轨迹仍需落账）
+                // Submit 模式：不请求渠道，拼接带签名参数的支付链接直接跳转；无 HTTP 请求，请求轨迹记为 0
                 var payUrl = cfg.getAppurl() + "/submit.php?" + encodeForm(params);
                 return Sdk.FetchResult.of(Responses.respJump(payUrl),
                         Sdk.RequestStats.builder().reqCount(0).reqMs(0).build());
@@ -52,9 +50,7 @@ public class EpayCreateHandler {
             try {
                 var resp = HttpHelper.post(ctx, cfg.getAppurl() + "/mapi.php", reqBody,
                         "application/x-www-form-urlencoded");
-                // 非成功响应（502/5xx/CDN 拦截页/HTML 垃圾/业务失败）统一归因渠道：
-                // parseJsonMap 对任意 body 吞异常安全返回 map，code 缺失即落入此分支；
-                // 只有渠道明确给了 msg 才透传，否则用统一文案（不把渠道挂写成插件内部错误）
+                // 非成功响应（5xx/CDN 拦截页/HTML/业务失败）统一归因渠道；渠道未给 msg 时用统一文案
                 var respMap = parseJsonMap(resp.bodyAsString());
                 if (!"1".equals(respMap.get("code"))) {
                     var msg = respMap.get("msg");
@@ -85,7 +81,7 @@ public class EpayCreateHandler {
         params.put("type", order.getType());
         params.put("out_trade_no", order.getTradeNo());
         params.put("notify_url", cfg.getNotifyDomain() + "/pay/notify/" + order.getTradeNo());
-        // 渠道同步回跳统一收口：支付结果状态机页（/pay/result/{tradeNo}），不再把商户地址直传上游
+        // 渠道同步回跳指向宿主支付结果页，不透传商户地址
         params.put("return_url", cfg.getSiteDomain() + "/pay/result/" + order.getTradeNo());
         params.put("name", cfg.getGoodsName());
         params.put("money", toYuan(order.getReal()));

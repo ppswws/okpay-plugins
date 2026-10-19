@@ -9,7 +9,7 @@ import org.pf4j.Extension;
 /**
  * 支付宝支付通道插件。
  *
- * <p>基于 alipay-sdk-java，支付方式通过 {@code biztype_alipay} 配置勾选，
+ * <p>零第三方 SDK，走 AlipayOpenApiClient；支付方式通过 {@code biztype_alipay} 配置勾选，
  * 插件根据配置 + UA 自动选择最合适的支付模式。</p>
  */
 @Extension

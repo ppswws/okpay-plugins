@@ -118,7 +118,7 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
         var m = PaymentUtils.parseJsonMap(SumapayApi.decode(resp));
         var result = m.getOrDefault("result", "");
         if ("00000".equals(result)) return;
-        // 受理中的转入无法确认到账，重试可能重复转入 → 直接终止退款（PHP 行为）
+        // 受理中的转入无法确认到账，重试可能重复转入 → 直接终止退款
         if (ACCEPTED.contains(result))
             throw new ChannelRejectedException("付款至二级户已受理，请稍后再尝试退款");
         throw new ChannelRejectedException("付款至二级户失败[" + result + "]");
@@ -160,7 +160,7 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
     // 内部
     // =========================================================================
 
-    /** 订单是否为当日（丰付按订单日期区分退款路径）；order 恒非空、单号恒 24 位（内核契约），不再判空/短号 */
+    /** 订单是否为当日（丰付按订单日期区分退款路径） */
     private static boolean isToday(OrderSnapshot order) {
         // 单号格式 [PRT]yyyyMMddHHmmss+序号，日期位 1-8
         var orderDate = order.getTradeNo().substring(1, 9);

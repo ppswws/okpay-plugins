@@ -23,7 +23,7 @@ import static org.mockito.Mockito.never;
 
 /**
  * 投诉回调地址设置：先查上游已配置地址，有则 PUT 更新、无则 POST 创建。
- * 公钥模式（配置私钥/公钥对）免平台证书下载 stub，响应验签用测试密钥自签。
+ * 公钥模式（authMode=public_key + 公钥ID/公钥）：免平台证书下载 stub，响应用测试密钥自签。
  */
 @DisplayName("微信投诉回调地址设置（先查后定）")
 class WxpayComplainNotifyUrlTest {

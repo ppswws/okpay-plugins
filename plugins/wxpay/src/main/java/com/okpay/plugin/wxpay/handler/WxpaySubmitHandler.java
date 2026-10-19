@@ -29,7 +29,7 @@ public class WxpaySubmitHandler extends AbstractBizHandler {
         var refund = ctx.getRefund();
         var order = ctx.getOrder();
         var tradeNo = refund.getTradeNo();
-        // 业务前置（非契约守卫）：退款须订单已支付（有上游交易号）——渠道单号缺失属宿主状态机问题，拒退
+        // 业务前置（非契约守卫）：订单无上游交易号（未支付）拒绝退款
         if (order.getApiTradeNo() == null || order.getApiTradeNo().isBlank())
             return Responses.fail("PARAM_ERROR", "订单无上游交易号");
 
@@ -134,7 +134,7 @@ public class WxpaySubmitHandler extends AbstractBizHandler {
         return trimmed.endsWith("�") ? trimmed.substring(0, trimmed.length() - 1) : trimmed;
     }
 
-    /** notify 域名由宿主 config 恒注入（buildPluginConfig 以 notify_domain 或 gateway 回退）——缺失即宿主缺陷，空串静默拼坏 URL 已废弃 */
+    /** notify 域名由宿主 config 恒注入（buildPluginConfig 以 notify_domain 或 gateway 回退） */
     private static String getNotifyDomain(InvokeContext ctx) {
         return ctx.getConfig().getNotifyDomain();
     }

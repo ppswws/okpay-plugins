@@ -78,7 +78,7 @@ class AlipayTransferHandlerTest {
                 .getBytes(StandardCharsets.UTF_8);
     }
 
-    /** 类型化读取嵌套 Map（payee_info/bankcard_ext_info），避免散落未检查强转 */
+    /** 类型化读取嵌套 Map（payee_info/bankcard_ext_info） */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> mapOf(Map<String, Object> map, String key) {
         return (Map<String, Object>) map.get(key);

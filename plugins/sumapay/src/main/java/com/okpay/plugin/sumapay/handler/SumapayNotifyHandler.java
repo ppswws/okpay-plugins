@@ -38,7 +38,6 @@ public class SumapayNotifyHandler {
     // =========================================================================
 
     public PageResponse notify(InvokeContext ctx) {
-        // 契约：notify 回调实体恒非空（PluginPageService.dispatch 无单据即 404）
         var order = ctx.getOrder();
         var cfg = SumapayConfig.from(ctx);
         var params = parseNotifyForm(ctx);

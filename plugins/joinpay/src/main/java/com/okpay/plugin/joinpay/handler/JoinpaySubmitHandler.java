@@ -54,7 +54,7 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
     // =========================================================================
 
     private BizResult refund(InvokeContext ctx) {
-        // 契约：T_REF submit 时内核恒填 refund+order（退款/主单快照），缺失即宿主缺陷——不再判空兜底
+        // 契约：T_REF submit 时内核恒填 refund+order，缺失即宿主缺陷，不判空
         var order = ctx.getOrder();
         var refund = ctx.getRefund();
         var cfg = JoinpayConfig.from(ctx);
@@ -95,10 +95,10 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
     // =========================================================================
 
     private BizResult transfer(InvokeContext ctx) {
-        // 契约：T_XFER submit 时内核恒填 transfer（tradeNo 恒非空），缺失即宿主缺陷——不再判空兜底
+        // 契约：T_XFER submit 时内核恒填 transfer，缺失即宿主缺陷，不判空
         var transfer = ctx.getTransfer();
         var cfg = JoinpayConfig.from(ctx);
-                // 未知账户类型显式拒绝（PaymentUtils 单点判定）；平台语义 private 对私 / public 对公 → JOINPAY 201/204
+        // 账户类型仅 private/public，其他值由 PaymentUtils 显式拒绝（异常不落入 S_ING）；对公→204、对私→201
         var accountType = com.okpay.plugin.sdk.PaymentUtils.isPublicAccount(transfer.getAccountType()) ? "204" : "201";
         // 对公代付必须提供联行号（receiverBankChannelNo）
         if ("204".equals(accountType) && (transfer.getCnapsNo() == null || transfer.getCnapsNo().isBlank()))

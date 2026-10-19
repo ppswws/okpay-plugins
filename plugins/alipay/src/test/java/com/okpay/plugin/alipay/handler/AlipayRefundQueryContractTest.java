@@ -32,7 +32,7 @@ import static org.mockito.Mockito.when;
 /**
  * 单笔退款成功判定与查单不存在语义（官方口径）：
  * alipay.trade.refund code=10000 仅代表受理成功，fund_change=Y 才是资金变动成功；
- * N/缺失（幂等重放等场景）保持 S_ING 交查单确认；查单 ACQ.TRADE_NOT_EXIST = 等待买家付款（S_ING）。
+ * N/缺失（幂等重放等场景）保持 S_ING 交查单确认；查单 ACQ.TRADE_NOT_EXIST → S_ING。
  */
 @DisplayName("AlipaySubmitHandler/QueryHandler 退款成功判定与查单不存在")
 class AlipayRefundQueryContractTest {
@@ -70,7 +70,7 @@ class AlipayRefundQueryContractTest {
         }
     }
 
-    /** 非合单订单 ctx：getSubOrders 恒空（单笔路径） */
+    /** 单笔路径 ctx：getSubOrders 恒空 */
     private InvokeContext ctx(boolean combine) throws Exception {
         var cb = mock(HostCallback.class);
         when(cb.getSubOrders(any())).thenReturn(List.of());

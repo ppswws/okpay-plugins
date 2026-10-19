@@ -101,7 +101,6 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
                         refund.getRefundNo(), sub.getSubTradeNo(), resp.text("fund_change"));
                 return Responses.ingMsg("退款受理，待查询确认", resp);
             }
-            // 确定性拒绝（业务错误）→ 计入失败；首单失败且无任何成功 → S_FAIL
             log.debug("合单退款子单被拒, refundNo={}, sub={}, subCode={}",
                     refund.getRefundNo(), sub.getSubTradeNo(), resp.subCode());
             if (isUnknownOutcome(resp)) return Responses.ing(resp.code(), resp.subMsg(), resp);
@@ -140,7 +139,6 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
             if (transfer.getRemark() != null && !transfer.getRemark().isBlank())
                 biz.put("remark", transfer.getRemark());
 
-            // 收款方信息：按打款方式分支（银行卡走无密转账银行卡，账户转账按收款账号值推断身份类型）
             var payee = new LinkedHashMap<String, Object>();
             if ("bank".equals(transfer.getType())) {
                 biz.put("product_code", "TRANS_BANKCARD_NO_PWD");
@@ -168,7 +166,6 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
             // 大额转账场景报备（两分支都报备；未配置场景名则跳过）
             applyTransferSceneReport(biz, cfg);
 
-            // 直连转账：付款客户端与收单客户端同构（无服务商标识概念），pid 是付款账户 PID 仅余额查询用
             var resp = cfg.clientForPayout().execute(ctx, "alipay.fund.trans.uni.transfer", biz, cfg.extras(null));
             if (resp.ok()) {
                 return Responses.ok(resp.text("order_id"), resp);

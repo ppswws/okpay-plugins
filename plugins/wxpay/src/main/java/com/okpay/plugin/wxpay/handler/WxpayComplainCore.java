@@ -110,7 +110,7 @@ public class WxpayComplainCore {
             if (mediaId == null || mediaId.isBlank()) {
                 throw new IllegalArgumentException("mediaRef 为空，无法提取 media_id");
             }
-            // 修复：从无鉴权裸 GET 改为商户签名的 GET（原实现未签名，上游拒绝后无法下载）
+            // 图片下载须走商户签名 GET（不带签名的裸 GET 上游拒绝）
             return buildClient(cfg).download("/v3/merchant-service/images/"
                     + java.net.URLEncoder.encode(mediaId, StandardCharsets.UTF_8), null);
         } catch (Exception e) { throw new IllegalStateException("下载图片失败", e); }

@@ -7,14 +7,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 合利宝插件元信息 — 字段注册表 + 窗口引用（ADR-0013）。
+ * 合利宝插件元信息 — 字段注册表 + 窗口引用。
  *
  * <p>{@code fields} 是全量字段注册表（支付配置 + 付款提交），{@code modes}（支付通道配置）、
  * {@code payoutSubmitFields}（付款提交）、{@code payoutChannelFields}（付款通道配置）都是窗口，
  * 只引用注册表 key。支付配置为单一收单形态（无多模式），声明单模式 {@code default} 仅用于
  * 把支付窗口收敛到支付字段，避免平铺把付款提交字段带进支付通道配置。</p>
  *
- * <p>打款对公/对私：显式 accountType 输入（对公/对私，跟随 joinpay 定义），对公打款 cnapsNo 必填。</p>
+ * <p>打款对公/对私：显式 accountType 输入（对公/对私），对公打款 cnapsNo 必填。</p>
  */
 final class HelipayPluginInfo {
 

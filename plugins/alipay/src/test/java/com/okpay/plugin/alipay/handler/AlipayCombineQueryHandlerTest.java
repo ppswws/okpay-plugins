@@ -41,7 +41,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * AlipayQueryHandler 合单分支：逐子单 alipay.trade.query 聚合（QueryScanner 兜底），
- * 全 TRADE_SUCCESS/FINISHED 且金额一致 → 逐子单已付 + 主单完成；含 WAIT_BUYER_PAY → ing；
+ * 全 TRADE_SUCCESS/FINISHED 且金额一致 → 逐子单已付 + S_OK；含 WAIT_BUYER_PAY → ing；
  * 含 TRADE_CLOSED → fail；金额不符 → fail；查询异常 → ing。
  * 退款查询（T_REF）：主单有子单 → 复用 refundCombine 逐单续退。
  */
@@ -189,7 +189,6 @@ class AlipayCombineQueryHandlerTest {
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
 
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
-            // 顺序推进：首个未付子单即停（不推进任何已付标记）
             stubQueryBySub(mocked, new String[]{"", "", ""},
                     new String[]{"WAIT_BUYER_PAY", "WAIT_BUYER_PAY", "WAIT_BUYER_PAY"},
                     new String[]{"100.00", "100.00", "100.00"});
@@ -211,7 +210,6 @@ class AlipayCombineQueryHandlerTest {
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
 
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
-            // 顺序推进：首个关闭子单即停（不推进任何已付标记）
             stubQueryBySub(mocked, new String[]{"", "", ""},
                     new String[]{"TRADE_CLOSED", "TRADE_CLOSED", "TRADE_CLOSED"},
                     new String[]{"100.00", "100.00", "100.00"});
@@ -233,7 +231,6 @@ class AlipayCombineQueryHandlerTest {
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
 
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
-            // 顺序推进：首个金额不符子单即停（不推进任何已付标记）
             stubQueryBySub(mocked, new String[]{"", "", ""},
                     new String[]{"TRADE_SUCCESS", "TRADE_SUCCESS", "TRADE_SUCCESS"},
                     new String[]{"99.99", "100.00", "100.00"});

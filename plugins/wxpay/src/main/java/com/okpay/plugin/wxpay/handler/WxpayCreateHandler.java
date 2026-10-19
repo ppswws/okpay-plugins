@@ -18,7 +18,6 @@ public class WxpayCreateHandler {
 
     private static final Logger log = LoggerFactory.getLogger(WxpayCreateHandler.class);
 
-    /** 按支付方式分发并提取支付入口 URL（复用 createWithHandlers）。 */
     public BizResult submit(InvokeContext ctx) {
         return Sdk.createResult(ctx, Map.of("wxpay", this::wxpay));
     }
@@ -126,7 +125,7 @@ public class WxpayCreateHandler {
         return combineExecute(kind, ctx, cfg, order, plan, appId, openid);
     }
 
-    /** 单笔下单（原 4 形态逻辑） */
+    /** 单笔下单 */
     private static Sdk.FetchResult singleExecute(Kind kind, InvokeContext ctx, WxpayConfig cfg,
                                                  OrderSnapshot order, String appId, String openid) throws Exception {
         var body = buildBase(cfg, order);
@@ -300,7 +299,7 @@ public class WxpayCreateHandler {
             return Responses.respPageURL("wxpay_qrcode", retUrl);
         }
         // OAuth 兑换在锁外执行：lockOrderExt 只缓存真正下单结果，openid 不做缓存。
-        // 兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应全部内置 SDK（exchangeMpOpenid），
+        // 兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应全部由 SDK 内置（exchangeMpOpenid），
         // 插件只提供「拿到 openid 后如何下单」的回调，无任何风控分支
         return OAuthHelper.exchangeMpOpenid(ctx, mpAppId, cfg.mpAppSecret(), code,
                 openid -> lockCreate(ctx, (ictx, icfg, iorder) -> {
@@ -325,7 +324,7 @@ public class WxpayCreateHandler {
             } catch (Exception e) { log.error("获取小程序 scheme 失败", e); return Responses.respError("小程序跳转失败"); }
         }
         // OAuth 兑换在锁外执行：lockOrderExt 只缓存真正下单结果，openid 不做缓存。
-        // 兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应全部内置 SDK（exchangeMiniOpenid），
+        // 兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应全部由 SDK 内置（exchangeMiniOpenid），
         // 插件只提供「拿到 openid 后如何下单」的回调，无任何风控分支
         return OAuthHelper.exchangeMiniOpenid(ctx, miniAppId, cfg.miniAppSecret(), code,
                 openid -> lockCreate(ctx, (ictx, icfg, iorder) -> {
@@ -343,7 +342,7 @@ public class WxpayCreateHandler {
     }
 
     // =========================================================================
-    // lockCreate — 只做包装
+    // lockCreate
     // =========================================================================
 
     private PageResponse lockCreate(InvokeContext ctx, Mode mode) {

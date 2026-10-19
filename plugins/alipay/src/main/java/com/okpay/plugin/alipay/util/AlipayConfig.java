@@ -32,7 +32,7 @@ public class AlipayConfig implements ChannelConfig {
     @JsonProperty("is_prod") private String isProd;
     // 认证模式（凭据维度）：key=公钥/私钥，cert=证书模式；前端认证选择器写入，运行期据此选择验签密钥与 SN 上报
     @JsonProperty("authMode") private String authMode;
-    // 证书模式（app_cert=应用公钥证书/alipay_cert=支付宝公钥证书/root_cert=支付宝根证书，均为 PEM）
+    // 证书模式（三件均为 PEM）
     @JsonProperty("app_cert") private String appCert;
     @JsonProperty("alipay_cert") private String alipayCert;
     @JsonProperty("root_cert") private String rootCert;
@@ -82,7 +82,7 @@ public class AlipayConfig implements ChannelConfig {
 
     /**
      * 证书模式判定：显式 authMode=cert，或未显式指定但三证书齐全（老配置/手工配置兼容）；
-     * 显式 authMode=key 时即使残留证书字段也走公钥模式（显式优先）。
+     * 显式 authMode=key（含其他值）时即使残留证书字段也走公钥模式（显式优先）。
      */
     public boolean certMode() {
         if ("cert".equals(authMode)) return true;

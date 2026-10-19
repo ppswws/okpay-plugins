@@ -27,7 +27,7 @@ public class EpayConfig implements ChannelConfig {
         var cfg = ChannelConfigSupport.from(ctx, EpayConfig.class,
                 "通道配置不完整（缺少 appurl/appid/appkey）",
                 c -> c.appurl == null || c.appid == null || c.appkey == null);
-        // 接口地址常带尾斜杠输入（https://x.com/），统一去除，避免拼出 //mapi.php、//submit.php
+        // 去除 appurl 尾斜杠（https://x.com/），避免拼出 //mapi.php、//submit.php
         cfg.appurl = cfg.appurl.replaceAll("/+$", "");
         return cfg;
     }

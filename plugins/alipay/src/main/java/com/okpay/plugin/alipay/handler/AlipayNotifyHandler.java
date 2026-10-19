@@ -68,7 +68,6 @@ public class AlipayNotifyHandler {
                 return Responses.notifyFail("amount_mismatch", BizType.T_PAY);
             }
 
-            // 推进状态机
             try {
                 Sdk.completeOrderOk(ctx, order.getTradeNo(),
                         params.get("trade_no"), buyerIdOf(params));

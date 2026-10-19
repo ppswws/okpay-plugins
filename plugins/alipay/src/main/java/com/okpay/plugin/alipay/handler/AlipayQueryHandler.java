@@ -192,7 +192,7 @@ public class AlipayQueryHandler extends AbstractBizHandler {
             var cfg = AlipayConfig.from(ctx);
             var biz = new LinkedHashMap<String, Object>();
             biz.put("account_type", "ACCTRANS_ACCOUNT");
-            // alipay.fund.account.query 的账户标识是账户 PID；未配置时退回 appid 保持旧行为
+            // alipay.fund.account.query 的账户标识是账户 PID；未配置时退回 appid
             var accountId = cfg.getPid() != null && !cfg.getPid().isBlank() ? cfg.getPid() : cfg.getAppId();
             biz.put("alipay_user_id", accountId);
 

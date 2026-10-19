@@ -8,7 +8,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * WxpayModeResolver UA 自动分配（epay submit() 优先级表）。
+ * WxpayModeResolver UA 自动分配。
  *
  * <p>纯函数矩阵：UA（微信内/手机 iPhone/手机 Android/PC/空）× 方式集合 × mp/mini 绑定。</p>
  */

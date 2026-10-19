@@ -59,7 +59,6 @@ class AlipayCreateHandlerTest {
     /**
      * 全参数 ctx：支付方式（biztype_alipay 值，null 用默认）、UA、query、
      * 是否配置全局小程序应用（oauth_mini，含站点域名）、订单 buyer。
-     * 当面付JS 无全局应用键（user_id 账号级跨应用一致，恒走通道应用 OAuth）。
      */
     private InvokeContext ctx(long real, String biztype, String ua, String query,
                               boolean miniConfigured, String buyer, HostCallback cb) throws Exception {
@@ -187,8 +186,7 @@ class AlipayCreateHandlerTest {
         var ctx = ctx(100L, "4", UA_ALIPAY, "auth_code=AC1", false, null, cb);
         var reqBody = new AtomicReference<String>();
 
-        // 真实 OAuthHelper.getAliIdentity（真实 RSA 签名 + 兑换响应解析）：自动风控在方法体内
-        // 真实执行，可验证 cb.recordOAuthIdentity 被内部自动调用（插件没有显式调用代码）
+        // 真实 OAuthHelper 兑换（真实 RSA 签名 + 响应解析）：自动风控落库 buyer 由 SDK 内部回调宿主，插件无显式调用
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             letRealUaChecks(mocked);
             mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv -> {
@@ -405,7 +403,7 @@ class AlipayCreateHandlerTest {
         var ctx = ctx(100L, "6", UA_ALIPAY, "auth_code=AC1", false, null, cb);
         var reqBody = new AtomicReference<String>();
 
-        // 真实 OAuthHelper.getAliIdentity：验证 identity=open_id 请求与自动风控同方法体执行
+        // 真实 OAuthHelper 兑换：验证 identity=open_id 请求与自动风控落库 buyer
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             letRealUaChecks(mocked);
             mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv -> {
@@ -482,14 +480,13 @@ class AlipayCreateHandlerTest {
     void biztypeKeyWithPage() throws Exception {
         var cb = mock(HostCallback.class);
         when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
-        // 前端 ChannelList 保存时 biztype_* 合并为 biztype 键，插件直接读该键
         var ctx = ctx(100L, "1", UA_PC, null, false, null, cb);
 
         var resp = new AlipayCreateHandler().alipay(ctx);
 
         assertThat(resp.getType()).isEqualTo("html");
         assertThat(resp.getDataText()).contains("punchout_form").contains("alipay.trade.page.pay");
-        // 渠道同步回跳统一收口：return_url 指向结果状态机页，不再直传商户 return_url
+        // 渠道同步回跳统一收口：return_url 指向结果页，不直传商户 return_url
         assertThat(resp.getDataText())
                 .contains("return_url")
                 .contains("/pay/result/T1");

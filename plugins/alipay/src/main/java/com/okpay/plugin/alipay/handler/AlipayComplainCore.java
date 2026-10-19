@@ -19,8 +19,7 @@ import java.util.*;
  * 支付宝投诉处理核心逻辑 — 零第三方 SDK，走 AlipayOpenApiClient。
  *
  * <p>对接 <b>交易投诉（tradecomplain）体系</b>：{@code alipay.merchant.tradecomplain.*}
- * 六接口 + {@code alipay.merchant.image.upload}，与通知 {@code alipay.merchant.tradecomplain.changed}
- * （官方文档已存档 {@code llms文档/支付宝/投诉处理/}）。</p>
+ * 接口 + {@code alipay.merchant.image.upload}，与通知 {@code alipay.merchant.tradecomplain.changed}。</p>
  *
  * <p>负责：构建客户端 → 调用支付宝 API → 转换为标准化的 {@link ComplaintRecord}。
  * 外部调用失败向宿主抛出，由宿主统一转换和记录，避免“返回空结果但接口成功”。</p>
@@ -206,9 +205,9 @@ public class AlipayComplainCore {
     }
 
     /**
-     * 标记投诉处理完成 — 老体系的「商家处理投诉」走 {@code feedback.submit}，需要反馈类目码
+     * 标记投诉处理完成 — 交易投诉体系无完结接口：商家处理走 {@code feedback.submit}，需要反馈类目码
      * （feedback_code：02 已退款/03 已发货/05 已完成售后/06 非我方责任/04 其他）+ 处理说明，
-     * 宿主 complete 链路未携带这些参数，故不做调用；投诉完结由运营在处理时经 reply/feedback 达成。
+     * 宿主 complete 链路未携带这些参数，故不做调用。
      */
     public void complete(ChannelConfig cfg, String complaintId, String merchantNo) {
         log.debug("支付宝投诉完结需反馈类目码（feedback.submit），宿主 complete 链路未携带, complaintId={}", complaintId);
@@ -240,16 +239,14 @@ public class AlipayComplainCore {
     // =========================================================================
 
     /**
-     * 设置投诉回调通知 URL。
-     * 支付宝无 SDK 接口，需前往开放平台控制台（应用网关）手动配置。
+     * 设置投诉回调通知 URL — 支付宝无此接口，需在开放平台控制台（应用网关）手动配置。
      */
     public void setNotifyUrl(ChannelConfig cfg, String url) {
         log.debug("支付宝投诉通知地址需在开放平台控制台手动配置");
     }
 
     /**
-     * 删除投诉回调通知 URL。
-     * 支付宝无 SDK 接口，需前往开放平台控制台手动操作。
+     * 删除投诉回调通知 URL — 支付宝无此接口，需在开放平台控制台手动操作。
      */
     public void deleteNotifyUrl(ChannelConfig cfg, String url) {
         log.debug("支付宝投诉通知地址需在开放平台控制台手动删除");
@@ -272,7 +269,7 @@ public class AlipayComplainCore {
     }
 
     /**
-     * 根据 ChannelConfig 构建 AlipayOpenApiClient。
+     * 构建 AlipayOpenApiClient。
      * extras 中的 is_prod 控制是否使用正式环境；认证凭据维度与支付插件一致：
      * 三证书（app_cert/alipay_cert/root_cert）齐全 → 证书模式（请求带 SN、验签取支付宝证书），
      * 否则公钥/私钥模式（appkey/appsecret）。证书模式仍需应用私钥（appsecret）签名。
@@ -400,8 +397,7 @@ public class AlipayComplainCore {
     // =========================================================================
 
     /**
-     * 金额字符串（元）转分（Long）。
-     * 支付宝返回的金额单位是"人民币元"，需转换为分存储。
+     * 金额字符串（元）转分（Long）；支付宝返回的金额单位为元。
      */
     private static Long toFen(String amountYuan) {
         if (amountYuan == null || amountYuan.isBlank()) return null;

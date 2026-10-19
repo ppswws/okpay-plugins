@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 支付宝插件元信息 — 字段注册表 + 窗口引用（ADR-0013）。
+ * 支付宝插件元信息 — 字段注册表 + 窗口引用。
  *
  * <p>{@code fields} 是全量字段注册表（支付配置 + 付款提交），{@code modes}（支付通道配置）、
  * {@code payoutSubmitFields}（付款提交）、{@code payoutChannelFields}（付款通道配置）都是窗口，

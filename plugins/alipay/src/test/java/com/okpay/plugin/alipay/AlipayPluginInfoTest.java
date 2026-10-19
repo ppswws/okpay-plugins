@@ -7,8 +7,7 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * alipay 插件元信息契约测试 — payment 启动加载与 manager 上传共用同一校验器，
- * 元信息任何字段（type/options/modes）改动不满足契约时在此失败，而非运行时才暴露。
+ * alipay 插件元信息契约测试：元信息须通过统一校验器。
  */
 @DisplayName("alipay 插件元信息契约测试")
 class AlipayPluginInfoTest {

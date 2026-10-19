@@ -30,7 +30,6 @@ public class JoinpayCreateHandler {
             "r6_FrpCode","r7_TrxNo","r8_MerchantBankCode","r9_SubMerchantNo",
             "ra_Code","rb_CodeMsg","rc_Result","rd_Pic");
 
-    /** 按支付方式分发并提取支付入口 URL（复用 createWithHandlers）。 */
     public com.okpay.plugin.model.BizResult submit(InvokeContext ctx) {
         return Sdk.createResult(ctx, Map.of(
             "alipay", this::alipay, "wxpay", this::wxpay, "bank", this::bank
@@ -85,9 +84,8 @@ public class JoinpayCreateHandler {
                 return Responses.respPageURL("wxpay_h5", scheme);
             } catch (Exception e) { log.error("获取小程序 scheme 失败", e); return Responses.respError("小程序跳转失败"); }
         }
-        // OAuth 兑换在锁外执行：lockOrderExt 只缓存真正下单结果，openid 不做缓存。
-        // 兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应全部内置 SDK（exchangeMiniOpenid），
-        // 插件只提供「拿到 openid 后如何下单」的回调，无任何风控分支
+        // OAuth 兑换在锁外执行；兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应均由 SDK 处理，
+        // 插件只提供「拿到 openid 后如何下单」的回调
         return OAuthHelper.exchangeMiniOpenid(ctx, cfg.getMini().getAppid(),
                 cfg.getMini().getAppsecret(), code,
                 openid -> Sdk.lockCreate(ctx, () -> {
@@ -106,18 +104,15 @@ public class JoinpayCreateHandler {
         var retUrl = buildReturnUrl(ctx, cfg);
         if (code.isBlank()) {
             if (HttpHelper.isWeChat(ua)) {
-                // 授权 URL 由 SDK 内置决策：统一公众号已配置 → 先经宿主 /oauth/wxmp 用系统公众号授权
-                //（风控身份落库 buyer + 黑名单），随后微信重定向到本通道公众号授权；未配置 → 直接
-                // 通道授权。两条路径最终兑换的 openid 恒为本通道公众号 openid（支付 appid 同源），
-                // buyer 由宿主/SDK 内部管理，插件不读不判。参数已由上下文保证非空，无需防御分支
+                // 授权 URL 由 SDK 决策：已配置系统公众号 → 先经宿主 /oauth/wxmp 授权（风控身份落库
+                // buyer），再重定向到本通道公众号授权；两条路径兑换的 openid 均属本通道公众号
                 return Responses.respJump(OAuthHelper.buildMpPayAuthUrl(ctx, cfg.getMp().getAppid(), retUrl,
                         ctx.getOrder().getTradeNo()));
             }
             return Responses.respPageURL("wxpay_qrcode", retUrl + "?t=" + System.currentTimeMillis() / 1000);
         }
-        // OAuth 兑换在锁外执行：lockOrderExt 只缓存真正下单结果，openid 不做缓存。
-        // 兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应全部内置 SDK（exchangeMpOpenid），
-        // 插件只提供「拿到 openid 后如何下单」的回调，无任何风控分支
+        // OAuth 兑换在锁外执行；兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应均由 SDK 处理，
+        // 插件只提供「拿到 openid 后如何下单」的回调
         return OAuthHelper.exchangeMpOpenid(ctx, cfg.getMp().getAppid(), cfg.getMp().getAppsecret(), code,
                 openid -> Sdk.lockCreate(ctx, () -> {
                     try {

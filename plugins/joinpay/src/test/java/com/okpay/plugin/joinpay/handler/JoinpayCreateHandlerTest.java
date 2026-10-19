@@ -29,7 +29,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * JoinpayCreateHandler 公众号 OAuth 决策（对齐 wxpay 收编：授权 URL 决策内置 SDK）。
+ * JoinpayCreateHandler 公众号 OAuth 决策（授权 URL 决策内置 SDK）。
  *
  * <p>公众号授权 URL 决策内置 SDK（已配置系统公众号 → 跳 /oauth/wxmp 包装的通道授权 URL，双 OAuth；
  * 未配置 → 直接通道授权 URL），buyer 由宿主/SDK 管理、插件不读不判；黑名单命中 → 跳失败页终止。</p>

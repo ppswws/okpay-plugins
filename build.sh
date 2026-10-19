@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# build.sh - 编译并安装 okpay 插件
 # 用法: ./build.sh [all|插件名]   默认 all 编译全部插件
-# 例:   ./build.sh all           编译全部插件
+# 例:   ./build.sh all
 #       ./build.sh alipay        仅编译 alipay 插件
 # 编译产物统一收集到 build/（各插件主 jar，排除 sources/javadoc），避免逐个从 target 取。
 set -euo pipefail
@@ -10,7 +9,6 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 BUILD_DIR="$(pwd)/build"
 
-# 收集插件主 jar 到 build/（排除 sources/javadoc）
 collect_plugin_jars() {
   local src="$1"
   for jar in "$src"/target/*.jar; do

@@ -222,7 +222,7 @@ class SumapayCreateHandlerTest {
     @Test
     @DisplayName("公众号（携带微信回调 code）→ OAuth 换 openid → IOZ2011 建单 → wxpay_jspay 页带支付参数")
     void wxMpWithCode() throws Exception {
-        // 微信 snsapi_base 回调参数名是 code（auth_code 是支付宝/小程序自定口径），写错即线上无限跳授权
+        // 微信 snsapi_base 回调参数名是 code，写错即线上无限跳授权
         var ctx = ctx("wxpay", "2", UA_WECHAT, "code=CODE1");
         var cb = ctx.getCallback();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -346,7 +346,7 @@ class SumapayCreateHandlerTest {
         mocked.when(() -> HttpHelper.isWeChat(any())).thenCallRealMethod();
     }
 
-    /** 按 URL 分发渠道响应（顺序消费） */
+    /** 固定返回渠道响应 */
     private static void stubApi(MockedStatic<HttpHelper> mocked, HttpHelper.HttpResponse resp) {
         mocked.when(() -> HttpHelper.postBytes(any(), anyString(), any(), anyString(), any()))
                 .thenReturn(resp);

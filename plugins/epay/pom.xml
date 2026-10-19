@@ -17,7 +17,6 @@
     <description>彩虹易支付通道插件</description>
 
     <dependencies>
-        <!-- 只需依赖 okpay-plugin SDK 即可独立开发 -->
         <dependency>
             <groupId>com.okpay</groupId>
             <artifactId>okpay-plugin</artifactId>

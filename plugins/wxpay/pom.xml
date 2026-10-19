@@ -17,7 +17,6 @@
     <description>微信支付通道插件（零第三方 SDK，APIv3）</description>
 
     <dependencies>
-        <!-- 只需依赖 okpay-plugin SDK 即可独立开发（含 WechatPayV3Client 通道封装） -->
         <dependency>
             <groupId>com.okpay</groupId>
             <artifactId>okpay-plugin</artifactId>

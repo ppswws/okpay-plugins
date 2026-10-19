@@ -26,12 +26,11 @@ import java.util.concurrent.ThreadLocalRandom;
  *       恒走通道应用 OAuth</li>
  * </ul>
  * 通道路径身份经 {@link OAuthHelper} exchange 方法内部自动闭环风控（落库 buyer + 买家黑名单，
- * 命中黑名单直接构造失败页跳转终止支付）——风控全内置 SDK，插件无感知无分支，只管支付。</p>
+ * 命中黑名单直接构造失败页跳转终止支付）。</p>
  */
 @Slf4j
 public class AlipayCreateHandler {
 
-    /** 按支付方式分发并提取支付入口 URL（复用 createWithHandlers）。 */
     public com.okpay.plugin.model.BizResult submit(InvokeContext ctx) {
         return Sdk.createResult(ctx, Map.of("alipay", this::alipay));
     }
@@ -83,12 +82,12 @@ public class AlipayCreateHandler {
         return cfg.getNotifyDomain() + "/pay/notify/" + tradeNo;
     }
 
-    /** 渠道同步回跳统一收口：支付结果状态机页（/pay/result/{tradeNo}），不走商户 return_url 直回 */
+    /** 渠道同步回跳地址：支付结果页 /pay/result/{tradeNo}，不直回商户 return_url */
     private static String resultPageUrl(AlipayConfig cfg, String tradeNo) {
         return cfg.getSiteDomain() + "/pay/result/" + tradeNo;
     }
 
-    /** 直付通单笔：SMID 非空时注入 sub_merchant + settle_info（结算到该子商户进件默认账号，账期 1d 最快自动确认）。与合单子单同构。 */
+    /** 直付通单笔：SMID 非空时注入 sub_merchant + settle_info（结算到该子商户进件默认账号，settle_period_time=1d） */
     private static void applyDirectPaySettle(AlipayConfig cfg, Map<String, Object> biz) {
         var smids = cfg.smidList();
         if (smids.isEmpty()) return;
@@ -167,7 +166,7 @@ public class AlipayCreateHandler {
     /** 直付通合单上限（merge 协议）；起始单数 = SMID 数（clamp 到 [1,6]） */
     private static final int MAX_COMBINE_SUBS = 6;
 
-    /** 合单拆单判定：直付通（SMID 非空）且通道开关开启 + 全局金额达阈值 → 拆单金额列表；否则空（走单笔路径） */
+    /** 合单拆单判定：通道开关开启 + 直付通（SMID 非空）+ 全局金额达阈值 → 拆单金额列表；否则空（走单笔路径） */
     private static List<Long> combinePlan(InvokeContext ctx, AlipayConfig cfg, OrderSnapshot order) {
         if (!cfg.combineOpen()) return List.of();
         var smidCount = cfg.smidList().size();
@@ -256,7 +255,7 @@ public class AlipayCreateHandler {
         return biz;
     }
 
-    /** APP 支付（方式 6）→ 唤起字符串 → 支付宝 scheme → alipay_h5 页面 */
+    /** APP 支付（方式 5）→ 唤起字符串 → 支付宝 scheme → alipay_h5 页面 */
     private static final Mode App = (ctx, cfg, order) -> {
         var biz = new LinkedHashMap<String, Object>();
         biz.put("out_trade_no", order.getTradeNo());
@@ -273,8 +272,7 @@ public class AlipayCreateHandler {
 
     /** 当面付JS（方式 4）：支付宝 App 内 AlipayJSBridge 调起。
      *
-     * <p>需 OAuth 身份：buyer 空 → oauth()（lockCreate 之外，全局跳宿主 / 通道直调 SDK）；
-     * buyer 非空 → alipay.trade.create（无 product_code）。
+     * <p>需 OAuth 身份（buyer 空时在 {@link #alipay} 中先走 {@link #oauth}）。
      * 身份类型按值推断：2088 开头 → buyer_id（user_id），否则 buyer_open_id。</p>
      */
     private static Sdk.FetchResult jsPay(InvokeContext ctx, AlipayConfig cfg, OrderSnapshot order,
@@ -297,8 +295,7 @@ public class AlipayCreateHandler {
     /**
      * JSAPI（方式 7）：生活号/小程序 H5 内 JSAPI 调起。
      *
-     * <p>与当面付JS 同走统一 OAuth；调起方侧 my.tradePay 未实现（页面流程降级处理）。
-     * buyer_open_id 恒传身份值：身份非 open_id 时渠道校验失败即渠道抛错（配置有误由渠道抛错）。
+     * <p>与当面付JS 同走统一 OAuth。
      * op_app_id 与 buyer_open_id 必须同源（open_id 是应用级标识）：全局小程序应用路径下宿主
      * 回跳携带 op_app_id（OAuth 来源应用），通道兜底路径身份即通道应用 open_id → op_app_id=通道应用。</p>
      */
@@ -360,9 +357,7 @@ public class AlipayCreateHandler {
                     order.getTradeNo(), isProd(cfg)));
         }
         if (miniHostOAuth) return Responses.respError("获取支付宝身份失败");
-        // 通道 OAuth 回调：exchange 内部完成兑换、风控（落库 buyer + 黑名单）与失败/拦截终止
-        // 响应构造（SDK 全内置，插件无风控分支）。identity 与支付一致：JSPAY 取 user_id
-        // （2088 按值推断）、JSAPI 恒 open_id——SDK 按同一选择自动风控；插件只提供下单回调
+        // 通道 OAuth 回调：identity 与支付一致——JSPAY 取 user_id（2088 按值推断）、JSAPI 恒 open_id
         return OAuthHelper.exchangeAliIdentity(ctx, cfg.getAppId(),
                 cfg.getAppPrivateKey(), authCode, isProd(cfg),
                 mode == AlipayModeResolver.Mode.JSAPI ? "open_id" : "user_id",
@@ -374,7 +369,6 @@ public class AlipayCreateHandler {
                 }));
     }
 
-    /** is_prod 是 String 配置字段（"true"/"false"），转 boolean（缺省视为正式环境） */
     /** 渠道业务失败文案：sub_msg → msg → sub_code → code 逐级兜底，全缺 → 统一文案 */
     private static String alipayErrMsg(AlipayOpenApiClient.ApiResponse resp) {
         for (var v : List.of(resp.subMsg(), resp.msg(), resp.subCode(), resp.code())) {
@@ -383,6 +377,7 @@ public class AlipayCreateHandler {
         return channelFailure(200);
     }
 
+    /** is_prod 是 String 配置字段（"true"/"false"），缺省视为正式环境 */
     private static boolean isProd(AlipayConfig cfg) {
         return !"false".equals(cfg.getIsProd());
     }
