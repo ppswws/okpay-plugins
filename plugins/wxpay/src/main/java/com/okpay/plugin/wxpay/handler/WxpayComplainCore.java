@@ -29,6 +29,9 @@ public class WxpayComplainCore {
                 var query = "?limit=" + pageSize + "&offset=" + offset
                         + "&begin_date=" + since + "&end_date=" + LocalDate.now();
                 var resp = client.get("/v3/merchant-service/complaints-v2" + query, null);
+                // 临时诊断：输出本次同步的完整应答，确认字段映射后移除
+                log.info("投诉同步原始数据(诊断), appId={}, mode={}, appmchid={}, body={}",
+                        cfg.getId(), modeOf(cfg), cfg.getAppMchId(), resp.body());
                 var data = resp.body().path("data");
                 if (data == null || !data.isArray() || data.isEmpty()) break;
                 for (var item : data) {
@@ -46,8 +49,11 @@ public class WxpayComplainCore {
         try {
             var client = buildClient(cfg);
             var enc = java.net.URLEncoder.encode(complaintId, StandardCharsets.UTF_8);
-            var record = fillDirectComplaintedMchid(WxpayConvert.toRecord(client.get(
-                    "/v3/merchant-service/complaints-v2/" + enc, null).body()), cfg);
+            var resp = client.get("/v3/merchant-service/complaints-v2/" + enc, null);
+            // 临时诊断：输出本次详情的完整应答，确认字段映射后移除
+            log.info("投诉详情原始数据(诊断), appId={}, mode={}, appmchid={}, complaintId={}, body={}",
+                    cfg.getId(), modeOf(cfg), cfg.getAppMchId(), complaintId, resp.body());
+            var record = fillDirectComplaintedMchid(WxpayConvert.toRecord(resp.body()), cfg);
             diagnoseComplaintedMchid(record, cfg);
             // 协商历史独立接口（详情应答已无 query_historys 字段）；limit 上限 300，默认单页足够
             var history = client.get("/v3/merchant-service/complaints-v2/" + enc
