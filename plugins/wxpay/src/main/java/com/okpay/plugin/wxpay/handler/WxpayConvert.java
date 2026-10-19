@@ -17,8 +17,12 @@ final class WxpayConvert {
     private WxpayConvert() {}
 
     static ComplaintRecord toRecord(JsonNode item) {
-        var outTradeNo = extractOutTradeNo(item);
-        return ComplaintRecord.builder()
+        var orderInfo = item.path("complaint_order_info");
+        var outTradeNo = extractOutTradeNo(orderInfo);
+        var orderAmount = extractOrderAmount(orderInfo);
+        var refundAmount = item.path("apply_refund_amount").isNumber()
+                ? item.path("apply_refund_amount").asLong() : null;
+        var record = ComplaintRecord.builder()
                 .complaintId(item.path("complaint_id").asString(null))
                 .merchantNo(item.path("complainted_mchid").asString(null))
                 .tradeNo(outTradeNo)
@@ -30,13 +34,21 @@ final class WxpayConvert {
                 .content(item.path("complaint_detail").asString(null))
                 .phone(item.path("payer_phone").asString(null))
                 .buyerId(item.path("payer_openid").asString(null))
-                .amount(item.path("apply_refund_amount").isNumber()
-                        ? item.path("apply_refund_amount").asLong() : null)
+                // 金额语义为交易金额：优先订单金额，缺失才回退申请退款金额
+                .amount(orderAmount != null ? orderAmount : refundAmount)
                 .occurredAt(parseTime(item.path("complaint_time").asString(null)))
                 .images(extractImages(item))
                 .messages(extractMessages(item))
                 .build();
+        // 关键字段缺失时打印上游原始值，便于定位字段/配置问题
+        if (isBlank(record.getMerchantNo()) || record.getAmount() == null || record.getAmount() <= 0) {
+            log.warn("投诉关键字段诊断, complaintId={}, complainted_mchid={}, orderAmount={}, applyRefundAmount={}, type={}",
+                    record.getComplaintId(), record.getMerchantNo(), orderAmount, refundAmount, record.getComplaintType());
+        }
+        return record;
     }
+
+    private static boolean isBlank(String s) { return s == null || s.isBlank(); }
 
     /** 协商历史：query_historys 字段已从投诉详情接口移除，恒为空列表；协商历史由
      *  WxpayComplainCore 调独立接口 /negotiation-historys 后经 {@link #toMessages} 组装 */
@@ -146,13 +158,21 @@ final class WxpayConvert {
         return id.isBlank() ? null : id;
     }
 
-    private static String extractOutTradeNo(JsonNode item) {
-        var orderInfo = item.path("complaint_order_info");
+    private static String extractOutTradeNo(JsonNode orderInfo) {
         if (orderInfo != null && orderInfo.isArray() && !orderInfo.isEmpty()) {
             var outTradeNo = orderInfo.get(0).path("out_trade_no").asString(null);
             return outTradeNo != null ? outTradeNo : "";
         }
         return "";
+    }
+
+    /** 订单金额（分）：投诉关联订单的订单金额 */
+    private static Long extractOrderAmount(JsonNode orderInfo) {
+        if (orderInfo != null && orderInfo.isArray() && !orderInfo.isEmpty()) {
+            var amount = orderInfo.get(0).path("amount");
+            if (amount.isNumber()) return amount.asLong();
+        }
+        return null;
     }
 
     private static int mapState(String state) {

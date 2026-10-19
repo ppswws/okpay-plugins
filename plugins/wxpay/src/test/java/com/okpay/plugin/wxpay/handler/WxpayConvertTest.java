@@ -27,7 +27,7 @@ class WxpayConvertTest {
                   "apply_refund_amount": 100,
                   "complaint_time": "2022-01-01T08:00:00+08:00",
                   "complaint_order_info": [
-                    {"transaction_id": "4200000000000000000000001", "out_trade_no": "T20220101001"}
+                    {"transaction_id": "4200000000000000000000001", "out_trade_no": "T20220101001", "amount": 500}
                   ],
                   "complaint_media_list": [
                     {"media_type": "image", "media_url": ["https://api.mch.weixin.qq.com/v3/merchant-service/images/a1", "https://api.mch.weixin.qq.com/v3/merchant-service/images/a2"]}
@@ -47,11 +47,24 @@ class WxpayConvertTest {
         assertThat(record.getContent()).isEqualTo("详情文字");
         assertThat(record.getPhone()).isEqualTo("13800000000");
         assertThat(record.getBuyerId()).isEqualTo("oUpF8uMuAJO_M2pxb1Q9zNjWeS6o");
-        assertThat(record.getAmount()).isEqualTo(100L);
+        assertThat(record.getAmount()).isEqualTo(500L); // 金额取订单金额，优先于申请退款金额
         assertThat(record.getOccurredAt()).isEqualTo(java.time.LocalDateTime.of(2022, 1, 1, 8, 0, 0));
         assertThat(record.getImages()).containsExactly(
                 "https://api.mch.weixin.qq.com/v3/merchant-service/images/a1",
                 "https://api.mch.weixin.qq.com/v3/merchant-service/images/a2");
+    }
+
+    @Test
+    @DisplayName("金额：订单金额缺失时回退申请退款金额")
+    void amountFallsBackToRefundAmount() throws Exception {
+        var record = WxpayConvert.toRecord(HttpHelper.MAPPER.readTree("""
+                {
+                  "complaint_id": "C1",
+                  "apply_refund_amount": 100,
+                  "complaint_order_info": [{"out_trade_no": "T1"}]
+                }
+                """));
+        assertThat(record.getAmount()).isEqualTo(100L);
     }
 
     @Test

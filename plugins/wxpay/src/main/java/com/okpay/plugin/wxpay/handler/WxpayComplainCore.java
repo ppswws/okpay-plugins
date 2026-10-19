@@ -31,8 +31,11 @@ public class WxpayComplainCore {
                 var resp = client.get("/v3/merchant-service/complaints-v2" + query, null);
                 var data = resp.body().path("data");
                 if (data == null || !data.isArray() || data.isEmpty()) break;
-                for (var item : data) all.add(decryptPhone(
-                        fillDirectComplaintedMchid(WxpayConvert.toRecord(item), cfg), client));
+                for (var item : data) {
+                    var record = fillDirectComplaintedMchid(WxpayConvert.toRecord(item), cfg);
+                    diagnoseComplaintedMchid(record, cfg);
+                    all.add(decryptPhone(record, client));
+                }
                 if (data.size() < pageSize || all.size() >= limit) break;
             }
         } catch (Exception e) { throw new IllegalStateException("微信投诉列表同步失败", e); }
@@ -45,6 +48,7 @@ public class WxpayComplainCore {
             var enc = java.net.URLEncoder.encode(complaintId, StandardCharsets.UTF_8);
             var record = fillDirectComplaintedMchid(WxpayConvert.toRecord(client.get(
                     "/v3/merchant-service/complaints-v2/" + enc, null).body()), cfg);
+            diagnoseComplaintedMchid(record, cfg);
             // 协商历史独立接口（详情应答已无 query_historys 字段）；limit 上限 300，默认单页足够
             var history = client.get("/v3/merchant-service/complaints-v2/" + enc
                     + "/negotiation-historys?limit=300&offset=0", null);
@@ -215,6 +219,15 @@ public class WxpayComplainCore {
                     record.getComplaintId(), modeOf(cfg));
         }
         return record;
+    }
+
+    /** 服务商/收付通被诉商户号等于服务商商户号时留痕（正常应为被诉子商户号） */
+    private static void diagnoseComplaintedMchid(ComplaintRecord record, ChannelConfig cfg) {
+        if (record == null || isDirect(cfg)) return;
+        if (!nullish(record.getMerchantNo()) && record.getMerchantNo().equals(cfg.getAppMchId())) {
+            log.warn("服务商投诉被诉商户号等于服务商商户号, complaintId={}, mode={}, mchid={}, amount={}",
+                    record.getComplaintId(), modeOf(cfg), record.getMerchantNo(), record.getAmount());
+        }
     }
 
     /** 直连模式判定：只认显式 mode=direct（不存在未声明 mode 的存量数据） */
