@@ -23,23 +23,20 @@ public class WxpayComplainHandler extends WxpayComplainCore implements Complaint
     @Override
     public ComplaintPluginInfo info() {
         // 混合 jar：字段注册表与支付扩展共享（WxpayPluginInfo.fields，ADR-0013），投诉 modes 只引用其 key。
+        // 服务商/收付通恒拉名下全部子商户，不提供按子商户过滤的配置项。
+        var credentials = List.of("appmchid", "appkey", "appsecret", "privateKey");
+        // 服务商/收付通的 appmchid 是签名主体（服务商商户号），与直连的自身商户号区分展示
+        var spMchOverride = Map.of("appmchid", FieldOverride.builder()
+                .name("商户号/服务商商户号")
+                .note("直连商户填写自己的微信支付商户号；服务商/收付通填写服务商商户号").build());
         return ComplaintPluginInfo.builder()
                 .id("wxpay").name("微信投诉处理").kind("wxpay")
                 .modes(Map.of(
-                    "direct", PluginMode.builder().label("直连商户")
-                            .fields(List.of("appmchid", "appkey", "appsecret", "privateKey")).build(),
-                    "service", PluginMode.builder().label("服务商")
-                            .fields(List.of("appmchid", "appkey", "appsecret", "sub_mchid", "privateKey"))
-                            .overrides(Map.of("sub_mchid", FieldOverride.builder()
-                                    .name("被诉商户号")
-                                    .note("留空=处理服务商名下所有子商户的投诉；填写=仅该子商户").build()))
-                            .build(),
-                    "shoufutong", PluginMode.builder().label("收付通")
-                            .fields(List.of("appmchid", "appkey", "appsecret", "sub_mchid", "privateKey"))
-                            .overrides(Map.of("sub_mchid", FieldOverride.builder()
-                                    .name("被诉商户号")
-                                    .note("留空=处理收付通名下所有子商户的投诉；填写=仅该子商户").build()))
-                            .build()
+                    "direct", PluginMode.builder().label("直连商户").fields(credentials).build(),
+                    "service", PluginMode.builder().label("服务商").fields(credentials)
+                            .overrides(spMchOverride).build(),
+                    "shoufutong", PluginMode.builder().label("收付通").fields(credentials)
+                            .overrides(spMchOverride).build()
                 ))
                 .defaultMode("direct")
                 .build();

@@ -17,11 +17,12 @@ final class WxpayConvert {
     private WxpayConvert() {}
 
     static ComplaintRecord toRecord(JsonNode item) {
+        var outTradeNo = extractOutTradeNo(item);
         return ComplaintRecord.builder()
                 .complaintId(item.path("complaint_id").asString(null))
-                .merchantNo(item.path("complained_mchid").asString(null))
-                .tradeNo(extractOutTradeNo(item))
-                .outTradeNo(extractOutTradeNo(item))
+                .merchantNo(item.path("complainted_mchid").asString(null))
+                .tradeNo(outTradeNo)
+                .outTradeNo(outTradeNo)
                 .state(mapState(item.path("complaint_state").asString(null)))
                 .rawState(item.path("complaint_state").asString(null))
                 .complaintType(item.path("problem_type").asString(null))

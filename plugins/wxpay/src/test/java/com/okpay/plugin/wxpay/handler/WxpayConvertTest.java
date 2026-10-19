@@ -17,7 +17,7 @@ class WxpayConvertTest {
         var json = """
                 {
                   "complaint_id": "20020182022010108000000000001",
-                  "complained_mchid": "1900012181",
+                  "complainted_mchid": "1900012181",
                   "complaint_state": "PROCESSING",
                   "problem_type": "欺诈",
                   "problem_description": "商品描述不符",

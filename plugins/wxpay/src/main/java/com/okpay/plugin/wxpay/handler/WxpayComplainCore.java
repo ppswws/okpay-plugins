@@ -25,17 +25,14 @@ public class WxpayComplainCore {
         var all = new ArrayList<ComplaintRecord>();
         try {
             for (int offset = 0; ; offset += pageSize) {
+                // 不传 complainted_mchid：直连查本商户，服务商/收付通查名下全部子商户
                 var query = "?limit=" + pageSize + "&offset=" + offset
                         + "&begin_date=" + since + "&end_date=" + LocalDate.now();
-                // complainted_mchid=被诉商户号（取 sub_mchid；留空不传=直连查本商户/服务商名下全部子商户）。
-                // appmchid 是签名主体，服务商模式下传它会查空，恒不传
-                var complainted = complaintedMchid(cfg);
-                if (complainted != null) query += "&complainted_mchid="
-                        + java.net.URLEncoder.encode(complainted, StandardCharsets.UTF_8);
                 var resp = client.get("/v3/merchant-service/complaints-v2" + query, null);
                 var data = resp.body().path("data");
                 if (data == null || !data.isArray() || data.isEmpty()) break;
-                for (var item : data) all.add(decryptPhone(WxpayConvert.toRecord(item), client));
+                for (var item : data) all.add(decryptPhone(
+                        fillDirectComplaintedMchid(WxpayConvert.toRecord(item), cfg), client));
                 if (data.size() < pageSize || all.size() >= limit) break;
             }
         } catch (Exception e) { throw new IllegalStateException("微信投诉列表同步失败", e); }
@@ -46,8 +43,8 @@ public class WxpayComplainCore {
         try {
             var client = buildClient(cfg);
             var enc = java.net.URLEncoder.encode(complaintId, StandardCharsets.UTF_8);
-            var record = WxpayConvert.toRecord(client.get(
-                    "/v3/merchant-service/complaints-v2/" + enc, null).body());
+            var record = fillDirectComplaintedMchid(WxpayConvert.toRecord(client.get(
+                    "/v3/merchant-service/complaints-v2/" + enc, null).body()), cfg);
             // 协商历史独立接口（详情应答已无 query_historys 字段）；limit 上限 300，默认单页足够
             var history = client.get("/v3/merchant-service/complaints-v2/" + enc
                     + "/negotiation-historys?limit=300&offset=0", null);
@@ -107,7 +104,7 @@ public class WxpayComplainCore {
 
     public void reply(ChannelConfig cfg, ReplyParams params) {
         try {
-            var mchId = resolveComplaintedMchid(cfg, params.getMerchantNo());
+            var mchId = requireComplaintedMchid(params.getMerchantNo());
             var body = HttpHelper.MAPPER.createObjectNode();
             body.put("complainted_mchid", mchId);
             body.put("response_content", params.getContent());
@@ -126,7 +123,7 @@ public class WxpayComplainCore {
 
     public void complete(ChannelConfig cfg, String complaintId, String merchantNo) {
         try {
-            var mchId = resolveComplaintedMchid(cfg, merchantNo);
+            var mchId = requireComplaintedMchid(merchantNo);
             var body = HttpHelper.MAPPER.createObjectNode();
             body.put("complainted_mchid", mchId);
             buildClient(cfg).post("/v3/merchant-service/complaints-v2/"
@@ -178,7 +175,7 @@ public class WxpayComplainCore {
     private WechatPayV3Client buildClient(ChannelConfig cfg) {
         var extras = cfg.getExtras();
         try {
-            // 字段语义：appmchid=商户号（签名）；子商户号走 sub_mchid
+            // 字段语义：appmchid=商户号（服务商为服务商商户号，签名主体）
             var pubKeyMode = "public_key".equals(extras.get("authMode"));
             return new WechatPayV3Client(
                     cfg.getAppMchId(),
@@ -198,28 +195,39 @@ public class WxpayComplainCore {
         return v;
     }
 
+    /** 回复/完成接口 complainted_mchid 必填：入库时已补齐（直连自身/服务商上游），空值说明解析链路异常 */
+    static String requireComplaintedMchid(String merchantNo) {
+        if (nullish(merchantNo)) throw new IllegalStateException("缺少被诉商户号");
+        return merchantNo;
+    }
+
     /**
-     * 解析回复/完成接口必填的 complainted_mchid：
-     * 优先投诉记录自己的被诉商户号（服务商/收付通模式 sub_mchid 留空时，每条投诉来自
-     * 不同子商户，必须带各自 complained_mchid），其次配置的子商户号（sub_mchid），最后回退商户号（appmchid）。
+     * 直连商户上游不返回被诉商户号：被诉方即商户自身，按配置商户号补齐。
+     * 服务商/收付通不补——被诉子商户号必须由上游逐单返回，缺失时留痕。
      */
-    private String resolveComplaintedMchid(ChannelConfig cfg, String merchantNo) {
-        if (!nullish(merchantNo)) return merchantNo;
-        var subMchId = cfg.getExtras().get("sub_mchid");
-        return nullish(subMchId) ? cfg.getAppMchId() : subMchId;
+    static ComplaintRecord fillDirectComplaintedMchid(ComplaintRecord record, ChannelConfig cfg) {
+        if (record == null || !nullish(record.getMerchantNo())) return record;
+        if (isDirect(cfg)) {
+            if (!nullish(cfg.getAppMchId())) record.setMerchantNo(cfg.getAppMchId());
+            else log.warn("直连投诉缺少商户号配置, complaintId={}", record.getComplaintId());
+        } else {
+            log.warn("服务商投诉未返回被诉商户号, complaintId={}, mode={}",
+                    record.getComplaintId(), modeOf(cfg));
+        }
+        return record;
+    }
+
+    /** 直连模式判定：只认显式 mode=direct（不存在未声明 mode 的存量数据） */
+    private static boolean isDirect(ChannelConfig cfg) {
+        return "direct".equals(modeOf(cfg));
+    }
+
+    private static String modeOf(ChannelConfig cfg) {
+        if (cfg.getExtras() == null) return null;
+        return cfg.getExtras().get("mode");
     }
 
     private static boolean nullish(String s) { return s == null || s.isBlank(); }
-
-    /**
-     * 投诉列表 complainted_mchid（被诉商户号）取 sub_mchid：
-     * 有值 → 按该子商户过滤；留空 → 不传（官方语义：直连=查本商户，
-     * 服务商/收付通=名下所有子商户的投诉）。appmchid 是签名主体，服务商模式下传它会查空，恒不传。
-     */
-    private static String complaintedMchid(ChannelConfig cfg) {
-        var subMchId = cfg.getExtras().get("sub_mchid");
-        return nullish(subMchId) ? null : subMchId;
-    }
 
     /**
      * payer_phone 为商户 API 证书公钥加密的 RSA-OAEP 密文，用商户私钥解密为明文供运营查看；
