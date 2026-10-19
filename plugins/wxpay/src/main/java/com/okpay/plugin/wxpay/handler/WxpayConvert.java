@@ -22,7 +22,7 @@ final class WxpayConvert {
         var orderAmount = extractOrderAmount(orderInfo);
         var refundAmount = item.path("apply_refund_amount").isNumber()
                 ? item.path("apply_refund_amount").asLong() : null;
-        var record = ComplaintRecord.builder()
+        return ComplaintRecord.builder()
                 .complaintId(item.path("complaint_id").asString(null))
                 .merchantNo(item.path("complainted_mchid").asString(null))
                 .tradeNo(outTradeNo)
@@ -40,15 +40,7 @@ final class WxpayConvert {
                 .images(extractImages(item))
                 .messages(extractMessages(item))
                 .build();
-        // 关键字段缺失时打印上游原始值，便于定位字段/配置问题
-        if (isBlank(record.getMerchantNo()) || record.getAmount() == null || record.getAmount() <= 0) {
-            log.warn("投诉关键字段诊断, complaintId={}, complainted_mchid={}, orderAmount={}, applyRefundAmount={}, type={}",
-                    record.getComplaintId(), record.getMerchantNo(), orderAmount, refundAmount, record.getComplaintType());
-        }
-        return record;
     }
-
-    private static boolean isBlank(String s) { return s == null || s.isBlank(); }
 
     /** 协商历史：query_historys 字段已从投诉详情接口移除，恒为空列表；协商历史由
      *  WxpayComplainCore 调独立接口 /negotiation-historys 后经 {@link #toMessages} 组装 */

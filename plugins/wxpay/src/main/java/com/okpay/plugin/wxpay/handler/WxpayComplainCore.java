@@ -29,15 +29,10 @@ public class WxpayComplainCore {
                 var query = "?limit=" + pageSize + "&offset=" + offset
                         + "&begin_date=" + since + "&end_date=" + LocalDate.now();
                 var resp = client.get("/v3/merchant-service/complaints-v2" + query, null);
-                // 临时诊断：输出本次同步的完整应答，确认字段映射后移除
-                log.info("投诉同步原始数据(诊断), appId={}, mode={}, appmchid={}, body={}",
-                        cfg.getId(), modeOf(cfg), cfg.getAppMchId(), resp.body());
                 var data = resp.body().path("data");
                 if (data == null || !data.isArray() || data.isEmpty()) break;
                 for (var item : data) {
-                    var record = fillDirectComplaintedMchid(WxpayConvert.toRecord(item), cfg);
-                    diagnoseComplaintedMchid(record, cfg);
-                    all.add(decryptPhone(record, client));
+                    all.add(decryptPhone(fillDirectComplaintedMchid(WxpayConvert.toRecord(item), cfg), client));
                 }
                 if (data.size() < pageSize || all.size() >= limit) break;
             }
@@ -49,12 +44,8 @@ public class WxpayComplainCore {
         try {
             var client = buildClient(cfg);
             var enc = java.net.URLEncoder.encode(complaintId, StandardCharsets.UTF_8);
-            var resp = client.get("/v3/merchant-service/complaints-v2/" + enc, null);
-            // 临时诊断：输出本次详情的完整应答，确认字段映射后移除
-            log.info("投诉详情原始数据(诊断), appId={}, mode={}, appmchid={}, complaintId={}, body={}",
-                    cfg.getId(), modeOf(cfg), cfg.getAppMchId(), complaintId, resp.body());
-            var record = fillDirectComplaintedMchid(WxpayConvert.toRecord(resp.body()), cfg);
-            diagnoseComplaintedMchid(record, cfg);
+            var record = fillDirectComplaintedMchid(WxpayConvert.toRecord(client.get(
+                    "/v3/merchant-service/complaints-v2/" + enc, null).body()), cfg);
             // 协商历史独立接口（详情应答已无 query_historys 字段）；limit 上限 300，默认单页足够
             var history = client.get("/v3/merchant-service/complaints-v2/" + enc
                     + "/negotiation-historys?limit=300&offset=0", null);
@@ -225,15 +216,6 @@ public class WxpayComplainCore {
                     record.getComplaintId(), modeOf(cfg));
         }
         return record;
-    }
-
-    /** 服务商/收付通被诉商户号等于服务商商户号时留痕（正常应为被诉子商户号） */
-    private static void diagnoseComplaintedMchid(ComplaintRecord record, ChannelConfig cfg) {
-        if (record == null || isDirect(cfg)) return;
-        if (!nullish(record.getMerchantNo()) && record.getMerchantNo().equals(cfg.getAppMchId())) {
-            log.warn("服务商投诉被诉商户号等于服务商商户号, complaintId={}, mode={}, mchid={}, amount={}",
-                    record.getComplaintId(), modeOf(cfg), record.getMerchantNo(), record.getAmount());
-        }
     }
 
     /** 直连模式判定：只认显式 mode=direct（不存在未声明 mode 的存量数据） */
