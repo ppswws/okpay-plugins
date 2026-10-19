@@ -34,6 +34,7 @@ final class WxpayConvert {
                 .content(item.path("complaint_detail").asString(null))
                 .phone(item.path("payer_phone").asString(null))
                 .buyerId(item.path("payer_openid").asString(null))
+                .incomingUserResponse(item.path("incoming_user_response").asBoolean(false))
                 // 金额语义为交易金额：优先订单金额，缺失才回退申请退款金额
                 .amount(orderAmount != null ? orderAmount : refundAmount)
                 .occurredAt(parseTime(item.path("complaint_time").asString(null)))
@@ -61,7 +62,7 @@ final class WxpayConvert {
             list.add(ComplaintRecord.MessageRecord.builder()
                     .role(mapHistoryRole(operateType))
                     .name(operator != null && !operator.isBlank() ? operator : historyRoleName(operateType))
-                    .content(historyContent(h, operateType))
+                    .content(historyContent(h))
                     .createdAt(parseTime(h.path("operate_time").asString(null)))
                     .images(historyImages(h))
                     .build());
@@ -69,8 +70,8 @@ final class WxpayConvert {
         return list;
     }
 
-    /** 协商内容优先级：operate_details → normal_message 文本块拼接 → click_message → operate_type */
-    private static String historyContent(JsonNode h, String operateType) {
+    /** 协商内容优先级：operate_details → normal_message 文本块拼接 → click_message；都没有则不合成文案 */
+    private static String historyContent(JsonNode h) {
         var details = h.path("operate_details").asString(null);
         if (details != null && !details.isBlank()) return details;
         var blocks = h.path("normal_message").path("blocks");
@@ -88,30 +89,25 @@ final class WxpayConvert {
             if (sb.length() > 0) return sb.toString();
         }
         var click = h.path("click_message").path("message_content").asString(null);
-        if (click != null && !click.isBlank()) return click;
-        return operateType.isBlank() ? null : operateType;
+        return click == null || click.isBlank() ? null : click;
     }
 
-    /** 图片凭证：image_list（即将废弃）+ complaint_media_list[].media_url 合并 */
+    /** 协商历史图片：image_list（即将废弃）+ complaint_media_list.media_url（历史接口为单 object） */
     private static List<String> historyImages(JsonNode h) {
         var images = new ArrayList<String>(textList(h.path("image_list")));
-        var mediaList = h.path("complaint_media_list");
-        if (mediaList.isArray()) {
-            for (var media : mediaList) {
-                images.addAll(textList(media.path("media_url")));
-            }
-        }
+        var media = h.path("complaint_media_list");
+        if (media.isObject()) images.addAll(textList(media.path("media_url")));
         return images;
     }
 
     /** 角色按操作类型前缀分类：*（系统消息后缀）→ 系统；USER_* → 用户；MERCHANT_* → 商户；PLATFORM_* → 平台 */
     private static int mapHistoryRole(String operateType) {
-        if (operateType == null) return 4;
-        if (operateType.endsWith("_SYSTEM_MESSAGE")) return 4;
-        if (operateType.startsWith("USER")) return 1;
-        if (operateType.startsWith("MERCHANT")) return 2;
-        if (operateType.startsWith("PLATFORM")) return 3;
-        return 4;
+        if (operateType == null) return ComplaintRecord.MessageRecord.ROLE_SYSTEM;
+        if (operateType.endsWith("_SYSTEM_MESSAGE")) return ComplaintRecord.MessageRecord.ROLE_SYSTEM;
+        if (operateType.startsWith("USER")) return ComplaintRecord.MessageRecord.ROLE_USER;
+        if (operateType.startsWith("MERCHANT")) return ComplaintRecord.MessageRecord.ROLE_MERCHANT;
+        if (operateType.startsWith("PLATFORM")) return ComplaintRecord.MessageRecord.ROLE_PLATFORM;
+        return ComplaintRecord.MessageRecord.ROLE_SYSTEM;
     }
 
     private static String historyRoleName(String operateType) {
@@ -180,17 +176,12 @@ final class WxpayConvert {
         }
     }
 
+    /** 投诉详情图片：complaint_media_list 为 array[object] */
     private static List<String> extractImages(JsonNode item) {
         var images = new ArrayList<String>();
         var mediaList = item.path("complaint_media_list");
-        if (mediaList != null && mediaList.isArray()) {
-            for (var media : mediaList) {
-                var urls = media.path("media_url");
-                if (urls != null && urls.isArray()) {
-                    for (var url : urls) images.add(url.asString());
-                }
-            }
-        }
+        if (!mediaList.isArray()) return images;
+        for (var media : mediaList) images.addAll(textList(media.path("media_url")));
         return images;
     }
 }

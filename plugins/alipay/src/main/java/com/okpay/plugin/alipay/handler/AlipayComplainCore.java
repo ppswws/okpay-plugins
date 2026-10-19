@@ -346,7 +346,7 @@ public class AlipayComplainCore {
 
     /**
      * 协商记录 reply_detail_infos → messages（replier_role 枚举：USER/MERCHANT/SYSTEM/
-     * AUDITOR/GOVERNMENT，后三者归「系统」角色显示）。
+     * AUDITOR/GOVERNMENT，后三者归「系统」角色，审核小二/政府单位在名称中保留）。
      */
     private static List<ComplaintRecord.MessageRecord> extractMessages(JsonNode item) {
         var replies = item.path("reply_detail_infos");
@@ -355,13 +355,26 @@ public class AlipayComplainCore {
         for (var r : replies) {
             var replyRole = r.path("replier_role").asString(null);
             var role = switch (replyRole) {
-                case "USER" -> 1;       // 用户
-                case "MERCHANT" -> 2;   // 商户
-                default -> 4;           // SYSTEM / AUDITOR（审核小二）/ GOVERNMENT（政府单位）→ 系统
+                case "USER" -> ComplaintRecord.MessageRecord.ROLE_USER;
+                case "MERCHANT" -> ComplaintRecord.MessageRecord.ROLE_MERCHANT;
+                default -> ComplaintRecord.MessageRecord.ROLE_SYSTEM;
             };
+            var roleLabel = switch (replyRole) {
+                case "USER" -> "用户";
+                case "MERCHANT" -> "商户";
+                case "AUDITOR" -> "审核小二";
+                case "GOVERNMENT" -> "政府单位";
+                default -> "系统";
+            };
+            var replierName = r.path("replier_name").asString(null);
+            var name = replierName == null || replierName.isBlank() ? roleLabel : replierName;
+            if (("AUDITOR".equals(replyRole) || "GOVERNMENT".equals(replyRole))
+                    && !name.equals(roleLabel)) {
+                name = name + "（" + roleLabel + "）";
+            }
             list.add(ComplaintRecord.MessageRecord.builder()
                     .role(role)
-                    .name(role == 1 ? "用户" : role == 2 ? "商户" : "系统")
+                    .name(name)
                     .content(r.path("content").asString(null))
                     .createdAt(parseTime(r.path("gmt_create").asString(null)))
                     .images(textList(r.path("images")))

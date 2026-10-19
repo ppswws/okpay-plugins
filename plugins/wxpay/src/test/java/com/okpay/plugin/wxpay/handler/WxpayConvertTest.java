@@ -24,6 +24,7 @@ class WxpayConvertTest {
                   "complaint_detail": "详情文字",
                   "payer_phone": "13800000000",
                   "payer_openid": "oUpF8uMuAJO_M2pxb1Q9zNjWeS6o",
+                  "incoming_user_response": true,
                   "apply_refund_amount": 100,
                   "complaint_time": "2022-01-01T08:00:00+08:00",
                   "complaint_order_info": [
@@ -47,6 +48,7 @@ class WxpayConvertTest {
         assertThat(record.getContent()).isEqualTo("详情文字");
         assertThat(record.getPhone()).isEqualTo("13800000000");
         assertThat(record.getBuyerId()).isEqualTo("oUpF8uMuAJO_M2pxb1Q9zNjWeS6o");
+        assertThat(record.getIncomingUserResponse()).isTrue();
         assertThat(record.getAmount()).isEqualTo(500L); // 金额取订单金额，优先于申请退款金额
         assertThat(record.getOccurredAt()).isEqualTo(java.time.LocalDateTime.of(2022, 1, 1, 8, 0, 0));
         assertThat(record.getImages()).containsExactly(
@@ -114,19 +116,22 @@ class WxpayConvertTest {
                   {"log_id":"L1","operator":"oUser1","operate_time":"2022-01-01T09:00:00+08:00",
                    "operate_type":"USER_CREATE_COMPLAINT","operate_details":"请退款",
                    "image_list":["img1"],
-                   "complaint_media_list":[{"media_type":"USER_COMPLAINT_IMAGE","media_url":["m1","m2"]}]},
+                   "complaint_media_list":{"media_type":"USER_COMPLAINT_IMAGE","media_url":["m1","m2"]}},
                   {"log_id":"L2","operator":"商户A","operate_time":"2022-01-01T10:00:00+08:00",
                    "operate_type":"MERCHANT_RESPONSE",
                    "normal_message":{"blocks":[{"type":"TEXT","text":{"text":"已处理"}}]}},
                   {"log_id":"L3","operator":"平台","operate_time":"2022-01-01T11:00:00+08:00",
                    "operate_type":"PLATFORM_RESPONSE"},
                   {"log_id":"L4","operator":"sys","operate_time":"2022-01-01T12:00:00+08:00",
-                   "operate_type":"COMPLAINT_FULL_REFUNDED_SYSTEM_MESSAGE"}
+                   "operate_type":"COMPLAINT_FULL_REFUNDED_SYSTEM_MESSAGE"},
+                  {"log_id":"L5","operator":"投诉人","operate_time":"2022-01-01T13:00:00+08:00",
+                   "operate_type":"USER_RESPONSE",
+                   "complaint_media_list":{"media_type":"OPERATION_IMAGE","media_url":["m5"]}}
                 ]
                 """);
 
         var msgs = WxpayConvert.toMessages(historys);
-        assertThat(msgs).hasSize(4);
+        assertThat(msgs).hasSize(5);
         // 用户提交投诉：operate_details 优先，图片=image_list + complaint_media_list.media_url 合并
         assertThat(msgs.get(0).getRole()).isEqualTo(1);
         assertThat(msgs.get(0).getName()).isEqualTo("oUser1");
@@ -137,12 +142,17 @@ class WxpayConvertTest {
         assertThat(msgs.get(1).getRole()).isEqualTo(2);
         assertThat(msgs.get(1).getName()).isEqualTo("商户A");
         assertThat(msgs.get(1).getContent()).isEqualTo("已处理");
-        // 平台留言：无内容 → 回退 operate_type
+        // 平台留言：无内容 → 不合成 operate_type 文案
         assertThat(msgs.get(2).getRole()).isEqualTo(3);
-        assertThat(msgs.get(2).getContent()).isEqualTo("PLATFORM_RESPONSE");
+        assertThat(msgs.get(2).getContent()).isNull();
         // 系统消息（*_SYSTEM_MESSAGE 后缀）→ 系统角色
         assertThat(msgs.get(3).getRole()).isEqualTo(4);
         assertThat(msgs.get(3).getName()).isEqualTo("sys");
+        // 用户只发图片：无文字内容，展示图片即可
+        assertThat(msgs.get(4).getRole()).isEqualTo(1);
+        assertThat(msgs.get(4).getName()).isEqualTo("投诉人");
+        assertThat(msgs.get(4).getContent()).isNull();
+        assertThat(msgs.get(4).getImages()).containsExactly("m5");
     }
 
     @Test

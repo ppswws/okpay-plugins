@@ -104,7 +104,7 @@ class AlipayComplainCoreTest {
     }
 
     @Test
-    @DisplayName("协商记录 reply_detail_infos：replier_role USER→用户/MERCHANT→商户/其余→系统，附图片与时间")
+    @DisplayName("协商记录 reply_detail_infos：USER/MERCHANT/SYSTEM→角色，优先 replier_name，审核小二/政府单位保留名称")
     void toRecordMessages() throws Exception {
         var node = HttpHelper.MAPPER.readTree("""
                 {"complain_event_id": "E1",
@@ -112,14 +112,17 @@ class AlipayComplainCoreTest {
                    {"replier_role": "USER", "replier_name": "张三", "content": "没收到货",
                     "gmt_create": "2026-08-28 11:00:00", "images": ["https://o.alicdn.com/a.jpg"]},
                    {"replier_role": "MERCHANT", "content": "已补发", "gmt_create": "2026-08-28 12:00:00"},
-                   {"replier_role": "SYSTEM", "content": "平台已介入", "gmt_create": "2026-08-28 13:00:00"}]}
+                   {"replier_role": "SYSTEM", "content": "平台已介入", "gmt_create": "2026-08-28 13:00:00"},
+                   {"replier_role": "AUDITOR", "replier_name": "小二甲", "content": "审核处理",
+                    "gmt_create": "2026-08-28 14:00:00"},
+                   {"replier_role": "GOVERNMENT", "content": "政府单位介入", "gmt_create": "2026-08-28 15:00:00"}]}
                 """);
 
         var msgs = core.toRecord(node).getMessages();
 
-        assertThat(msgs).hasSize(3);
+        assertThat(msgs).hasSize(5);
         assertThat(msgs.get(0).getRole()).isEqualTo(1);
-        assertThat(msgs.get(0).getName()).isEqualTo("用户");
+        assertThat(msgs.get(0).getName()).isEqualTo("张三");
         assertThat(msgs.get(0).getContent()).isEqualTo("没收到货");
         assertThat(msgs.get(0).getCreatedAt().toString()).isEqualTo("2026-08-28T11:00");
         assertThat(msgs.get(0).getImages()).containsExactly("https://o.alicdn.com/a.jpg");
@@ -127,6 +130,10 @@ class AlipayComplainCoreTest {
         assertThat(msgs.get(1).getName()).isEqualTo("商户");
         assertThat(msgs.get(2).getRole()).isEqualTo(4);
         assertThat(msgs.get(2).getName()).isEqualTo("系统");
+        assertThat(msgs.get(3).getRole()).isEqualTo(4);
+        assertThat(msgs.get(3).getName()).isEqualTo("小二甲（审核小二）");
+        assertThat(msgs.get(4).getRole()).isEqualTo(4);
+        assertThat(msgs.get(4).getName()).isEqualTo("政府单位");
     }
 
     @Test
