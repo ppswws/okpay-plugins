@@ -43,15 +43,28 @@ public class WxpayComplainCore {
     public ComplaintRecord syncDetail(ChannelConfig cfg, String complaintId) {
         try {
             var client = buildClient(cfg);
-            var enc = java.net.URLEncoder.encode(complaintId, StandardCharsets.UTF_8);
-            var record = fillDirectComplaintedMchid(WxpayConvert.toRecord(client.get(
-                    "/v3/merchant-service/complaints-v2/" + enc, null).body()), cfg);
+            var record = fetchDetail(client, cfg, complaintId);
             // 协商历史独立接口（详情应答已无 query_historys 字段）；limit 上限 300，默认单页足够
+            var enc = java.net.URLEncoder.encode(complaintId, StandardCharsets.UTF_8);
             var history = client.get("/v3/merchant-service/complaints-v2/" + enc
                     + "/negotiation-historys?limit=300&offset=0", null);
             record.setMessages(WxpayConvert.toMessages(history.body().path("data")));
             return decryptPhone(record, client);
         } catch (Exception e) { throw new IllegalStateException("微信投诉详情查询失败", e); }
+    }
+
+    /** 回调落库只取投诉字段，跳过协商历史接口 */
+    public ComplaintRecord syncDetailWithoutHistory(ChannelConfig cfg, String complaintId) {
+        try {
+            var client = buildClient(cfg);
+            return decryptPhone(fetchDetail(client, cfg, complaintId), client);
+        } catch (Exception e) { throw new IllegalStateException("微信投诉详情查询失败", e); }
+    }
+
+    private ComplaintRecord fetchDetail(WechatPayV3Client client, ChannelConfig cfg, String complaintId) throws Exception {
+        var enc = java.net.URLEncoder.encode(complaintId, StandardCharsets.UTF_8);
+        return fillDirectComplaintedMchid(WxpayConvert.toRecord(client.get(
+                "/v3/merchant-service/complaints-v2/" + enc, null).body()), cfg);
     }
 
     public CallbackResult parseCallback(ChannelConfig cfg, Map<String, String> headers, byte[] body) {
