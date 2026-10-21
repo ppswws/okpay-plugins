@@ -24,7 +24,7 @@ public class EpayQueryHandler extends AbstractBizHandler {
         var order = ctx.getOrder();
         var qr = queryRaw(ctx, order.getTradeNo());
         var m = qr.body();
-        var state = "1".equals(m.get("code")) && "1".equals(m.get("status")) ? BizState.S_OK : BizState.S_ING;
+        var state = EpayRespUtil.isSuccess(m) ? BizState.S_OK : BizState.S_ING;
         return Responses.result(state)
                 .apiNo(m.get("api_trade_no")).code(m.get("code"))
                 .msg(state == BizState.S_OK ? m.get("msg") : m.getOrDefault("msg", "").trim())

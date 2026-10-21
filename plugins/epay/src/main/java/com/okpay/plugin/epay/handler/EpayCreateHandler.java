@@ -52,7 +52,7 @@ public class EpayCreateHandler {
                         "application/x-www-form-urlencoded");
                 // 非成功响应（5xx/CDN 拦截页/HTML/业务失败）统一归因渠道；渠道未给 msg 时用统一文案
                 var respMap = parseJsonMap(resp.bodyAsString());
-                if (!"1".equals(respMap.get("code"))) {
+                if (!EpayRespUtil.isSuccess(respMap)) {
                     var msg = respMap.get("msg");
                     var errMsg = (msg == null || msg.isBlank())
                             ? channelFailure(resp.statusCode()) : msg;

@@ -153,6 +153,25 @@ class EpayCreateHandlerTest {
     }
 
     @Test
+    @DisplayName("常规模式：兼容渠道 code=200 同样视为成功，正常解析支付地址返回 jump")
+    void postModeTreatsCode200AsSuccess() throws Exception {
+        var ctx = ctx(cfgRaw("https://gw.test/", false));
+        when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv ->
+                    new HttpHelper.HttpResponse(200, Map.of(),
+                            "{\"code\":\"200\",\"payurl\":\"https://chan/alipay?pay=2\"}"
+                                    .getBytes(StandardCharsets.UTF_8),
+                            "req", 10, 1));
+            var resp = new EpayCreateHandler().alipay(ctx);
+
+            assertThat(resp.getType()).isEqualTo("jump");
+            assertThat(resp.getUrl()).isEqualTo("https://chan/alipay?pay=2");
+        }
+    }
+
+    @Test
     @DisplayName("常规模式：POST 渠道 mapi.php（尾斜杠已规范化），参数含 device/clientip")
     void postModeSendsChannelRequestWithDeviceAndClientip() throws Exception {
         var ctx = ctx(cfgRaw("https://gw.test/", false));

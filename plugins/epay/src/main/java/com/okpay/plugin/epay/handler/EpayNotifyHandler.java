@@ -36,7 +36,7 @@ public class EpayNotifyHandler {
 
         // 服务器二次确认（复用 QueryHandler）
         var qr = EpayQueryHandler.queryRaw(ctx, order.getTradeNo()).body();
-        if (!"1".equals(qr.get("code")) || !"1".equals(qr.get("status")))
+        if (!EpayRespUtil.isSuccess(qr))
             return Responses.notifyFail("query_unpaid", BizType.T_PAY);
 
         try {
