@@ -16,6 +16,7 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
+import com.okpay.plugin.sdk.ExpectedFailureException;
 /**
  * 支付宝投诉处理核心逻辑 — 零第三方 SDK，走 AlipayOpenApiClient。
  *
@@ -66,7 +67,11 @@ public class AlipayComplainCore {
                     break;
             }
         } catch (Exception e) {
-            throw new IllegalStateException("支付宝投诉列表同步失败", e);
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("支付宝投诉列表同步失败", e);
         }
         return SyncListResult.builder().complaints(all).hasMore(all.size() >= limit).build();
     }
@@ -83,7 +88,11 @@ public class AlipayComplainCore {
                     "alipay.merchant.tradecomplain.query", biz, authParams(cfg));
             return resp.ok() ? toRecord(resp.root()) : null;
         } catch (Exception e) {
-            throw new IllegalStateException("支付宝投诉详情查询失败, complaintId=" + complaintId, e);
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("支付宝投诉详情查询失败, complaintId=" + complaintId, e);
         }
     }
 
@@ -154,16 +163,20 @@ public class AlipayComplainCore {
                     fileData, authParams(cfg));
             if (!resp.ok()) {
                 // 透传支付宝 sub_msg（最具体）→ msg → sub_code → code
-                throw new IllegalStateException("上传图片失败：" + alipayErrMsg(resp));
+                throw new ExpectedFailureException("上传图片失败：" + alipayErrMsg(resp));
             }
             imageId = resp.text("image_id");
         } catch (IllegalStateException e) {
             throw e;
         } catch (Exception e) {
-            throw new IllegalStateException("上传图片失败, filename=" + filename, e);
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("上传图片失败, filename=" + filename, e);
         }
         if (imageId == null || imageId.isBlank()) {
-            throw new IllegalStateException("上传图片失败：支付宝未返回 image_id");
+            throw new ExpectedFailureException("上传图片失败：支付宝未返回 image_id");
         }
         return imageId;
     }
@@ -184,13 +197,17 @@ public class AlipayComplainCore {
         try {
             var resp = HttpHelper.get(null, mediaUrl);
             if (resp.statusCode() != 200) {
-                throw new IllegalStateException("下载图片失败, status=" + resp.statusCode());
+                throw new ExpectedFailureException("下载图片失败, status=" + resp.statusCode());
             }
             return resp.body();
         } catch (IllegalStateException e) {
             throw e;
         } catch (Exception e) {
-            throw new IllegalStateException("下载图片失败", e);
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("下载图片失败", e);
         }
     }
 
@@ -212,9 +229,13 @@ public class AlipayComplainCore {
 
             var resp = buildClient(cfg).execute(null,
                     "alipay.merchant.tradecomplain.reply.submit", biz, authParams(cfg));
-            if (!resp.ok()) throw new IllegalStateException("回复投诉失败: " + resp.subMsg());
+            if (!resp.ok()) throw new ExpectedFailureException("回复投诉失败: " + resp.subMsg());
         } catch (Exception e) {
-            throw new IllegalStateException("回复投诉异常, complaintId=" + params.getComplaintId(), e);
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("回复投诉异常, complaintId=" + params.getComplaintId(), e);
         }
     }
 
@@ -250,9 +271,13 @@ public class AlipayComplainCore {
 
             var resp = buildClient(cfg).execute(null,
                     "alipay.merchant.tradecomplain.supplement.submit", biz, authParams(cfg));
-            if (!resp.ok()) throw new IllegalStateException("补充凭证失败: " + resp.subMsg());
+            if (!resp.ok()) throw new ExpectedFailureException("补充凭证失败: " + resp.subMsg());
         } catch (Exception e) {
-            throw new IllegalStateException("补充凭证异常, complaintId=" + complaintId, e);
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("补充凭证异常, complaintId=" + complaintId, e);
         }
     }
 
@@ -311,7 +336,7 @@ public class AlipayComplainCore {
         } catch (IOException e) {
             var cert = notBlank(extras.get("app_cert")) && notBlank(extras.get("alipay_cert"))
                     && notBlank(extras.get("root_cert"));
-            throw new IllegalStateException("支付宝投诉客户端初始化失败（请检查 "
+            throw new ExpectedFailureException("支付宝投诉客户端初始化失败（请检查 "
                     + (cert ? "appsecret/app_cert/alipay_cert/root_cert 证书格式" : "appsecret/appkey 密钥格式")
                     + "）", e);
         }

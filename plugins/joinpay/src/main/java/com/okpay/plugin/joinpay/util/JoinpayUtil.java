@@ -7,6 +7,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import com.okpay.plugin.sdk.ExpectedFailureException;
 /**
  * 汇聚支付专属工具（非通用，不放 SDK）。
  */
@@ -46,7 +47,7 @@ public final class JoinpayUtil {
     /** JSON → Map&lt;String, Object&gt;（数值保真，调用方自行取嵌套对象）；解析失败抛出 */
     @SuppressWarnings("unchecked")
     public static Map<String, Object> parseJsonNumRaw(String json) {
-        if (json == null || json.isBlank()) throw new IllegalArgumentException("空 JSON");
+        if (json == null || json.isBlank()) throw new ExpectedFailureException("空 JSON");
         return (Map<String, Object>) NUM_MAPPER.readValue(json, Map.class);
     }
 }

@@ -1,5 +1,6 @@
 package com.okpay.plugin.wxpay.handler;
 
+import com.okpay.plugin.sdk.ExpectedFailureException;
 import com.okpay.plugin.sdk.HttpHelper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -205,9 +206,9 @@ class WxpayConvertTest {
         assertThat(WxpayConvert.validateMediaFilename("a.PNG")).isEqualTo("a.PNG");
         assertThat(WxpayConvert.validateMediaFilename("a.bmp")).isEqualTo("a.bmp");
         assertThatThrownBy(() -> WxpayConvert.validateMediaFilename("a.heic"))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(ExpectedFailureException.class);
         assertThatThrownBy(() -> WxpayConvert.validateMediaFilename(null))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(ExpectedFailureException.class);
     }
 
     private int state(String json) throws Exception {

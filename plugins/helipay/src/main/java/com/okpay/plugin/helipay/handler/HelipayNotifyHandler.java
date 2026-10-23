@@ -6,7 +6,6 @@ import static com.okpay.plugin.sdk.PaymentUtils.toCents;
 import com.okpay.plugin.helipay.util.*;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.*;
-import org.slf4j.*;
 
 import java.nio.charset.*;
 import java.util.*;
@@ -19,8 +18,6 @@ import java.util.*;
  * 实体缺失不发插件：宿主按单号路由时无单据直接 404（PluginPageService.dispatch），插件内不再判空。</p>
  */
 public class HelipayNotifyHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(HelipayNotifyHandler.class);
 
     // =========================================================================
     // 支付通知

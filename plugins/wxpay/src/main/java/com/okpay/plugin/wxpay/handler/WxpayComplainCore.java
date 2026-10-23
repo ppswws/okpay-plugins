@@ -13,6 +13,7 @@ import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.util.*;
 
+import com.okpay.plugin.sdk.ExpectedFailureException;
 /**
  * 微信支付投诉处理核心逻辑 — 零第三方 SDK，走 WechatPayV3Client（商户服务原始 JSON 接口）。
  */
@@ -37,7 +38,13 @@ public class WxpayComplainCore {
                 }
                 if (data.size() < pageSize || all.size() >= limit) break;
             }
-        } catch (Exception e) { throw new IllegalStateException("微信投诉列表同步失败", e); }
+        } catch (Exception e) {
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("微信投诉列表同步失败", e);
+        }
         return SyncListResult.builder().complaints(all).hasMore(all.size() >= limit).build();
     }
 
@@ -51,7 +58,13 @@ public class WxpayComplainCore {
                     + "/negotiation-historys?limit=300&offset=0", null);
             record.setMessages(WxpayConvert.toMessages(history.body().path("data")));
             return decryptPhone(record, client);
-        } catch (Exception e) { throw new IllegalStateException("微信投诉详情查询失败", e); }
+        } catch (Exception e) {
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("微信投诉详情查询失败", e);
+        }
     }
 
     /** 回调落库只取投诉字段，跳过协商历史接口 */
@@ -59,7 +72,13 @@ public class WxpayComplainCore {
         try {
             var client = buildClient(cfg);
             return decryptPhone(fetchDetail(client, cfg, complaintId), client);
-        } catch (Exception e) { throw new IllegalStateException("微信投诉详情查询失败", e); }
+        } catch (Exception e) {
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("微信投诉详情查询失败", e);
+        }
     }
 
     private ComplaintRecord fetchDetail(WechatPayV3Client client, ChannelConfig cfg, String complaintId) throws Exception {
@@ -103,9 +122,15 @@ public class WxpayComplainCore {
                     "image/" + ext(mediaFilename).replace("jpg", "jpeg"),
                     fileData, null);
             var mediaId = resp.body().path("media_id").asString(null);
-            if (mediaId == null || mediaId.isBlank()) throw new IllegalStateException("上传图片未返回 media_id");
+            if (mediaId == null || mediaId.isBlank()) throw new ExpectedFailureException("上传图片未返回 media_id");
             return mediaId;
-        } catch (Exception e) { throw new IllegalStateException("上传图片失败", e); }
+        } catch (Exception e) {
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("上传图片失败", e);
+        }
     }
 
     public byte[] downloadMedia(ChannelConfig cfg, String mediaId) {
@@ -116,12 +141,18 @@ public class WxpayComplainCore {
             }
             mediaId = WxpayConvert.decodeMediaId(mediaId);
             if (mediaId == null || mediaId.isBlank()) {
-                throw new IllegalArgumentException("mediaRef 为空，无法提取 media_id");
+                throw new ExpectedFailureException("mediaRef 为空，无法提取 media_id");
             }
             // 图片下载须走商户签名 GET（不带签名的裸 GET 上游拒绝）
             return buildClient(cfg).download("/v3/merchant-service/images/"
                     + java.net.URLEncoder.encode(mediaId, StandardCharsets.UTF_8), null);
-        } catch (Exception e) { throw new IllegalStateException("下载图片失败", e); }
+        } catch (Exception e) {
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("下载图片失败", e);
+        }
     }
 
     public void reply(ChannelConfig cfg, ReplyParams params) {
@@ -135,7 +166,13 @@ public class WxpayComplainCore {
             buildClient(cfg).post("/v3/merchant-service/complaints-v2/"
                             + java.net.URLEncoder.encode(params.getComplaintId(), StandardCharsets.UTF_8)
                             + "/response", body, null);
-        } catch (Exception e) { throw new IllegalStateException("回复投诉失败", e); }
+        } catch (Exception e) {
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("回复投诉失败", e);
+        }
     }
 
     public void refundProgress(ChannelConfig cfg, String complaintId, RefundDecision decision,
@@ -151,7 +188,13 @@ public class WxpayComplainCore {
             buildClient(cfg).post("/v3/merchant-service/complaints-v2/"
                             + java.net.URLEncoder.encode(complaintId, StandardCharsets.UTF_8)
                             + "/complete", body, null);
-        } catch (Exception e) { throw new IllegalStateException("完成投诉失败", e); }
+        } catch (Exception e) {
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("完成投诉失败", e);
+        }
     }
 
     /** 投诉通知回调地址路径（微信：查询 GET / 创建 POST / 更新 PUT / 删除 DELETE 同路径）。 */
@@ -170,7 +213,13 @@ public class WxpayComplainCore {
             } else {
                 client.put(NOTIFY_PATH, body, null);
             }
-        } catch (Exception e) { throw new IllegalStateException("设置通知地址失败", e); }
+        } catch (Exception e) {
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("设置通知地址失败", e);
+        }
     }
 
     /** 查询上游已配置的回调地址；未配置（微信按 RESOURCE_NOT_EXISTS 报错）返回 null，其余查询错误原样上抛。 */
@@ -187,7 +236,13 @@ public class WxpayComplainCore {
 
     public void deleteNotifyUrl(ChannelConfig cfg, String url) {
         try { buildClient(cfg).delete(NOTIFY_PATH, null); }
-        catch (Exception e) { throw new IllegalStateException("删除通知地址失败", e); }
+        catch (Exception e) {
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("删除通知地址失败", e);
+        }
     }
 
     // =========================================================================
@@ -207,19 +262,19 @@ public class WxpayComplainCore {
                     pubKeyMode ? extras.get("publickeyid") : null,
                     pubKeyMode ? extras.get("wxpay_public_key") : null);
         } catch (IOException e) {
-            throw new IllegalStateException("微信投诉客户端初始化失败（请检查密钥/微信支付公钥格式）", e);
+            throw new ExpectedFailureException("微信投诉客户端初始化失败（请检查密钥/微信支付公钥格式）", e);
         }
     }
 
     private static String require(ChannelConfig cfg, String key) {
         var v = cfg.getExtras().get(key);
-        if (v == null || v.isBlank()) throw new IllegalArgumentException("缺少配置: " + key);
+        if (v == null || v.isBlank()) throw new ExpectedFailureException("缺少配置: " + key);
         return v;
     }
 
     /** 回复/完成接口 complainted_mchid 必填：入库时已补齐（直连自身/服务商上游），空值说明解析链路异常 */
     static String requireComplaintedMchid(String merchantNo) {
-        if (nullish(merchantNo)) throw new IllegalStateException("缺少被诉商户号");
+        if (nullish(merchantNo)) throw new ExpectedFailureException("缺少被诉商户号");
         return merchantNo;
     }
 

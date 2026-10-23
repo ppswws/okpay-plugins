@@ -6,7 +6,6 @@ import com.okpay.plugin.alipay.util.AlipayConfig;
 import com.okpay.plugin.alipay.util.AlipayModeResolver;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.*;
-import lombok.extern.slf4j.Slf4j;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -28,7 +27,6 @@ import java.util.concurrent.ThreadLocalRandom;
  * 通道路径身份经 {@link OAuthHelper} exchange 方法内部自动闭环风控（落库 buyer + 买家黑名单，
  * 命中黑名单直接构造失败页跳转终止支付）。</p>
  */
-@Slf4j
 public class AlipayCreateHandler {
 
     public com.okpay.plugin.model.BizResult submit(InvokeContext ctx) {

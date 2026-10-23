@@ -9,6 +9,7 @@ import lombok.Data;
 
 import java.util.*;
 
+import com.okpay.plugin.sdk.ExpectedFailureException;
 /**
  * 支付宝通道配置。
  */
@@ -105,7 +106,7 @@ public class AlipayConfig implements ChannelConfig {
             try {
                 client = buildClient();
             } catch (Exception e) {
-                throw new IllegalStateException("支付宝客户端初始化失败（请检查 "
+                throw new ExpectedFailureException("支付宝客户端初始化失败（请检查 "
                         + (certMode() ? "appsecret/app_cert/alipay_cert/root_cert 证书格式" : "appsecret/appkey 密钥格式")
                         + "）", e);
             }
@@ -122,7 +123,7 @@ public class AlipayConfig implements ChannelConfig {
             try {
                 payoutClient = buildClient();
             } catch (Exception e) {
-                throw new IllegalStateException("支付宝客户端初始化失败（请检查 "
+                throw new ExpectedFailureException("支付宝客户端初始化失败（请检查 "
                         + (certMode() ? "appsecret/app_cert/alipay_cert/root_cert 证书格式" : "appsecret/appkey 密钥格式")
                         + "）", e);
             }

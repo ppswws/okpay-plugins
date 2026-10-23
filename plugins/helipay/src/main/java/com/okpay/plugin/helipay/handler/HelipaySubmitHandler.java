@@ -84,7 +84,7 @@ public class HelipaySubmitHandler extends AbstractBizHandler {
         final boolean isPublic;
         try {
             isPublic = com.okpay.plugin.sdk.PaymentUtils.isPublicAccount(transfer.getAccountType());
-        } catch (IllegalArgumentException e) {
+        } catch (ExpectedFailureException e) {
             return fail(e.getMessage());
         }
         var cnapsNo = transfer.getCnapsNo() != null ? transfer.getCnapsNo() : "";

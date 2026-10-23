@@ -49,7 +49,7 @@ public class WxpayCreateHandler {
 
     /** 组装下单公共字段（服务商模式用 sp_appid/sp_mchid/sub_mchid 结构） */
     private static Map<String, Object> buildBase(WxpayConfig cfg, OrderSnapshot order) {
-        if (order.getReal() <= 0) throw new IllegalArgumentException("订单金额无效");
+        if (order.getReal() <= 0) throw new ExpectedFailureException("订单金额无效");
         var base = new LinkedHashMap<String, Object>();
         base.put("out_trade_no", order.getTradeNo());
         base.put("description", cfg.getGoodsName());
@@ -131,8 +131,8 @@ public class WxpayCreateHandler {
         var body = buildBase(cfg, order);
         putSceneInfo(body, kind, order);
         if (kind == Kind.JSAPI) {
-            if (appId == null || appId.isBlank()) throw new IllegalArgumentException("JSAPI 缺少支付 appid");
-            if (openid == null || openid.isBlank()) throw new IllegalArgumentException("JSAPI 缺少 openid");
+            if (appId == null || appId.isBlank()) throw new ExpectedFailureException("JSAPI 缺少支付 appid");
+            if (openid == null || openid.isBlank()) throw new ExpectedFailureException("JSAPI 缺少 openid");
             // openid 必须与支付 appid 同源：服务商走 sp_openid（绑定公众号默认按服务商应用口径），直连走 openid。
             // appid 一律用 OAuth 来源公众号/小程序（appId），不能用 genericAppId 兜底（可能与 openid 不同源）。
             body.put(cfg.isServiceProvider() ? "sp_appid" : "appid", appId);
@@ -172,7 +172,7 @@ public class WxpayCreateHandler {
     /** APP 支付 appid：开放平台移动应用（无绑定槽位），缺失即报错，不参与公众号/小程序兜底。 */
     private static String requireAppPayAppId(WxpayConfig cfg) {
         var appId = cfg.appPayAppId();
-        if (appId == null) throw new IllegalArgumentException("APP支付缺少开放平台移动应用 appid");
+        if (appId == null) throw new ExpectedFailureException("APP支付缺少开放平台移动应用 appid");
         return appId;
     }
 
@@ -204,8 +204,8 @@ public class WxpayCreateHandler {
         body.put("sub_orders", subOrders);
         putCombineSceneInfo(body, kind, order);
         if (kind == Kind.JSAPI) {
-            if (appId == null || appId.isBlank()) throw new IllegalArgumentException("合单 JSAPI 缺少支付 appid");
-            if (openid == null || openid.isBlank()) throw new IllegalArgumentException("合单 JSAPI 缺少 openid");
+            if (appId == null || appId.isBlank()) throw new ExpectedFailureException("合单 JSAPI 缺少支付 appid");
+            if (openid == null || openid.isBlank()) throw new ExpectedFailureException("合单 JSAPI 缺少 openid");
             // 合单 payer 挂 combine_appid 下，字段是 combine_payer_info.openid（单 openid，无 sp/sub 之分）；
             // combine_appid 用 OAuth 公众号 appid 保证与 openid 同源
             body.put("combine_appid", appId);

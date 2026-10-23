@@ -17,6 +17,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
+import com.okpay.plugin.sdk.ExpectedFailureException;
 /**
  * 丰付支付签名工具 — RSA-SHA256（PKCS1 v1.5，Base64 输出）。
  *
@@ -48,7 +49,7 @@ public final class SumapaySignUtil {
             sig.update(plain.getBytes(StandardCharsets.UTF_8));
             return Base64.getEncoder().encodeToString(sig.sign());
         } catch (Exception e) {
-            throw new IllegalArgumentException("商户私钥签名失败", e);
+            throw new ExpectedFailureException("商户私钥签名失败", e);
         }
     }
 
@@ -101,7 +102,7 @@ public final class SumapaySignUtil {
     /** 去除 PEM 头尾（或裸 Base64）取 DER 字节 */
     private static byte[] pemDecode(String raw) {
         var key = raw == null ? "" : raw.trim();
-        if (key.isEmpty()) throw new IllegalArgumentException("密钥为空");
+        if (key.isEmpty()) throw new ExpectedFailureException("密钥为空");
         var base64 = key.contains("-----BEGIN")
                 ? key.replaceAll("-----BEGIN [A-Z0-9 ]+-----", "")
                       .replaceAll("-----END [A-Z0-9 ]+-----", "")

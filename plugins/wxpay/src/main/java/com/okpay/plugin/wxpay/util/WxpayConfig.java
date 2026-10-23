@@ -11,6 +11,7 @@ import lombok.Data;
 import java.io.IOException;
 import java.util.*;
 
+import com.okpay.plugin.sdk.ExpectedFailureException;
 /**
  * 微信支付通道配置（APIv3-only，零第三方 SDK）。
  */
@@ -94,7 +95,7 @@ public class WxpayConfig implements ChannelConfig {
                         pubKeyMode ? publicKeyId : null,
                         pubKeyMode ? publicKeyPem : null);
             } catch (IOException e) {
-                throw new IllegalStateException("微信客户端初始化失败（请检查 privateKey/appkey/微信支付公钥 格式）", e);
+                throw new ExpectedFailureException("微信客户端初始化失败（请检查 privateKey/appkey/微信支付公钥 格式）", e);
             }
         }
         return client;

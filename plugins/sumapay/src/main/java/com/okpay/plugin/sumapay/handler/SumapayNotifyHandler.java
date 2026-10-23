@@ -6,7 +6,6 @@ import static com.okpay.plugin.sdk.PaymentUtils.toCents;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.*;
 import com.okpay.plugin.sumapay.util.*;
-import org.slf4j.*;
 
 import java.net.URLDecoder;
 import java.nio.charset.Charset;
@@ -20,8 +19,6 @@ import java.util.Map;
  * <p>通知体为 GBK 编码表单，全部 ack 按渠道约定返回文本。</p>
  */
 public class SumapayNotifyHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(SumapayNotifyHandler.class);
 
     private static final Charset GBK = Charset.forName("GBK");
 

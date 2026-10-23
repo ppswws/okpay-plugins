@@ -349,9 +349,9 @@ public class HelipayCreateHandler {
      */
     private static String jsoperatewxdataFromPayUrl(InvokeContext ctx, String payUrl) throws Exception {
         var raw = payUrl.trim();
-        if (raw.isEmpty()) throw new IllegalArgumentException("支付链接为空");
+        if (raw.isEmpty()) throw new ExpectedFailureException("支付链接为空");
         var qIdx = raw.indexOf('?');
-        if (qIdx < 0) throw new IllegalArgumentException("支付链接参数不完整");
+        if (qIdx < 0) throw new ExpectedFailureException("支付链接参数不完整");
         var qs = parseQuery(raw.substring(qIdx + 1));
         var appId = trimToNull(qs.get("appid"));
         var prepayId = trimToNull(qs.get("prepayid"));
@@ -359,7 +359,7 @@ public class HelipayCreateHandler {
         var appType = trimToNull(qs.get("apptype"));
         if (appType == null) appType = "TH5";
         if (appId == null || prepayId == null || sign == null)
-            throw new IllegalArgumentException("支付链接参数不完整");
+            throw new ExpectedFailureException("支付链接参数不完整");
 
         var query = "appid=" + encodeQueryValue(appId)
                 + "&apptype=" + encodeQueryValue(appType)

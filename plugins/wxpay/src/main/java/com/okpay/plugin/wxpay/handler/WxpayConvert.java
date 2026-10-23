@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
+import com.okpay.plugin.sdk.ExpectedFailureException;
 /**
  * 投诉响应 JSON → ComplaintRecord 映射（字段名以微信 v3 投诉接口文档为准）。
  */
@@ -141,12 +142,12 @@ final class WxpayConvert {
     /** 微信支持 jpg/jpeg/png/bmp；仅校验后缀，保留原文件名（.jpeg 合法，不重写）。 */
     static String validateMediaFilename(String filename) {
         if (filename == null || filename.isBlank()) {
-            throw new IllegalArgumentException("图片文件名不能为空");
+            throw new ExpectedFailureException("图片文件名不能为空");
         }
         var dot = filename.lastIndexOf('.');
         var ext = dot > 0 ? filename.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
         if (!Set.of("jpg", "jpeg", "png", "bmp").contains(ext)) {
-            throw new IllegalArgumentException("仅支持 jpg/jpeg/png/bmp 图片");
+            throw new ExpectedFailureException("仅支持 jpg/jpeg/png/bmp 图片");
         }
         return filename;
     }

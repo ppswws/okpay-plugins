@@ -166,7 +166,7 @@ public class AlipayNotifyHandler {
         if (yuan == null || yuan.isBlank()) return null;
         try {
             return PaymentUtils.toCents(yuan);
-        } catch (IllegalArgumentException e) {
+        } catch (ExpectedFailureException e) {
             return null;
         }
     }

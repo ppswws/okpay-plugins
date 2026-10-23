@@ -125,7 +125,7 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
         if ("bank".equals(transfer.getType())) {
             try {
                 bankAccountType = PaymentUtils.isPublicAccount(transfer.getAccountType()) ? "1" : "2";
-            } catch (IllegalArgumentException e) {
+            } catch (ExpectedFailureException e) {
                 return Responses.fail("PARAM_ERROR", e.getMessage());
             }
         }

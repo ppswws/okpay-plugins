@@ -5,7 +5,6 @@ import static com.okpay.plugin.sdk.PaymentUtils.*;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.*;
 import com.okpay.plugin.epay.util.*;
-import org.slf4j.*;
 
 import java.io.*;
 import java.util.*;
@@ -16,8 +15,6 @@ import java.util.*;
  * <p>负责：构建请求参数 → MD5 签名 → POST 渠道 → 解析支付方式 → LockOrderExt 缓存。</p>
  */
 public class EpayCreateHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(EpayCreateHandler.class);
 
     public com.okpay.plugin.model.BizResult submit(InvokeContext ctx) {
         return Sdk.createResult(ctx, Map.of(

@@ -6,7 +6,6 @@ import com.okpay.plugin.enums.BizType;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.*;
 import com.okpay.plugin.epay.util.*;
-import org.slf4j.*;
 
 import java.util.Map;
 
@@ -17,8 +16,6 @@ import java.util.Map;
  * → 推进订单状态机。</p>
  */
 public class EpayNotifyHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(EpayNotifyHandler.class);
 
     public PageResponse handle(InvokeContext ctx) {
         // 契约：notify 回调按 tradeNo 前缀路由，实体缺失不发插件（PluginPageService.dispatch→404），order 恒非空
