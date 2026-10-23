@@ -57,7 +57,6 @@ public class SumapayNotifyHandler {
         try {
             Sdk.completeOrderOk(ctx, order.getTradeNo(), params.get("channelSn"), buyer);
         } catch (Exception e) {
-            log.error("完成订单失败", e);
             return Responses.notifyFail("fail", BizType.T_PAY);
         }
         return Responses.notifyOk("success", BizType.T_PAY);
@@ -91,7 +90,6 @@ public class SumapayNotifyHandler {
                 default -> Sdk.completeRefundIng(ctx, refund.getRefundNo(), requestId, refundResult, null);
             }
         } catch (Exception e) {
-            log.error("完成退款失败", e);
             return Responses.notifyFail("complete_error", BizType.T_REF);
         }
         return Responses.notifyOk("success", BizType.T_REF);

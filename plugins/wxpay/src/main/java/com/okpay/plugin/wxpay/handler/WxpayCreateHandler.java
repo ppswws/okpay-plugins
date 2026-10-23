@@ -321,7 +321,12 @@ public class WxpayCreateHandler {
                         "real=" + toYuan(ctx.getOrder().getReal()) + "&url="
                                 + java.net.URLEncoder.encode(retUrl, java.nio.charset.StandardCharsets.UTF_8));
                 return Responses.respPageURL("wxpay_h5", scheme);
-            } catch (Exception e) { log.error("获取小程序 scheme 失败", e); return Responses.respError("小程序跳转失败"); }
+            } catch (Exception e) {
+                if (!PluginLog.isExpected(e)) {
+                    log.error("获取小程序 scheme 失败", e);
+                }
+                return Responses.respError("小程序跳转失败");
+            }
         }
         // OAuth 兑换在锁外执行：lockOrderExt 只缓存真正下单结果，openid 不做缓存。
         // 兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应全部由 SDK 内置（exchangeMiniOpenid），

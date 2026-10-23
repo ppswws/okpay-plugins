@@ -1,8 +1,6 @@
 package com.okpay.plugin.wxpay.handler;
 
 import tools.jackson.databind.JsonNode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import com.okpay.plugin.model.ComplaintRecord;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -12,7 +10,6 @@ import java.util.*;
  * 投诉响应 JSON → ComplaintRecord 映射（字段名以微信 v3 投诉接口文档为准）。
  */
 final class WxpayConvert {
-    private static final Logger log = LoggerFactory.getLogger(WxpayConvert.class);
 
     private WxpayConvert() {}
 
@@ -194,7 +191,6 @@ final class WxpayConvert {
             return LocalDateTime.parse(time.replace("T", " ").substring(0, 19),
                     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
         } catch (Exception e) {
-            log.warn("投诉时间解析失败, time={}", time, e);
             return null;
         }
     }

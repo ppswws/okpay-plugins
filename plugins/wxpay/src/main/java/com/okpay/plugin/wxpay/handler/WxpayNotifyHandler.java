@@ -82,14 +82,15 @@ public class WxpayNotifyHandler {
                 Sdk.completeOrderOk(ctx, order.getTradeNo(),
                         result.path("transaction_id").asString(null), buyer);
             } catch (Exception e) {
-                log.error("微信支付完成订单失败, tradeNo={}", order.getTradeNo(), e);
                 return ackFail("complete_error", BizType.T_PAY);
             }
 
             return ackOk(BizType.T_PAY);
 
         } catch (Exception e) {
-            log.error("微信支付通知处理失败, tradeNo={}", order.getTradeNo(), e);
+            if (!PluginLog.isExpected(e)) {
+                log.error("微信支付通知处理失败, tradeNo={}", order.getTradeNo(), e);
+            }
             return ackFail("notify_error", BizType.T_PAY);
         }
     }
@@ -105,13 +106,23 @@ public class WxpayNotifyHandler {
             var result = cfg.client().parseNotify(body, headerList(getHeaders(ctx)));
             var refundStatus = result.path("refund_status").asString("");
             var tradeNo = refund.getTradeNo();
-            var subs = Sdk.getSubOrders(ctx, tradeNo);
+            List<SubOrderSnapshot> subs;
+            try {
+                subs = Sdk.getSubOrders(ctx, tradeNo);
+            } catch (Exception e) {
+                // 宿主回调失败已由宿主记录，回 FAIL 让通道重试。
+                return ackFail("notify_error", BizType.T_REF);
+            }
             if (!"SUCCESS".equals(refundStatus)) {
                 // 合单退款逐子单提交，任一子单的 PROCESSING 通知也会推送到主单回调：
                 // 不能据单条子单通知判主单 FAIL（否则后续成功通知无法恢复终态），由查单续退兜底；
                 // 单笔退款保持判失败语义
                 if (subs.isEmpty()) {
-                    Sdk.completeRefundFail(ctx, refund.getRefundNo(), "REFUND_FAIL", refundStatus);
+                    try {
+                        Sdk.completeRefundFail(ctx, refund.getRefundNo(), "REFUND_FAIL", refundStatus);
+                    } catch (Exception e) {
+                        return ackFail("notify_error", BizType.T_REF);
+                    }
                 } else {
                     log.debug("合单退款子单通知非成功, refundNo={}, refundStatus={}, 由查单续退兜底",
                             refund.getRefundNo(), refundStatus);
@@ -120,8 +131,12 @@ public class WxpayNotifyHandler {
             }
             if (subs.isEmpty()) {
                 // 单笔退款通知
-                Sdk.completeRefundOk(ctx, refund.getRefundNo(),
-                        result.path("transaction_id").asString(null));
+                try {
+                    Sdk.completeRefundOk(ctx, refund.getRefundNo(),
+                            result.path("transaction_id").asString(null));
+                } catch (Exception e) {
+                    return ackFail("notify_error", BizType.T_REF);
+                }
                 return ackOk(BizType.T_REF);
             }
             // 合单退款通知：out_refund_no = refundNo_序号 → 累计对应子单（通知重发 → 超限=已累计，幂等）
@@ -140,20 +155,28 @@ public class WxpayNotifyHandler {
                                 .subTradeNo(subs.get(idx - 1).getSubTradeNo())
                                 .refundDelta(delta).build());
                     } catch (IllegalStateException e) {
-                        log.debug("合单退款通知重复累计被拒（已到额）, refundNo={}, sub={}",
-                                refund.getRefundNo(), subs.get(idx - 1).getSubTradeNo());
+                        // 重复累计被拒（已到额）是正常重复通知结果，不落日志。
+                    } catch (Exception e) {
+                        return ackFail("notify_error", BizType.T_REF);
                     }
                 }
             }
             // 全部子单退完才推进主退款单终态（部分退完保持 PENDING，靠查单续退）
-            var after = Sdk.getSubOrders(ctx, tradeNo);
-            if (after.stream().allMatch(s -> s.getRefundMoney() >= s.getMoney())) {
-                Sdk.completeRefundOk(ctx, refund.getRefundNo(),
-                        result.path("transaction_id").asString(null));
+            try {
+                var after = Sdk.getSubOrders(ctx, tradeNo);
+                if (after.stream().allMatch(s -> s.getRefundMoney() >= s.getMoney())) {
+                    Sdk.completeRefundOk(ctx, refund.getRefundNo(),
+                            result.path("transaction_id").asString(null));
+                }
+            } catch (Exception e) {
+                // 宿主回调失败已由宿主记录，回 FAIL 让通道重试。
+                return ackFail("notify_error", BizType.T_REF);
             }
         } catch (Exception e) {
-            // 与支付通知对称：处理失败（验签/解密/落库异常）回 FAIL 让微信重发，不吞异常假确认
-            log.error("微信退款通知处理失败, refundNo={}", refund.getRefundNo(), e);
+            // 仅解析/校验阶段的代码缺陷写 ERROR；渠道数据问题由回调记录承载。
+            if (!PluginLog.isExpected(e)) {
+                log.error("微信退款通知处理失败, refundNo={}", refund.getRefundNo(), e);
+            }
             return ackFail("notify_error", BizType.T_REF);
         }
 
@@ -228,7 +251,6 @@ public class WxpayNotifyHandler {
         try {
             Sdk.completeOrderOk(ctx, order.getTradeNo(), firstApi, buyer);
         } catch (Exception e) {
-            log.error("微信合单完成订单失败, tradeNo={}", order.getTradeNo(), e);
             return ackFail("complete_error", bizType);
         }
         return ackOk(bizType);

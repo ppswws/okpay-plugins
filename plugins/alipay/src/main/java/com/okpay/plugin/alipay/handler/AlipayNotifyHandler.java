@@ -72,14 +72,15 @@ public class AlipayNotifyHandler {
                 Sdk.completeOrderOk(ctx, order.getTradeNo(),
                         params.get("trade_no"), buyerIdOf(params));
             } catch (Exception e) {
-                log.error("支付宝完成订单失败, tradeNo={}", order.getTradeNo(), e);
                 return Responses.notifyFail("complete_error", BizType.T_PAY);
             }
 
             return Responses.notifyOk("success", BizType.T_PAY);
 
         } catch (Exception e) {
-            log.error("支付宝通知处理失败, tradeNo={}", order.getTradeNo(), e);
+            if (!PluginLog.isExpected(e)) {
+                log.error("支付宝通知处理失败, tradeNo={}", order.getTradeNo(), e);
+            }
             return Responses.notifyFail("notify_error", BizType.T_PAY);
         }
     }
@@ -103,10 +104,20 @@ public class AlipayNotifyHandler {
                 return Responses.notifyOk("success", BizType.T_REF);
             }
             var tradeNo = refund.getTradeNo();
-            var subs = Sdk.getSubOrders(ctx, tradeNo);
+            List<SubOrderSnapshot> subs;
+            try {
+                subs = Sdk.getSubOrders(ctx, tradeNo);
+            } catch (Exception e) {
+                // 宿主回调失败已由宿主记录，回 FAIL 让通道重试。
+                return Responses.notifyFail("notify_error", BizType.T_REF);
+            }
             if (subs.isEmpty()) {
                 // 单笔退款通知：REFUND_SUCCESS 即终态
-                Sdk.completeRefundOk(ctx, refund.getRefundNo(), params.get("trade_no"));
+                try {
+                    Sdk.completeRefundOk(ctx, refund.getRefundNo(), params.get("trade_no"));
+                } catch (Exception e) {
+                    return Responses.notifyFail("notify_error", BizType.T_REF);
+                }
                 return Responses.notifyOk("success", BizType.T_REF);
             }
             // 合单退款通知：out_request_no = refundNo_序号 → 累计对应子单（通知重发 → 超限=已累计，幂等）
@@ -124,18 +135,27 @@ public class AlipayNotifyHandler {
                                 .subTradeNo(subs.get(idx - 1).getSubTradeNo())
                                 .refundDelta(fee).build());
                     } catch (IllegalStateException e) {
-                        log.debug("合单退款通知重复累计被拒（已到额）, refundNo={}, sub={}",
-                                refund.getRefundNo(), subs.get(idx - 1).getSubTradeNo());
+                        // 重复累计被拒（已到额）是正常重复通知结果，不落日志。
+                    } catch (Exception e) {
+                        return Responses.notifyFail("notify_error", BizType.T_REF);
                     }
                 }
             }
             // 全部子单退完才推进主退款单终态（部分退完保持 PENDING，靠查单续退）
-            var after = Sdk.getSubOrders(ctx, tradeNo);
-            if (after.stream().allMatch(s -> s.getRefundMoney() >= s.getMoney())) {
-                Sdk.completeRefundOk(ctx, refund.getRefundNo(), params.get("trade_no"));
+            try {
+                var after = Sdk.getSubOrders(ctx, tradeNo);
+                if (after.stream().allMatch(s -> s.getRefundMoney() >= s.getMoney())) {
+                    Sdk.completeRefundOk(ctx, refund.getRefundNo(), params.get("trade_no"));
+                }
+            } catch (Exception e) {
+                // 宿主回调失败已由宿主记录，回 FAIL 让通道重试。
+                return Responses.notifyFail("notify_error", BizType.T_REF);
             }
         } catch (Exception e) {
-            log.error("支付宝退款通知处理失败, refundNo={}", refund.getRefundNo(), e);
+            // 仅解析/校验阶段的代码缺陷写 ERROR；渠道数据问题由回调记录承载。
+            if (!PluginLog.isExpected(e)) {
+                log.error("支付宝退款通知处理失败, refundNo={}", refund.getRefundNo(), e);
+            }
         }
 
         return Responses.notifyOk("success", BizType.T_REF);
@@ -194,14 +214,26 @@ public class AlipayNotifyHandler {
                 }
                 var api = r.path("trade_no").asString("");
                 if (firstApi == null) firstApi = api;
-                Sdk.updateSubOrder(ctx, UpdateSubOrderRequest.builder()
-                        .tradeNo(order.getTradeNo()).subTradeNo(sub.getSubTradeNo())
-                        .apiTradeNo(api).status(SubOrderSnapshot.STATUS_PAID).build());
+                try {
+                    Sdk.updateSubOrder(ctx, UpdateSubOrderRequest.builder()
+                            .tradeNo(order.getTradeNo()).subTradeNo(sub.getSubTradeNo())
+                            .apiTradeNo(api).status(SubOrderSnapshot.STATUS_PAID).build());
+                } catch (Exception e) {
+                    // 宿主回调失败已由宿主记录，回 FAIL 让通道重试。
+                    return Responses.notifyFail("notify_error", BizType.T_PAY);
+                }
             }
-            Sdk.completeOrderOk(ctx, order.getTradeNo(), firstApi, buyerIdOf(params));
+            try {
+                Sdk.completeOrderOk(ctx, order.getTradeNo(), firstApi, buyerIdOf(params));
+            } catch (Exception e) {
+                return Responses.notifyFail("notify_error", BizType.T_PAY);
+            }
             return Responses.notifyOk("success", BizType.T_PAY);
         } catch (Exception e) {
-            log.error("支付宝合单通知解析失败, tradeNo={}", order.getTradeNo(), e);
+            // 仅解析/校验阶段的代码缺陷写 ERROR；渠道数据问题由回调记录承载。
+            if (!PluginLog.isExpected(e)) {
+                log.error("支付宝合单通知解析失败, tradeNo={}", order.getTradeNo(), e);
+            }
             return Responses.notifyFail("notify_error", BizType.T_PAY);
         }
     }

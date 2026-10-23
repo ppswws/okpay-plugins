@@ -43,7 +43,6 @@ public class EpayNotifyHandler {
             Sdk.completeOrderOk(ctx, order.getTradeNo(),
                     params.get("trade_no"), params.get("buyer"));
         } catch (Exception e) {
-            log.error("易支付完成订单失败, tradeNo={}", order.getTradeNo(), e);
             return Responses.notifyFail("complete_error", BizType.T_PAY);
         }
         return Responses.notifyOk("success", BizType.T_PAY);

@@ -203,7 +203,9 @@ public class AlipayQueryHandler extends AbstractBizHandler {
             }
             return Responses.fail(resp.subCode(), resp.subMsg(), resp);
         } catch (Exception e) {
-            log.error("支付宝余额查询失败", e);
+            if (!PluginLog.isExpected(e)) {
+                log.error("支付宝余额查询失败", e);
+            }
             // 不返回伪造的 0.00 成功结果：按 S_FAIL 透出，payment 侧会抛业务错误提示操作人
             return Responses.fail("BAL_ERROR", e.getMessage());
         }

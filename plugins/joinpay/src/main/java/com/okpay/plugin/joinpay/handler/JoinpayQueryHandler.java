@@ -181,7 +181,9 @@ public class JoinpayQueryHandler extends AbstractBizHandler {
                 return Responses.fail("BAL_ERROR", "余额为空", resp);
             return Responses.resultBal(balance, resp);
         } catch (Exception e) {
-            log.error("查询余额失败", e);
+            if (!PluginLog.isExpected(e)) {
+                log.error("查询余额失败", e);
+            }
             return Responses.fail("BAL_ERROR", e.getMessage());
         }
     }

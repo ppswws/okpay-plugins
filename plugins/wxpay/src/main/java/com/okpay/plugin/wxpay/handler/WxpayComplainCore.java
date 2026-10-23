@@ -2,6 +2,7 @@ package com.okpay.plugin.wxpay.handler;
 
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.HttpHelper;
+import com.okpay.plugin.sdk.PluginLog;
 import com.okpay.plugin.sdk.WechatPayException;
 import com.okpay.plugin.sdk.WechatPayV3Client;
 import org.slf4j.*;
@@ -78,10 +79,14 @@ public class WxpayComplainCore {
                     .actionType(parsed.path("action_type").asString(null))
                     .ackStatus(200).ackContent("{\"code\":\"SUCCESS\"}").contentType("application/json")
                     .build(); // 应答体为微信 v3 通知标准成功格式
-        } catch (Exception e) { log.error("投诉回调解析失败", e);
+        } catch (Exception e) {
+            if (!PluginLog.isExpected(e)) {
+                log.error("投诉回调解析失败", e);
+            }
             return CallbackResult.builder().ackStatus(500)
                     .ackContent("{\"code\":\"FAIL\",\"message\":\"callback error\"}")
-                    .contentType("application/json").build(); }
+                    .contentType("application/json").build();
+        }
     }
 
     public String uploadMedia(ChannelConfig cfg, byte[] fileData, String filename) {
@@ -226,11 +231,9 @@ public class WxpayComplainCore {
         if (record == null || !nullish(record.getMerchantNo())) return record;
         if (isDirect(cfg)) {
             if (!nullish(cfg.getAppMchId())) record.setMerchantNo(cfg.getAppMchId());
-            else log.warn("直连投诉缺少商户号配置, complaintId={}", record.getComplaintId());
-        } else {
-            log.warn("服务商投诉未返回被诉商户号, complaintId={}, mode={}",
-                    record.getComplaintId(), modeOf(cfg));
+            // 缺商户号时保持上游原值：投诉记录已落库，不落日志。
         }
+        // 服务商未返回被诉商户号同样保留上游原值：投诉记录已落库，不落日志。
         return record;
     }
 

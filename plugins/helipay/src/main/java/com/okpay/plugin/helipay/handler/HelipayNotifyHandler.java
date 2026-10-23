@@ -43,7 +43,9 @@ public class HelipayNotifyHandler {
         try {
             Sdk.completeOrderOk(ctx, order.getTradeNo(),
                     params.get("rt3_systemSerial"), params.get("rt10_openId"));
-        } catch (Exception e) { log.error("完成订单失败", e); return Responses.notifyFail("fail", BizType.T_PAY); }
+        } catch (Exception e) {
+            return Responses.notifyFail("fail", BizType.T_PAY);
+        }
         return Responses.notifyOk("success", BizType.T_PAY);
     }
 
@@ -69,7 +71,9 @@ public class HelipayNotifyHandler {
                 case "FAIL", "CLOSE" -> Sdk.completeRefundFail(ctx, refund.getRefundNo(), params.get("rt5_status"), null);
                 default -> Sdk.completeRefundIng(ctx, refund.getRefundNo(), params.get("rt4_systemSerial"), params.get("rt5_status"), null);
             }
-        } catch (Exception e) { log.error("完成退款失败", e); return Responses.notifyFail("fail", BizType.T_REF); }
+        } catch (Exception e) {
+            return Responses.notifyFail("fail", BizType.T_REF);
+        }
         return Responses.notifyOk("success", BizType.T_REF);
     }
 
@@ -97,7 +101,6 @@ public class HelipayNotifyHandler {
             }
         } catch (Exception e) {
             // 推进失败交还渠道重发：渠道重发触发同一状态机重试，查询轮询仍为兜底
-            log.error("完成打款失败", e);
             return Responses.notifyFail("fail", BizType.T_XFER);
         }
         return Responses.notifyOk("success", BizType.T_XFER);

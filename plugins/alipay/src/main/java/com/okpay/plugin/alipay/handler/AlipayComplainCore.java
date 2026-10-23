@@ -5,6 +5,7 @@ import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.AlipayOpenApiClient;
 import com.okpay.plugin.sdk.HttpHelper;
 import com.okpay.plugin.sdk.PaymentUtils;
+import com.okpay.plugin.sdk.PluginLog;
 import org.slf4j.*;
 
 import java.io.*;
@@ -126,7 +127,9 @@ public class AlipayComplainCore {
                     .contentType("text/plain")
                     .build();
         } catch (Exception e) {
-            log.error("投诉回调解析失败", e);
+            if (!PluginLog.isExpected(e)) {
+                log.error("投诉回调解析失败", e);
+            }
             return CallbackResult.builder().ackStatus(500).ackContent("fail")
                     .contentType("text/plain").build();
         }

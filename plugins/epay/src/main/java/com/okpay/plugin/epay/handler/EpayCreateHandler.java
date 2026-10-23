@@ -62,10 +62,8 @@ public class EpayCreateHandler {
                         mapper.map(resolveMethod(respMap), resolveUrl(respMap)), resp);
             } catch (IOException e) {
                 // 传输层失败（超时/连接失败）：无 HTTP 响应，归因渠道统一文案
-                log.error("易支付渠道请求失败, tradeNo={}", order.getTradeNo(), e);
                 throw new Sdk.BizFailException(channelFailure(), null, e);
             } catch (Exception e) {
-                log.error("易支付下单失败, tradeNo={}", order.getTradeNo(), e);
                 throw e;
             }
         });

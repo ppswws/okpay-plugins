@@ -58,7 +58,9 @@ public class JoinpayNotifyHandler {
         try {
             Sdk.completeOrderOk(ctx, order.getTradeNo(),
                     params.get("r7_TrxNo"), params.get("rd_OpenId"));
-        } catch (Exception e) { log.error("完成订单失败", e); return Responses.notifyFail("fail", BizType.T_PAY); }
+        } catch (Exception e) {
+            return Responses.notifyFail("fail", BizType.T_PAY);
+        }
         return Responses.notifyOk("success", BizType.T_PAY);
     }
 
@@ -83,7 +85,9 @@ public class JoinpayNotifyHandler {
                 case "101" -> Sdk.completeRefundFail(ctx, refund.getRefundNo(), status, params.get("rc_CodeMsg"));
                 default -> Sdk.completeRefundIng(ctx, refund.getRefundNo(), params.get("r5_RefundTrxNo"), status, params.get("rc_CodeMsg"));
             }
-        } catch (Exception e) { log.error("完成退款失败", e); return Responses.notifyFail("fail", BizType.T_REF); }
+        } catch (Exception e) {
+            return Responses.notifyFail("fail", BizType.T_REF);
+        }
         return "100".equals(status)
                    ? Responses.notifyOk("success", BizType.T_REF)
                    : Responses.notifyFail("status=" + status, BizType.T_REF);
@@ -111,7 +115,9 @@ public class JoinpayNotifyHandler {
                 default -> Sdk.completeTransferIng(ctx, transfer.getTradeNo(),
                         params.get("platformSerialNo"), params.get("errorCode"), params.get("errorCodeDesc"));
             }
-        } catch (Exception e) { log.error("完成打款失败", e); return Responses.notifyFail("fail", BizType.T_XFER); }
+        } catch (Exception e) {
+            return Responses.notifyFail("fail", BizType.T_XFER);
+        }
         return "205".equals(status)
                    ? Responses.notifyOk("success", BizType.T_XFER)
                    : Responses.notifyFail("status=" + status, BizType.T_XFER);

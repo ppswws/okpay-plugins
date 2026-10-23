@@ -138,7 +138,12 @@ public class HelipayCreateHandler {
                         "real=" + toYuan(ctx.getOrder().getReal()) + "&url="
                                 + URLEncoder.encode(retUrl, StandardCharsets.UTF_8));
                 return Responses.respPageURL("wxpay_h5", scheme);
-            } catch (Exception e) { log.error("获取小程序 scheme 失败", e); return Responses.respError("小程序跳转失败"); }
+            } catch (Exception e) {
+                if (!PluginLog.isExpected(e)) {
+                    log.error("获取小程序 scheme 失败", e);
+                }
+                return Responses.respError("小程序跳转失败");
+            }
         }
         // OAuth 兑换在锁外执行；兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应均由 SDK 处理
         return OAuthHelper.exchangeMiniOpenid(ctx, cfg.getMini().getAppid(), cfg.getMini().getAppsecret(), code,
@@ -319,9 +324,7 @@ public class HelipayCreateHandler {
         if (value != null && !value.isBlank()) return value;
         var fallback = firstNotEmpty(respMap.get("rt8_qrcode"), respMap.get("rt8_payInfo"),
                 respMap.get("rt10_payInfo"), respMap.get("rt9_wapurl"));
-        if (!fallback.isBlank())
-            log.warn("Helipay 支付地址字段位与预期不符, expected={}, fallback命中, bizType={}",
-                    expectedField, respMap.get("rt1_bizType"));
+        // 字段位回退是渠道响应差异，响应轨迹已记录，不落日志。
         return fallback;
     }
 
@@ -335,7 +338,7 @@ public class HelipayCreateHandler {
             var openlink = jsoperatewxdataFromPayUrl(ctx, payInfo);
             if (openlink != null && !openlink.isBlank()) return openlink;
         } catch (Exception e) {
-            log.warn("H5 逆向取链接失败，回退原始支付链接, error={}", e.getMessage());
+            // 逆向取链接失败回退原始链接是正常渠道交互结果，不落日志。
         }
         return payInfo;
     }
