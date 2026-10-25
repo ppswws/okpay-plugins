@@ -32,3 +32,6 @@
 okpay-pro 已停止维护，okpay-plugins 为插件唯一真源；后续文档修正请直接在本仓库进行。
 对比：epay-fork 内的 joinpay `api.txt` 为更旧抄录（无代付/余额/附录节），已就地同步了退款通知更正，
 但不再作为文档真源。
+
+2026-10-25：6 个插件迁移到 descriptor / S_WAIT 新 SDK（`PageOutcome`/`NotifyResponse`、`onCashier`、
+严格 S_FAIL 边界）；`mvn clean test` 475 tests 全绿，`maven-repo` 1.0.0 构件已同步。

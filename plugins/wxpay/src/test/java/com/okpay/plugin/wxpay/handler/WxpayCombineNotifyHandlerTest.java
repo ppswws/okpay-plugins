@@ -7,6 +7,7 @@ import com.okpay.plugin.model.ChannelSnapshot;
 import com.okpay.plugin.model.CompleteBizRequest;
 import com.okpay.plugin.model.ConfigSnapshot;
 import com.okpay.plugin.model.InvokeContext;
+import com.okpay.plugin.model.NotifyResponse;
 import com.okpay.plugin.model.OrderSnapshot;
 import com.okpay.plugin.model.RefundSnapshot;
 import com.okpay.plugin.model.RequestSnapshot;
@@ -188,8 +189,7 @@ class WxpayCombineNotifyHandlerTest {
 
             var resp = new WxpayNotifyHandler().payNotify(ctx);
 
-            assertThat(resp.getDataText()).isEqualTo("{\"code\":\"SUCCESS\"}");
-            assertThat(resp.getStatus()).isEqualTo(200);
+            assertThat(okBody(resp)).isEqualTo("{\"code\":\"SUCCESS\"}");
             // 逐子单已付标记：subTradeNo 与报文一致 + status=1 + 各子单 transaction_id
             var captor = ArgumentCaptor.forClass(UpdateSubOrderRequest.class);
             verify(cb, org.mockito.Mockito.times(3)).updateSubOrder(captor.capture());
@@ -227,8 +227,7 @@ class WxpayCombineNotifyHandlerTest {
 
             var resp = new WxpayNotifyHandler().payNotify(ctx);
 
-            assertThat(resp.getDataText()).isEqualTo("{\"code\":\"FAIL\",\"message\":\"amount_mismatch\"}");
-            assertThat(resp.getStatus()).isEqualTo(400);
+            assertThat(failBody(resp)).isEqualTo("{\"code\":\"FAIL\",\"message\":\"amount_mismatch\"}");
             verify(cb, never()).updateSubOrder(any());
             verify(cb, never()).completeBiz(any());
         }
@@ -249,8 +248,7 @@ class WxpayCombineNotifyHandlerTest {
 
             var resp = new WxpayNotifyHandler().payNotify(ctx);
 
-            assertThat(resp.getDataText()).isEqualTo("{\"code\":\"FAIL\",\"message\":\"amount_mismatch\"}");
-            assertThat(resp.getStatus()).isEqualTo(400);
+            assertThat(failBody(resp)).isEqualTo("{\"code\":\"FAIL\",\"message\":\"amount_mismatch\"}");
             verify(cb, never()).completeBiz(any());
         }
     }
@@ -269,8 +267,7 @@ class WxpayCombineNotifyHandlerTest {
 
             var resp = new WxpayNotifyHandler().payNotify(ctx);
 
-            assertThat(resp.getDataText()).isEqualTo("{\"code\":\"FAIL\",\"message\":\"amount_mismatch\"}");
-            assertThat(resp.getStatus()).isEqualTo(400);
+            assertThat(failBody(resp)).isEqualTo("{\"code\":\"FAIL\",\"message\":\"amount_mismatch\"}");
             verify(cb, never()).completeBiz(any());
         }
     }
@@ -291,8 +288,7 @@ class WxpayCombineNotifyHandlerTest {
 
             var resp = new WxpayNotifyHandler().payNotify(ctx);
 
-            assertThat(resp.getDataText()).isEqualTo("{\"code\":\"FAIL\",\"message\":\"amount_mismatch\"}");
-            assertThat(resp.getStatus()).isEqualTo(400);
+            assertThat(failBody(resp)).isEqualTo("{\"code\":\"FAIL\",\"message\":\"amount_mismatch\"}");
             verify(cb, never()).completeBiz(any());
         }
     }
@@ -311,8 +307,7 @@ class WxpayCombineNotifyHandlerTest {
 
             var resp = new WxpayNotifyHandler().payNotify(ctx);
 
-            assertThat(resp.getDataText()).isEqualTo("{\"code\":\"FAIL\",\"message\":\"order_mismatch\"}");
-            assertThat(resp.getStatus()).isEqualTo(400);
+            assertThat(failBody(resp)).isEqualTo("{\"code\":\"FAIL\",\"message\":\"order_mismatch\"}");
             verify(cb, never()).completeBiz(any());
         }
     }
@@ -363,8 +358,7 @@ class WxpayCombineNotifyHandlerTest {
 
             var resp = new WxpayNotifyHandler().refundNotify(ctx);
 
-            assertThat(resp.getDataText()).isEqualTo("{\"code\":\"SUCCESS\"}");
-            assertThat(resp.getStatus()).isEqualTo(200);
+            assertThat(okBody(resp)).isEqualTo("{\"code\":\"SUCCESS\"}");
             var captor = ArgumentCaptor.forClass(UpdateSubOrderRequest.class);
             verify(cb).updateSubOrder(captor.capture());
             var u = captor.getValue();
@@ -392,8 +386,7 @@ class WxpayCombineNotifyHandlerTest {
 
             var resp = new WxpayNotifyHandler().refundNotify(ctx);
 
-            assertThat(resp.getDataText()).isEqualTo("{\"code\":\"SUCCESS\"}");
-            assertThat(resp.getStatus()).isEqualTo(200);
+            assertThat(okBody(resp)).isEqualTo("{\"code\":\"SUCCESS\"}");
             var done = ArgumentCaptor.forClass(CompleteBizRequest.class);
             verify(cb).completeBiz(done.capture());
             var d = done.getValue();
@@ -420,8 +413,7 @@ class WxpayCombineNotifyHandlerTest {
 
             var resp = new WxpayNotifyHandler().refundNotify(ctx);
 
-            assertThat(resp.getDataText()).isEqualTo("{\"code\":\"SUCCESS\"}");
-            assertThat(resp.getStatus()).isEqualTo(200);
+            assertThat(okBody(resp)).isEqualTo("{\"code\":\"SUCCESS\"}");
             var done = ArgumentCaptor.forClass(CompleteBizRequest.class);
             verify(cb).completeBiz(done.capture());
             assertThat(done.getValue().getBizNo()).isEqualTo(REFUND_NO);
@@ -442,8 +434,7 @@ class WxpayCombineNotifyHandlerTest {
 
             var resp = new WxpayNotifyHandler().refundNotify(ctx);
 
-            assertThat(resp.getDataText()).isEqualTo("{\"code\":\"SUCCESS\"}");
-            assertThat(resp.getStatus()).isEqualTo(200);
+            assertThat(okBody(resp)).isEqualTo("{\"code\":\"SUCCESS\"}");
             verify(cb, never()).updateSubOrder(any());
             verify(cb, never()).completeBiz(any());
         }
@@ -462,8 +453,7 @@ class WxpayCombineNotifyHandlerTest {
 
             var resp = new WxpayNotifyHandler().refundNotify(ctx);
 
-            assertThat(resp.getDataText()).isEqualTo("{\"code\":\"SUCCESS\"}");
-            assertThat(resp.getStatus()).isEqualTo(200);
+            assertThat(okBody(resp)).isEqualTo("{\"code\":\"SUCCESS\"}");
             // 合单退款逐子单提交：单条子单的非成功通知（PROCESSING 受理中先于 SUCCESS 到达、
             // REFUNDCLOSE 子单被拒）不判主单 FAIL——否则后续成功通知无法恢复终态且部分已退被回滚，
             // 终态由查单续退兜底
@@ -473,7 +463,7 @@ class WxpayCombineNotifyHandlerTest {
     }
 
     @Test
-    @DisplayName("refund_status 非 SUCCESS（单笔）→ 主退款单失败")
+    @DisplayName("refund_status 非 SUCCESS（单笔）：REFUNDCLOSE 非渠道退款状态 → S_WAIT（只有 CLOSED 判失败）")
     void refundNotifyFailStatusSingleRefund() throws Exception {
         var ctx = notifyCtx("{\"out_refund_no\":\"" + REFUND_NO + "\","
                 + "\"refund_status\":\"REFUNDCLOSE\",\"amount\":{\"refund\":10000}}", true);
@@ -485,17 +475,26 @@ class WxpayCombineNotifyHandlerTest {
 
             var resp = new WxpayNotifyHandler().refundNotify(ctx);
 
-            assertThat(resp.getDataText()).isEqualTo("{\"code\":\"SUCCESS\"}");
-            assertThat(resp.getStatus()).isEqualTo(200);
+            assertThat(okBody(resp)).isEqualTo("{\"code\":\"SUCCESS\"}");
             var done = ArgumentCaptor.forClass(CompleteBizRequest.class);
             verify(cb).completeBiz(done.capture());
             var d = done.getValue();
             assertThat(d.getBizType()).isEqualTo(BizType.T_REF);
-            assertThat(d.getState()).isEqualTo(BizState.S_FAIL);
+            // REFUNDCLOSE 不在官方 refund_status 枚举内（SUCCESS/CLOSED/PROCESSING/ABNORMAL），结果未定
+            assertThat(d.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(d.getBizNo()).isEqualTo(REFUND_NO);
-            assertThat(d.getCode()).isEqualTo("REFUND_FAIL");
-            assertThat(d.getMsg()).isEqualTo("REFUNDCLOSE");
+            assertThat(d.getCode()).isEqualTo("REFUNDCLOSE");
             verify(cb, never()).updateSubOrder(any());
         }
+    }
+
+    private static String okBody(NotifyResponse response) {
+        assertThat(response).isInstanceOf(NotifyResponse.Ok.class);
+        return ((NotifyResponse.Ok) response).body();
+    }
+
+    private static String failBody(NotifyResponse response) {
+        assertThat(response).isInstanceOf(NotifyResponse.Fail.class);
+        return ((NotifyResponse.Fail) response).body();
     }
 }

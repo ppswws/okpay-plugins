@@ -28,9 +28,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 
 /**
- * HelipaySubmitHandler 退款/打款：业务码状态机（退款 0000 成功、0001/0002 处理中；
- * 打款 0000/0001 受理成功交还轮询）、打款银行编码表单直传（含联行号条件字段）、
- * 渠道异常保持处理中不误判失败。
+ * HelipaySubmitHandler 退款/打款：业务码状态机（退款 0000 成功、0001/0002 S_WAIT；
+ * 打款 0000/0001 受理成功 S_WAIT）、打款银行编码表单直传（含联行号条件字段）、
+ * 渠道异常保持 S_WAIT 不误判失败。
  */
 @DisplayName("HelipaySubmitHandler 退款/打款")
 class HelipaySubmitHandlerTest {
@@ -68,7 +68,7 @@ class HelipaySubmitHandlerTest {
     }
 
     @Test
-    @DisplayName("退款 0001/0002 → S_ING（结果由通知/查询推进）")
+    @DisplayName("退款 0001/0002 → S_WAIT（结果由通知/查询推进）")
     void refundPending() throws Exception {
         var ctx = refundCtx();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -76,14 +76,14 @@ class HelipaySubmitHandlerTest {
                     "rt2_retCode", "0001", "rt3_retMsg", "处理中", "rt5_orderId", "T1")));
             var result = new HelipaySubmitHandler().handle(ctx, req(BizType.T_REF));
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("0001");
             assertThat(result.getMsg()).isEqualTo("处理中");
         }
     }
 
     @Test
-    @DisplayName("退款其余业务码 → S_FAIL")
+    @DisplayName("退款未文档化业务码 → S_WAIT（不盲目判失败）")
     void refundRejected() throws Exception {
         var ctx = refundCtx();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -91,14 +91,14 @@ class HelipaySubmitHandlerTest {
                     "rt2_retCode", "9999", "rt3_retMsg", "参数错误", "rt5_orderId", "T1")));
             var result = new HelipaySubmitHandler().handle(ctx, req(BizType.T_REF));
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("9999");
         }
     }
 
     @Test
-    @DisplayName("退款渠道异常（502）→ S_ING REFUND_ERROR（状态未知不误判失败）")
-    void refundChannelErrorKeepsIng() throws Exception {
+    @DisplayName("退款渠道异常（502）→ S_WAIT REFUND_ERROR（状态未知不误判失败）")
+    void refundChannelErrorKeepsWait() throws Exception {
         var ctx = refundCtx();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             mocked.when(() -> HttpHelper.post(any(), anyString(), anyString(), anyString())).thenAnswer(inv ->
@@ -106,7 +106,7 @@ class HelipaySubmitHandlerTest {
                             "<html><body>502</body></html>".getBytes(StandardCharsets.UTF_8), "req", 10, 1));
             var result = new HelipaySubmitHandler().handle(ctx, req(BizType.T_REF));
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("REFUND_ERROR");
         }
     }
@@ -116,7 +116,7 @@ class HelipaySubmitHandlerTest {
     // =========================================================================
 
     @Test
-    @DisplayName("打款 0000 → S_ING（受理成功，结果由通知/查询推进）；银行编码表单直传、联行号条件携带")
+    @DisplayName("打款 0000 → S_WAIT（受理成功，结果由通知/查询推进）；银行编码表单直传、联行号条件携带")
     void transferAcceptedBankCodeDirect() throws Exception {
         var ctx = transferCtx("ABC", "6222021234567890", "张三", "104100099999");
         var bodyCaptor = ArgumentCaptor.forClass(String.class);
@@ -126,7 +126,7 @@ class HelipaySubmitHandlerTest {
                     "rt4_customerNumber", "HL1", "rt5_orderId", "T1", "rt6_serialNumber", "SN1")));
             var result = new HelipaySubmitHandler().handle(ctx, req(BizType.T_XFER));
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getApiNo()).isEqualTo("SN1");
             assertThat(result.getCode()).isEqualTo("0000");
             mocked.verify(() -> HttpHelper.post(any(), anyString(), bodyCaptor.capture(), anyString()));
@@ -164,12 +164,12 @@ class HelipaySubmitHandlerTest {
     }
 
     @Test
-    @DisplayName("打款缺银行编码 → PARAM_ERROR 失败（表单必填前置校验）")
+    @DisplayName("打款缺银行编码 → PARAM_ERROR 结果未定（表单必填前置校验）")
     void transferMissingBankCodeFails() {
         var ctx = transferCtx(null, "6222021234567890", "张三", null);
         var result = new HelipaySubmitHandler().handle(ctx, req(BizType.T_XFER));
 
-        assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+        assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
         assertThat(result.getCode()).isEqualTo("PARAM_ERROR");
         assertThat(result.getMsg()).isEqualTo("缺少银行编码");
     }
@@ -186,7 +186,7 @@ class HelipaySubmitHandlerTest {
                     "rt5_orderId", "T1", "rt6_serialNumber", "SN1")));
             var result = new HelipaySubmitHandler().handle(ctx, req(BizType.T_XFER));
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             mocked.verify(() -> HttpHelper.post(any(), anyString(), bodyCaptor.capture(), anyString()));
         }
         var form = PaymentUtils.parseForm(bodyCaptor.getValue());
@@ -195,13 +195,13 @@ class HelipaySubmitHandlerTest {
         // 对公缺联行号 → 提交前拒绝，不发请求
         var ctxNoCnaps = transferCtx("ABC", "6222021234567890", "某某科技有限公司", null, "public");
         var resultNo = new HelipaySubmitHandler().handle(ctxNoCnaps, req(BizType.T_XFER));
-        assertThat(resultNo.getState()).isEqualTo(BizState.S_FAIL);
+        assertThat(resultNo.getState()).isEqualTo(BizState.S_WAIT);
         assertThat(resultNo.getCode()).isEqualTo("PARAM_ERROR");
         assertThat(resultNo.getMsg()).isEqualTo("对公打款须填写联行号");
     }
 
     @Test
-    @DisplayName("打款其余业务码 → S_FAIL")
+    @DisplayName("打款其余业务码 → S_FAIL（渠道明确终态失败）")
     void transferRejected() throws Exception {
         var ctx = transferCtx("ABC", "6222021234567890", "张三", null);
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -215,8 +215,8 @@ class HelipaySubmitHandlerTest {
     }
 
     @Test
-    @DisplayName("打款渠道异常 → S_ING XFER_ERROR（状态未知不误判失败）")
-    void transferChannelErrorKeepsIng() throws Exception {
+    @DisplayName("打款渠道异常 → S_WAIT XFER_ERROR（状态未知不误判失败）")
+    void transferChannelErrorKeepsWait() throws Exception {
         var ctx = transferCtx("ABC", "6222021234567890", "张三", null);
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             mocked.when(() -> HttpHelper.post(any(), anyString(), anyString(), anyString())).thenAnswer(inv ->
@@ -224,7 +224,7 @@ class HelipaySubmitHandlerTest {
                             "<html><body>502</body></html>".getBytes(StandardCharsets.UTF_8), "req", 10, 1));
             var result = new HelipaySubmitHandler().handle(ctx, req(BizType.T_XFER));
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("XFER_ERROR");
         }
     }
@@ -254,16 +254,16 @@ class HelipaySubmitHandlerTest {
     }
 
     @Test
-    @DisplayName("打款账户类型缺失或未知 → 显式拒绝 S_FAIL（不静默默认对私）")
+    @DisplayName("打款账户类型缺失或未知 → 结果未定 S_WAIT（不静默默认对私）")
     void transferRejectsUnknownAccountType() throws Exception {
         var missing = transferCtx("ABC", "6222021234567890", "张三", null, null);
         var missingResult = new HelipaySubmitHandler().handle(missing, req(BizType.T_XFER));
-        assertThat(missingResult.getState()).isEqualTo(BizState.S_FAIL);
+        assertThat(missingResult.getState()).isEqualTo(BizState.S_WAIT);
         assertThat(missingResult.getMsg()).contains("未知打款账户类型");
 
         var unknown = transferCtx("ABC", "6222021234567890", "张三", null, "corp");
         var unknownResult = new HelipaySubmitHandler().handle(unknown, req(BizType.T_XFER));
-        assertThat(unknownResult.getState()).isEqualTo(BizState.S_FAIL);
+        assertThat(unknownResult.getState()).isEqualTo(BizState.S_WAIT);
         assertThat(unknownResult.getMsg()).contains("未知打款账户类型");
     }
 

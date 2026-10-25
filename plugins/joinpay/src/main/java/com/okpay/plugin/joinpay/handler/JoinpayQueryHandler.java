@@ -11,9 +11,10 @@ import java.util.*;
 /**
  * 汇聚支付查询处理器（订单/退款/打款/余额）。
  *
- * <p>查询失败语义：渠道 HTTP 失败、响应解析失败、返回验签失败一律保持处理中（S_ING）
- * 交还定时轮询，不据以推进任何终态。状态判定严格按文档：订单/退款 ra_Status=100 成功、
- * 101 失败、其余处理中；打款 status=205 成功、204/208/214 失败、其余处理中。</p>
+ * <p>查询失败语义：渠道 HTTP 失败、响应解析失败、返回验签失败一律结果未定（S_WAIT）
+ * 交还定时轮询，不据以推进任何终态。订单查单不使用 S_FAIL（无法支付≠明确失败）；
+ * 退款/打款仅在文档明确的状态码上判失败：退款 ra_Status=101（退款失败）、
+ * 打款 status=204/208/214（批次不存在/冻结失败/代付失败）。</p>
  */
 public class JoinpayQueryHandler extends AbstractBizHandler {
 
@@ -67,14 +68,20 @@ public class JoinpayQueryHandler extends AbstractBizHandler {
             var m = JoinpayUtil.parseJsonNum(resp.bodyAsString());
             if (!resp.isSuccess() || m.isEmpty()
                     || !JoinpaySignUtil.verify(m, ORDER_QUERY_RESP_FIELDS, cfg.getAppkey()))
-                return Responses.ing("QUERY_ERROR", "订单查询暂时失败", resp);
-            var status = m.getOrDefault("ra_Status", "");
-            var state = switch (status) { case "100" -> BizState.S_OK; case "101" -> BizState.S_FAIL; default -> BizState.S_ING; };
+                return Responses.wait("QUERY_ERROR", "订单查询暂时失败", resp);
+            // 支付订单查单不使用 S_FAIL：未支付/不存在/渠道异常一律结果未定
+            var state = "100".equals(m.getOrDefault("ra_Status", "")) ? BizState.S_OK : BizState.S_WAIT;
             return Responses.result(state)
                     .apiNo(m.get("r5_TrxNo")).code(m.get("rb_Code")).msg(m.get("rc_CodeMsg"))
                     .buyer(m.get("rd_OpenId"))
                     .traced(resp).build();
-        } catch (Exception e) { log.debug("汇聚支付订单查询暂时失败, exception={}", e.getClass().getSimpleName()); return Responses.ing("QUERY_ERROR", e.getMessage()); }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Responses.wait("QUERY_ERROR", "订单查询被中断");
+        } catch (Exception e) {
+            log.debug("汇聚支付订单查询暂时失败, exception={}", e.getClass().getSimpleName());
+            return Responses.wait("QUERY_ERROR", e.getMessage());
+        }
     }
 
     // =========================================================================
@@ -94,13 +101,20 @@ public class JoinpayQueryHandler extends AbstractBizHandler {
             var m = JoinpayUtil.parseJsonNum(resp.bodyAsString());
             if (!resp.isSuccess() || m.isEmpty()
                     || !JoinpaySignUtil.verify(m, REFUND_QUERY_RESP_FIELDS, cfg.getAppkey()))
-                return Responses.ing("QUERY_ERROR", "退款查询暂时失败", resp);
+                return Responses.wait("QUERY_ERROR", "退款查询暂时失败", resp);
             var status = m.getOrDefault("ra_Status", "");
-            var state = switch (status) { case "100" -> BizState.S_OK; case "101" -> BizState.S_FAIL; default -> BizState.S_ING; };
+            // 文档退款状态：100 成功 / 101 失败 / 102 处理中
+            var state = switch (status) { case "100" -> BizState.S_OK; case "101" -> BizState.S_FAIL; default -> BizState.S_WAIT; };
             return Responses.result(state)
                     .apiNo(m.get("r4_RefundTrxNo")).code(m.get("rb_Code")).msg(m.get("rc_CodeMsg"))
                     .traced(resp).build();
-        } catch (Exception e) { log.debug("汇聚支付退款查询暂时失败, exception={}", e.getClass().getSimpleName()); return Responses.ing("QUERY_ERROR", e.getMessage()); }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Responses.wait("QUERY_ERROR", "退款查询被中断");
+        } catch (Exception e) {
+            log.debug("汇聚支付退款查询暂时失败, exception={}", e.getClass().getSimpleName());
+            return Responses.wait("QUERY_ERROR", e.getMessage());
+        }
     }
 
     // =========================================================================
@@ -120,18 +134,25 @@ public class JoinpayQueryHandler extends AbstractBizHandler {
             var m = JoinpayUtil.parseJsonNumRaw(resp.bodyAsString());
             var statusCode = String.valueOf(m.getOrDefault("statusCode", ""));
             if (!resp.isSuccess() || !"2001".equals(statusCode))
-                return Responses.ing("QUERY_ERROR", "打款查询暂时失败", resp);
+                return Responses.wait("QUERY_ERROR", "打款查询暂时失败", resp);
             var dataRaw = flatten(m.get("data"));
             if (dataRaw.isEmpty() || !JoinpaySignUtil.verify(dataRaw, TRANSFER_QUERY_RESP_FIELDS, cfg.getAppkey()))
-                return Responses.ing("QUERY_ERROR", "打款查询暂时失败", resp);
+                return Responses.wait("QUERY_ERROR", "打款查询暂时失败", resp);
             var status = dataRaw.getOrDefault("status", "");
-            var state = switch (status) { case "205" -> BizState.S_OK; case "204","208","214" -> BizState.S_FAIL; default -> BizState.S_ING; };
+            // 文档代付状态：204 批次不存在（明确失败）/ 208 冻结失败 / 214 代付失败；其余处理中
+            var state = switch (status) { case "205" -> BizState.S_OK; case "204","208","214" -> BizState.S_FAIL; default -> BizState.S_WAIT; };
             return Responses.result(state)
                     .apiNo(dataRaw.getOrDefault("platformSerialNo", ""))
                     .code(dataRaw.getOrDefault("errorCode", ""))
                     .msg(dataRaw.getOrDefault("errorDesc", ""))
                     .traced(resp).build();
-        } catch (Exception e) { log.debug("汇聚支付打款查询暂时失败, exception={}", e.getClass().getSimpleName()); return Responses.ing("QUERY_ERROR", e.getMessage()); }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Responses.wait("QUERY_ERROR", "打款查询被中断");
+        } catch (Exception e) {
+            log.debug("汇聚支付打款查询暂时失败, exception={}", e.getClass().getSimpleName());
+            return Responses.wait("QUERY_ERROR", e.getMessage());
+        }
     }
 
     // =========================================================================
@@ -152,39 +173,44 @@ public class JoinpayQueryHandler extends AbstractBizHandler {
         params.put("hmac", JoinpaySignUtil.sign(params, BALANCE_REQUEST_SIGN_FIELDS, cfg.getAppkey()));
         String reqBody;
         try { reqBody = HttpHelper.MAPPER.writeValueAsString(params); }
-        catch (Exception e) { return Responses.fail("BAL_ERROR", e.getMessage()); }
+        catch (Exception e) { return Responses.wait("BAL_ERROR", e.getMessage()); }
         try {
             var resp = HttpHelper.post(ctx, BALANCE_URL, reqBody, "application/json");
             var body = resp.bodyAsString();
             var m = JoinpayUtil.parseJsonNumRaw(body);
             var statusCode = String.valueOf(m.getOrDefault("statusCode", ""));
             var message = String.valueOf(m.getOrDefault("message", ""));
+            // 渠道应答码非成功（受理失败/未知）：余额结果未定
             if (!"2001".equals(statusCode))
-                return Responses.fail(statusCode, message.isBlank() ? "查询失败" : message, resp);
+                return Responses.wait(statusCode, message.isBlank() ? "查询失败" : message, resp);
             var data = flatten(m.get("data"));
             if (data.isEmpty())
-                return Responses.fail("BAL_ERROR", "响应解析失败", resp);
+                return Responses.wait("BAL_ERROR", "响应解析失败", resp);
             var signData = new LinkedHashMap<String, String>();
             signData.put("statusCode", statusCode);
             signData.put("message", message);
             signData.put("hmac", data.getOrDefault("hmac", ""));
             signData.putAll(data);
             if (!JoinpaySignUtil.verify(signData, BALANCE_RESPONSE_SIGN_FIELDS, cfg.getAppkey()))
-                return Responses.fail("SIGN_ERROR", "返回验签失败", resp);
+                return Responses.wait("SIGN_ERROR", "返回验签失败", resp);
+            // data 内 errorCode（余额查询业务错误）不构成明确失败，结果未定
             var errCode = data.getOrDefault("errorCode", "");
             if (!errCode.isEmpty()) {
                 var errDesc = data.getOrDefault("errorDesc", "");
-                return Responses.fail(errCode, errDesc.isEmpty() ? "查询失败" : errDesc, resp);
+                return Responses.wait(errCode, errDesc.isEmpty() ? "查询失败" : errDesc, resp);
             }
             var balance = data.getOrDefault("useAbleSettAmount", "");
             if (balance.isEmpty())
-                return Responses.fail("BAL_ERROR", "余额为空", resp);
+                return Responses.wait("BAL_ERROR", "余额为空", resp);
             return Responses.resultBal(balance, resp);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Responses.wait("BAL_ERROR", "查询余额被中断");
         } catch (Exception e) {
             if (!PluginLog.isExpected(e)) {
                 log.error("查询余额失败", e);
             }
-            return Responses.fail("BAL_ERROR", e.getMessage());
+            return Responses.wait("BAL_ERROR", e.getMessage());
         }
     }
 

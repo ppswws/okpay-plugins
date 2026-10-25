@@ -42,8 +42,8 @@ import static org.mockito.Mockito.when;
 
 /**
  * WxpayQueryHandler 合单分支：聚合查询（QueryScanner 兜底），
- * 全 SUCCESS → 逐子单已付 + 主单完成；含未付 → ing；含关闭 → fail；数量/金额不符 → fail。
- * 退款查询（T_REF）：主单有子单 → 复用 refundCombine 逐单续退。
+ * 全 SUCCESS → 逐子单已付 + 主单完成；其余（含未付/关闭/数量或金额不符）一律 S_WAIT
+ * ——支付订单不使用 S_FAIL。退款查询（T_REF）：主单有子单 → 复用 refundCombine 逐单续退。
  */
 @DisplayName("WxpayQueryHandler 合单查询")
 class WxpayCombineQueryHandlerTest {
@@ -213,7 +213,7 @@ class WxpayCombineQueryHandlerTest {
     }
 
     @Test
-    @DisplayName("含未支付子单 → S_ING（保持待支付状态，等 QueryScanner 再扫）")
+    @DisplayName("含未支付子单 → S_WAIT（保持待支付状态，等 QueryScanner 再扫）")
     void notPayIng() throws Exception {
         var ctx = ctx(null, null);
         var cb = ctx.getCallback();
@@ -228,14 +228,14 @@ class WxpayCombineQueryHandlerTest {
             var result = new WxpayQueryHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_PAY).bizNo(TRADE_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             verify(cb, never()).updateSubOrder(any());
         }
     }
 
     @Test
-    @DisplayName("含已关闭子单 → S_FAIL")
-    void closedFails() throws Exception {
+    @DisplayName("含已关闭子单 → S_WAIT（支付订单无失败终态）")
+    void closedStaysWait() throws Exception {
         var ctx = ctx(null, null);
         var cb = ctx.getCallback();
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
@@ -249,15 +249,15 @@ class WxpayCombineQueryHandlerTest {
             var result = new WxpayQueryHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_PAY).bizNo(TRADE_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("CLOSED");
             verify(cb, never()).updateSubOrder(any());
         }
     }
 
     @Test
-    @DisplayName("子单数量不符 → S_FAIL COMBINE_MISMATCH")
-    void countMismatchFails() throws Exception {
+    @DisplayName("子单数量不符 → S_WAIT COMBINE_MISMATCH（聚合不一致不判订单失败）")
+    void countMismatchStaysWait() throws Exception {
         var ctx = ctx(null, null);
         var cb = ctx.getCallback();
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
@@ -270,14 +270,14 @@ class WxpayCombineQueryHandlerTest {
             var result = new WxpayQueryHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_PAY).bizNo(TRADE_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("COMBINE_MISMATCH");
         }
     }
 
     @Test
-    @DisplayName("子单金额不符 → S_FAIL COMBINE_MISMATCH")
-    void amountMismatchFails() throws Exception {
+    @DisplayName("子单金额不符 → S_WAIT COMBINE_MISMATCH（聚合不一致不判订单失败）")
+    void amountMismatchStaysWait() throws Exception {
         var ctx = ctx(null, null);
         var cb = ctx.getCallback();
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
@@ -291,7 +291,7 @@ class WxpayCombineQueryHandlerTest {
             var result = new WxpayQueryHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_PAY).bizNo(TRADE_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("COMBINE_MISMATCH");
         }
     }
@@ -399,6 +399,46 @@ class WxpayCombineQueryHandlerTest {
             mocked.verify(() -> HttpHelper.get(any(), urlCaptor.capture(), any()), org.mockito.Mockito.atLeastOnce());
             assertThat(urlCaptor.getAllValues())
                     .anyMatch(u -> u.contains("/v3/refund/domestic/refunds/" + REFUND_NO));
+        }
+    }
+
+    // =========================================================================
+    // 单笔退款查询状态映射（S_FAIL 仅限渠道终态失败）
+    // =========================================================================
+
+    @Test
+    @DisplayName("退款 CLOSED（退款关闭，官方定义即退款失败）→ S_FAIL")
+    void refundClosedFails() throws Exception {
+        assertRefundQueryState("CLOSED", BizState.S_FAIL);
+    }
+
+    @Test
+    @DisplayName("退款 ABNORMAL（官方定义非终态）→ S_WAIT")
+    void refundAbnormalWaits() throws Exception {
+        assertRefundQueryState("ABNORMAL", BizState.S_WAIT);
+    }
+
+    @Test
+    @DisplayName("退款 PROCESSING → S_WAIT（非终态）")
+    void refundProcessingWaits() throws Exception {
+        assertRefundQueryState("PROCESSING", BizState.S_WAIT);
+    }
+
+    private void assertRefundQueryState(String refundStatus, BizState expected) throws Exception {
+        var refund = RefundSnapshot.builder()
+                .refundNo(REFUND_NO).tradeNo(TRADE_NO).amount(30000).build();
+        var ctx = ctx(null, refund);
+        when(ctx.getCallback().getSubOrders(any())).thenReturn(List.of());
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            stubGet(mocked, Map.of("/v3/refund/domestic/refunds",
+                    "{\"status\":\"" + refundStatus + "\"}"));
+
+            var result = new WxpayQueryHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
+
+            assertThat(result.getState()).isEqualTo(expected);
+            assertThat(result.getCode()).isEqualTo(refundStatus);
         }
     }
 }

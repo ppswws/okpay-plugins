@@ -17,13 +17,15 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 
 /**
- * SumapayQueryHandler 查单：status 2 成功（apiNo=tradeId）、3 失败、其余/渠道失败处理中。
+ * SumapayQueryHandler 查单：status 2 成功（apiNo=tradeId）；支付订单查单不使用 S_FAIL——
+ * status 3、其余状态与渠道失败一律 S_WAIT。
  */
 @DisplayName("SumapayQueryHandler 查单")
 class SumapayQueryHandlerTest {
@@ -48,7 +50,7 @@ class SumapayQueryHandlerTest {
     }
 
     @Test
-    @DisplayName("status=3 → S_FAIL，附渠道错误码")
+    @DisplayName("status=3 → S_WAIT（支付订单无失败终态），msg 附渠道错误码")
     void statusFail() throws Exception {
         var ctx = ctx();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -58,14 +60,13 @@ class SumapayQueryHandlerTest {
                     "errorCode", "TRADE_CLOSED")));
             var result = new SumapayQueryHandler().handle(ctx, req());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
-            assertThat(result.getCode()).isEqualTo("ORDER_FAIL");
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getMsg()).isEqualTo("TRADE_CLOSED");
         }
     }
 
     @Test
-    @DisplayName("status 其他（处理中）→ S_ING")
+    @DisplayName("status 其他（处理中）→ S_WAIT")
     void statusPending() throws Exception {
         var ctx = ctx();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -74,27 +75,27 @@ class SumapayQueryHandlerTest {
                     "tradeSum", "1.00", "status", "1", "requestTime", "20260823120000")));
             var result = new SumapayQueryHandler().handle(ctx, req());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("QUERY_PENDING");
         }
     }
 
     @Test
-    @DisplayName("result != 00000 → S_ING（渠道查询失败视为未终态）")
+    @DisplayName("result != 00000 → S_WAIT（渠道查询失败视为未终态）")
     void channelQueryFailKeepsIng() throws Exception {
         var ctx = ctx();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubApi(mocked, signedResp(Map.of("result", "2003")));
             var result = new SumapayQueryHandler().handle(ctx, req());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("QUERY_FAIL");
             assertThat(result.getMsg()).isEqualTo("订单查询失败[2003]");
         }
     }
 
     @Test
-    @DisplayName("渠道异常（502）→ S_ING QUERY_ERROR")
+    @DisplayName("渠道异常（502）→ S_WAIT QUERY_ERROR")
     void channelErrorKeepsIng() {
         var ctx = ctx();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -103,20 +104,20 @@ class SumapayQueryHandlerTest {
                             "<html><body>502</body></html>".getBytes(StandardCharsets.UTF_8), "req", 10, 1));
             var result = new SumapayQueryHandler().handle(ctx, req());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("QUERY_ERROR");
         }
     }
 
     @Test
-    @DisplayName("退款查询未注册 → UNSUPPORTED（丰付无退款查询接口）")
+    @DisplayName("退款查询未注册 → IllegalStateException（丰付无退款查询接口，宿主按能力门控）")
     void refundQueryUnsupported() {
         var ctx = ctx();
-        var result = new SumapayQueryHandler().handle(ctx,
-                BizRequest.builder().bizType(BizType.T_REF).build());
 
-        assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
-        assertThat(result.getCode()).isEqualTo("UNSUPPORTED");
+        assertThatThrownBy(() -> new SumapayQueryHandler().handle(ctx,
+                BizRequest.builder().bizType(BizType.T_REF).build()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("T_REF");
     }
 
     // =========================================================================

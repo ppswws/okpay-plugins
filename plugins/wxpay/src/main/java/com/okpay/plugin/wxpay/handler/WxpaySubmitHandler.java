@@ -31,14 +31,14 @@ public class WxpaySubmitHandler extends AbstractBizHandler {
         var tradeNo = refund.getTradeNo();
         // 业务前置（非契约守卫）：订单无上游交易号（未支付）拒绝退款
         if (order.getApiTradeNo() == null || order.getApiTradeNo().isBlank())
-            return Responses.fail("PARAM_ERROR", "订单无上游交易号");
+            return Responses.wait("PARAM_ERROR", "订单无上游交易号");
 
         try {
-            // 合单退款：合单订单才查子单 → 逐子单提交（出参语义：全退 S_OK / 首败 S_FAIL / 部分 S_ING）；
+            // 合单退款：合单订单才查子单 → 逐子单提交（出参语义：全退 S_OK / 首败 S_FAIL / 部分 S_WAIT）；
             // is_combine=1 但子单缺失 = 数据不一致，拒退不静默降级单笔
             if (order.isCombine()) {
                 var subs = Sdk.getSubOrders(ctx, tradeNo);
-                if (subs.isEmpty()) return Responses.fail("REFUND_ERROR", "合单订单子单数据缺失");
+                if (subs.isEmpty()) return Responses.wait("REFUND_ERROR", "合单订单子单数据缺失");
                 return Sdk.refundCombine(ctx, refund, subs, WxpaySubmitHandler::submitSubRefund);
             }
 
@@ -53,7 +53,7 @@ public class WxpaySubmitHandler extends AbstractBizHandler {
             amount.put("currency", "CNY");
             body.put("amount", amount);
             body.put("reason", refundReason(refund));
-            body.put("notify_url", getNotifyDomain(ctx) + "/pay/refundnotify/" + refund.getRefundNo());
+            body.put("notify_url", PaymentPaths.refundNotify(getNotifyDomain(ctx), refund.getRefundNo()));
 
             var result = cfg.client().post("/v3/refund/domestic/refunds",
                     HttpHelper.MAPPER.valueToTree(body), ctx);
@@ -61,17 +61,18 @@ public class WxpaySubmitHandler extends AbstractBizHandler {
             if ("SUCCESS".equals(status)) {
                 return Responses.ok(result.body().path("transaction_id").asString(null), result);
             }
-            // 受理即终态的失败（渠道侧不再变化）直接判失败退出查单池，与查单映射一致
-            if ("CLOSED".equals(status) || "ABNORMAL".equals(status)) {
-                return Responses.fail(status, "CLOSED".equals(status) ? "退款已关闭" : "退款异常，需人工处理", result);
-            }
-            return Responses.ing(status, "退款处理中", result);
+            // CLOSED 是唯一文档明确的失败终态；ABNORMAL 为非终态（可走异常退款），不能判死
+            if ("CLOSED".equals(status))
+                return Responses.fail(status, "退款已关闭", result);
+            if ("ABNORMAL".equals(status))
+                return Responses.wait(status, "退款异常，需人工处理", result);
+            return Responses.wait(status, "退款处理中", result);
         } catch (WechatPayException e) {
             log.debug("微信退款提交状态未知, refundNo={}, code={}", refund.getRefundNo(), e.code());
-            return Responses.ing("REFUND_ERROR", e.getMessage());
+            return Responses.wait("REFUND_ERROR", e.getMessage());
         } catch (Exception e) {
             log.debug("微信退款提交状态未知, refundNo={}, exception={}", refund.getRefundNo(), e.getClass().getSimpleName());
-            return Responses.ing("REFUND_ERROR", e.getMessage());
+            return Responses.wait("REFUND_ERROR", e.getMessage());
         }
     }
 
@@ -81,7 +82,9 @@ public class WxpaySubmitHandler extends AbstractBizHandler {
 
     /**
      * 单子单退款提交（Sdk.refundCombine 子提交器）：SUCCESS → S_OK（apiNo=渠道交易号）/
-     * PROCESSING 受理中 → S_ING / 其余状态或微信确定性拒绝 → S_FAIL。out_refund_no=refundNo_序号 唯一（重跑幂等）。
+     * PROCESSING 受理中 / ABNORMAL（退款异常，官方定义为非终态，可走异常退款）→ S_WAIT /
+     * CLOSED（退款关闭，官方确认即退款失败）→ S_FAIL；其余状态、微信明确拒绝、网络未知 → S_WAIT
+     * （受理与否不能由错误响应判定，由查单续退兜底）。out_refund_no=refundNo_序号 唯一（重跑幂等）。
      */
     static BizResult submitSubRefund(InvokeContext ctx, com.okpay.plugin.model.RefundSnapshot refund,
                                      SubOrderSnapshot sub, long quota, int idx) {
@@ -97,25 +100,29 @@ public class WxpaySubmitHandler extends AbstractBizHandler {
             amount.put("currency", "CNY");
             body.put("amount", amount);
             body.put("reason", refundReason(refund));
-            body.put("notify_url", getNotifyDomain(ctx) + "/pay/refundnotify/" + refund.getRefundNo());
+            body.put("notify_url", PaymentPaths.refundNotify(getNotifyDomain(ctx), refund.getRefundNo()));
             var result = cfg.client().post("/v3/refund/domestic/refunds",
                     HttpHelper.MAPPER.valueToTree(body), ctx);
             var status = result.body().path("status").asString("");
             if ("SUCCESS".equals(status)) return Responses.ok(result.body().path("transaction_id").asString(null), result);
-            if ("PROCESSING".equals(status)) return Responses.ing(status, "退款处理中", result);
-            // 确定性拒绝（其余状态）→ 计入失败；首单失败且无任何成功 → S_FAIL
-            log.debug("合单退款子单被拒, refundNo={}, sub={}, status={}",
+            if ("CLOSED".equals(status))
+                return Responses.fail(status, "退款已关闭", result);
+            if ("ABNORMAL".equals(status))
+                return Responses.wait(status, "退款异常，需人工处理", result);
+            // PROCESSING／未知状态：本轮结果未定，靠退款通知/查单续退
+            log.debug("合单退款子单处理中, refundNo={}, sub={}, status={}",
                     refund.getRefundNo(), sub.getSubTradeNo(), status);
-            return Responses.fail("REFUND_FAIL", status, result);
+            return Responses.wait(status, "退款处理中", result);
         } catch (WechatPayException e) {
-            log.debug("合单退款子单拒绝, refundNo={}, sub={}, code={}",
+            // 渠道错误响应无法判定退款是否受理（如原单已受理重复提交），结果未定
+            log.debug("合单退款子单状态未知, refundNo={}, sub={}, code={}",
                     refund.getRefundNo(), sub.getSubTradeNo(), e.code());
-            return Responses.fail("REFUND_FAIL", e.getMessage());
+            return Responses.wait("REFUND_ERROR", e.getMessage());
         } catch (Exception e) {
-            // 网络/未知：本轮未知，S_ING 靠查单续退
+            // 网络/未知：本轮未知，S_WAIT 靠查单续退
             log.debug("合单退款子单状态未知, refundNo={}, sub={}, exception={}",
                     refund.getRefundNo(), sub.getSubTradeNo(), e.getClass().getSimpleName());
-            return Responses.ing("REFUND_ERROR", e.getMessage());
+            return Responses.wait("REFUND_ERROR", e.getMessage());
         }
     }
 

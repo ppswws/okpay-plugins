@@ -22,6 +22,9 @@ import java.util.List;
  * 余额不足时 IFSU0040 付款至二级户（"F"+退款单号）→ Refund_do（requestId=退款单号）。
  * 当日订单直接 Refund_do。先查余额再转入：退款失败重试时若余额已充足则跳过转入，
  * 避免同一笔退款重复付款至二级户。</p>
+ *
+ * <p>结果判定：受理中码为 S_WAIT；Refund_do 的可解析业务拒绝码为 S_FAIL；
+ * 传输/HTTP/验签失败及转入受理中（重试可能重复转入）一律 S_WAIT，交人工处理。</p>
  */
 public class SumapaySubmitHandler extends AbstractBizHandler {
 
@@ -29,9 +32,6 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
 
     private static final ZoneId SHANGHAI = ZoneId.of("Asia/Shanghai");
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyyMMdd");
-
-    /** 受理中（已受理，非终态） */
-    private static final List<String> ACCEPTED = List.of("00001", "200300305", "200300304");
 
     private static final List<String> BALANCE_REQ_FIELDS = List.of(
             "requestType", "requestId", "merchantCode", "userIdIdentity");
@@ -64,13 +64,13 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
                     fundToSecond(ctx, cfg, refundNo, refund.getAmount());
             }
             return doRefund(ctx, cfg, order, refund);
-        } catch (ChannelRejectedException e) {
-            // 渠道业务拒绝（余额查询/付款至二级户失败）：退款未提交，终态失败
+        } catch (FailureException e) {
+            // 渠道明确业务拒绝（余额查询失败/付款至二级户拒绝）：退款未提交，终态失败
             return Responses.fail("REFUND_FAIL", e.getMessage());
         } catch (Exception e) {
-            // 传输/HTTP/验签失败：退款结果未知，保持处理中待重试
+            // 传输/HTTP/验签失败或转入已受理：结果未知或不可重复提交，保持未定待人工/通知兜底
             log.debug("丰付退款提交状态未知, exception={}", e.getClass().getSimpleName());
-            return Responses.ing("REFUND_ERROR", e.getMessage());
+            return Responses.wait("REFUND_ERROR", e.getMessage());
         }
     }
 
@@ -78,7 +78,7 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
     // 二级户余额查询（IFSU0043）
     // =========================================================================
 
-    /** 返回二级户可用余额（分）；渠道业务失败抛 {@link ChannelRejectedException} */
+    /** 返回二级户可用余额（分）；渠道明确业务拒绝抛 {@link FailureException} */
     private static long queryBalance(InvokeContext ctx, SumapayConfig cfg, String refundNo) throws Exception {
         var params = new LinkedHashMap<String, String>();
         params.put("requestType", "IFSU0043");
@@ -90,11 +90,14 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
                 BALANCE_REQ_FIELDS, "signature", BALANCE_RESP_FIELDS, "signature");
         var m = PaymentUtils.parseJsonMap(SumapayApi.decode(resp));
         var result = m.getOrDefault("result", "");
-        if (!"00000".equals(result))
-            throw new ChannelRejectedException("二级户余额查询失败[" + result + "]");
+        if (!"00000".equals(result)) {
+            if (SumapayErrors.explicitFailure(result))
+                throw new FailureException("二级户余额查询失败[" + result + "]");
+            throw new ExpectedFailureException("二级户余额查询未完成[" + result + "]");
+        }
         var availSum = m.get("availSum");
         if (availSum == null || availSum.isBlank())
-            throw new ChannelRejectedException("二级户余额查询失败[余额为空]");
+            throw new ExpectedFailureException("二级户余额查询失败[余额为空]");
         return toCents(availSum);
     }
 
@@ -118,10 +121,12 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
         var m = PaymentUtils.parseJsonMap(SumapayApi.decode(resp));
         var result = m.getOrDefault("result", "");
         if ("00000".equals(result)) return;
-        // 受理中的转入无法确认到账，重试可能重复转入 → 直接终止退款
-        if (ACCEPTED.contains(result))
-            throw new ChannelRejectedException("付款至二级户已受理，请稍后再尝试退款");
-        throw new ChannelRejectedException("付款至二级户失败[" + result + "]");
+        // 受理中的转入无法确认到账，重试可能重复转入 → 不判终态失败，留待人工核对
+        if (SumapayErrors.accepted(result))
+            throw new ExpectedFailureException("付款至二级户已受理，请稍后再尝试退款");
+        if (SumapayErrors.explicitFailure(result))
+            throw new FailureException("付款至二级户失败[" + result + "]");
+        throw new ExpectedFailureException("付款至二级户结果未知[" + result + "]");
     }
 
     // =========================================================================
@@ -136,7 +141,7 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
         params.put("originalRequestId", order.getTradeNo());
         params.put("tradeProcess", cfg.getAppid());
         params.put("fund", toYuan(refund.getAmount()));
-        params.put("noticeUrl", cfg.getNotifyDomain() + "/pay/refundnotify/" + refundNo);
+        params.put("noticeUrl", PaymentPaths.refundNotify(cfg.getNotifyDomain(), refundNo));
         params.put("reason", "协商退款");
         params.put("refundMothed", "1");
         params.put("remark", refundNo);
@@ -145,15 +150,16 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
                 REFUND_REQ_FIELDS, "mersignature", REFUND_RESP_FIELDS, "resultSignature");
         var m = PaymentUtils.parseJsonMap(SumapayApi.decode(resp));
         var result = m.getOrDefault("result", "");
-        if ("00000".equals(result))
-            return Responses.ok(refundNo, resp);
-        if (ACCEPTED.contains(result))
-            return Responses.ing(result, "退款请求已受理，正在处理", resp);
-        if ("200300162".equals(result))
-            return Responses.fail(result, "账号余额不足[200300162]", resp);
+        // 丰付退款：00000/00001 仅表示受理成功，实际结果以异步通知/查询为准
+        if (SumapayErrors.accepted(result))
+            return Responses.wait(result, "退款请求已受理，正在处理", resp);
         if (result.isBlank())
-            return Responses.fail("REFUND_FAIL", "退款返回解析失败", resp);
-        return Responses.fail(result, "退款失败[" + result + "]", resp);
+            return Responses.wait("REFUND_FAIL", "退款返回解析失败", resp);
+        if (SumapayErrors.explicitFailure(result))
+            return Responses.fail(result,
+                    "200300162".equals(result) ? "账号余额不足[200300162]" : "退款失败[" + result + "]", resp);
+        // 系统异常/参数/配置/未知码：保持结果未定，交通知/人工
+        return Responses.wait(result, "退款处理中[" + result + "]", resp);
     }
 
     // =========================================================================
@@ -165,10 +171,5 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
         // 单号格式 [PRT]yyyyMMddHHmmss+序号，日期位 1-8
         var orderDate = order.getTradeNo().substring(1, 9);
         return orderDate.equals(LocalDate.now(SHANGHAI).format(DATE));
-    }
-
-    /** 渠道业务拒绝（余额查询/付款至二级户返回非成功码）：退款未提交，终态失败 */
-    private static final class ChannelRejectedException extends RuntimeException {
-        private ChannelRejectedException(String message) { super(message); }
     }
 }

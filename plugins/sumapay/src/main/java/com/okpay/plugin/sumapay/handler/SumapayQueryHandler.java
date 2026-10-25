@@ -15,9 +15,8 @@ import java.util.List;
 /**
  * 丰付支付订单查询处理器（SearchOrderAction_merSingleQuery）。
  *
- * <p>丰付无退款查询接口，T_REF 未注册由 {@link AbstractBizHandler} 统一返回
- * {@link Responses#unsupported}。查单结果与退款一致以处理中兜底：渠道失败/状态未知
- * 均视为未终态，由宿主后续重查。</p>
+ * <p>丰付无退款查询接口，T_REF 未注册（能力门控）。支付订单查单不使用 S_FAIL：
+ * status=3（渠道订单失败）/渠道失败/状态未知一律结果未定，由宿主后续重查。</p>
  */
 public class SumapayQueryHandler extends AbstractBizHandler {
 
@@ -52,18 +51,17 @@ public class SumapayQueryHandler extends AbstractBizHandler {
             var m = PaymentUtils.parseJsonMap(SumapayApi.decode(resp));
             var result = m.getOrDefault("result", "");
             if (!"00000".equals(result))
-                return Responses.ing("QUERY_FAIL", "订单查询失败[" + result + "]", resp);
+                return Responses.wait("QUERY_FAIL", "订单查询失败[" + result + "]", resp);
             var status = m.getOrDefault("status", "");
             return switch (status) {
                 case "2" -> Responses.result(BizState.S_OK)
                         .apiNo(m.get("tradeId")).code(result).traced(resp).build();
-                case "3" -> Responses.fail("ORDER_FAIL",
-                        m.getOrDefault("errorCode", "订单失败"), resp);
-                default -> Responses.ing("QUERY_PENDING", "订单处理中", resp);
+                case "3" -> Responses.waitMsg(m.getOrDefault("errorCode", "订单失败"), resp);
+                default -> Responses.wait("QUERY_PENDING", "订单处理中", resp);
             };
         } catch (Exception e) {
             log.debug("丰付订单查询暂时失败, exception={}", e.getClass().getSimpleName());
-            return Responses.ing("QUERY_ERROR", e.getMessage());
+            return Responses.wait("QUERY_ERROR", e.getMessage());
         }
     }
 }

@@ -2,6 +2,8 @@ package com.okpay.plugin.sumapay.util;
 
 import com.okpay.plugin.model.InvokeContext;
 import com.okpay.plugin.sdk.HttpHelper;
+import com.okpay.plugin.sdk.ExpectedFailureException;
+import com.okpay.plugin.sdk.ResultUnknownException;
 import com.okpay.plugin.sdk.Sdk;
 import com.okpay.plugin.sumapay.TestKeys;
 import org.junit.jupiter.api.DisplayName;
@@ -25,7 +27,7 @@ import static org.mockito.Mockito.mockStatic;
 
 /**
  * 丰付接口调用封装：GBK 表单编码、GBK 响应解码（U+FFFD 兜底）、
- * HTTP/解析/验签失败归因渠道统一文案。
+ * HTTP/解析失败归结果未知、验签失败归预期失败。
  */
 @DisplayName("SumapayApi 接口封装")
 class SumapayApiTest {
@@ -89,7 +91,7 @@ class SumapayApiTest {
     // =========================================================================
 
     @Test
-    @DisplayName("post 传输层失败（IOException）→ 渠道统一文案，无响应轨迹")
+    @DisplayName("post 传输层失败（IOException）→ ResultUnknownException 渠道统一文案，无响应轨迹")
     void postTransportFailure() {
         var ctx = InvokeContext.builder().build();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -98,13 +100,13 @@ class SumapayApiTest {
             assertThatThrownBy(() -> SumapayApi.post(ctx, "http://x", Map.of("a", "1"),
                     TestKeys.PRIVATE_KEY, TestKeys.PUBLIC_KEY, SIGN_KEYS, "signature",
                     VERIFY_KEYS, "signature"))
-                    .isInstanceOf(Sdk.BizFailException.class)
+                    .isInstanceOf(ResultUnknownException.class)
                     .hasMessage("接口通道服务异常，未返回预期响应！");
         }
     }
 
     @Test
-    @DisplayName("post HTTP 层失败（502）→ 渠道统一文案含状态码")
+    @DisplayName("post HTTP 层失败（502）→ ResultUnknownException 渠道统一文案含状态码")
     void postHttpFailure() {
         var ctx = InvokeContext.builder().build();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -115,13 +117,13 @@ class SumapayApiTest {
             assertThatThrownBy(() -> SumapayApi.post(ctx, "http://x", Map.of("a", "1"),
                     TestKeys.PRIVATE_KEY, TestKeys.PUBLIC_KEY, SIGN_KEYS, "signature",
                     VERIFY_KEYS, "signature"))
-                    .isInstanceOf(Sdk.BizFailException.class)
+                    .isInstanceOf(ResultUnknownException.class)
                     .hasMessage("接口通道服务异常，未返回预期响应！HTTP Status Code:502");
         }
     }
 
     @Test
-    @DisplayName("post 垃圾响应（非 JSON）→ 归因渠道统一文案")
+    @DisplayName("post 垃圾响应（非 JSON）→ ResultUnknownException 归因渠道统一文案")
     void postGarbageBody() {
         var ctx = InvokeContext.builder().build();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -131,13 +133,13 @@ class SumapayApiTest {
             assertThatThrownBy(() -> SumapayApi.post(ctx, "http://x", Map.of("a", "1"),
                     TestKeys.PRIVATE_KEY, TestKeys.PUBLIC_KEY, SIGN_KEYS, "signature",
                     VERIFY_KEYS, "signature"))
-                    .isInstanceOf(Sdk.BizFailException.class)
+                    .isInstanceOf(ResultUnknownException.class)
                     .hasMessage("接口通道服务异常，未返回预期响应！HTTP Status Code:200");
         }
     }
 
     @Test
-    @DisplayName("post 响应验签失败 → 返回验签失败，轨迹携带")
+    @DisplayName("post 响应验签失败 → ExpectedFailureException 验签失败，响应轨迹可沿异常链提取")
     void postVerifyFail() throws Exception {
         var ctx = InvokeContext.builder().build();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -146,8 +148,14 @@ class SumapayApiTest {
             assertThatThrownBy(() -> SumapayApi.post(ctx, "http://x", Map.of("a", "1"),
                     TestKeys.PRIVATE_KEY, TestKeys.PUBLIC_KEY, SIGN_KEYS, "signature",
                     VERIFY_KEYS, "signature"))
-                    .isInstanceOf(Sdk.BizFailException.class)
-                    .hasMessage("返回验签失败");
+                    .isInstanceOf(ExpectedFailureException.class)
+                    .isNotInstanceOf(ResultUnknownException.class)
+                    .hasMessage("返回验签失败")
+                    .satisfies(e -> {
+                        var stats = Sdk.statsOf(e);
+                        assertThat(stats).isNotNull();
+                        assertThat(stats.getReqBody()).isEqualTo("req");
+                    });
         }
     }
 

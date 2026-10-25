@@ -1,6 +1,5 @@
 package com.okpay.plugin.sumapay.handler;
 
-import com.okpay.plugin.enums.BizType;
 import static com.okpay.plugin.sdk.PaymentUtils.toCents;
 
 import com.okpay.plugin.model.*;
@@ -34,36 +33,36 @@ public class SumapayNotifyHandler {
     // 支付通知
     // =========================================================================
 
-    public PageResponse notify(InvokeContext ctx) {
+    public NotifyResponse notify(InvokeContext ctx) {
         var order = ctx.getOrder();
         var cfg = SumapayConfig.from(ctx);
         var params = parseNotifyForm(ctx);
         if (!SumapaySignUtil.verify(cfg.getAppkey(), SumapaySignUtil.concat(params, ORDER_NOTIFY_FIELDS),
                 params.get("resultSignature")))
-            return Responses.notifyFail("sign_error", BizType.T_PAY);
+            return Notify.fail("sign_error");
         if (!"2".equals(params.get("status")))
-            return Responses.notifyFail("fail", BizType.T_PAY);
+            return Notify.fail("fail");
         if (!order.getTradeNo().equals(params.get("requestId")))
-            return Responses.notifyFail("fail", BizType.T_PAY);
+            return Notify.fail("fail");
         // 金额校验仅在有 totalPrice 时进行（部分场景渠道不返回金额字段）
         var totalPrice = params.get("totalPrice");
         if (totalPrice != null && !totalPrice.isBlank() && order.getReal() != toCents(totalPrice))
-            return Responses.notifyFail("amount_mismatch", BizType.T_PAY);
+            return Notify.fail("amount_mismatch");
         var buyer = "wechatpay".equals(params.get("bankCode"))
                 ? params.get("openId") : params.get("alipayUserId");
         try {
             Sdk.completeOrderOk(ctx, order.getTradeNo(), params.get("channelSn"), buyer);
         } catch (Exception e) {
-            return Responses.notifyFail("fail", BizType.T_PAY);
+            return Notify.fail("fail");
         }
-        return Responses.notifyOk("success", BizType.T_PAY);
+        return Notify.ok("success");
     }
 
     // =========================================================================
     // 退款通知
     // =========================================================================
 
-    public PageResponse refundNotify(InvokeContext ctx) {
+    public NotifyResponse refundNotify(InvokeContext ctx) {
         // 契约：notify 回调实体恒非空（同 notify）；refund.tradeNo 恒非空
         var refund = ctx.getRefund();
         var cfg = SumapayConfig.from(ctx);
@@ -75,35 +74,35 @@ public class SumapayNotifyHandler {
                 ? (verifyMerchant(cfg, params) || verifyRefund(cfg, params))
                 : (verifyRefund(cfg, params) || verifyMerchant(cfg, params));
         if (!verifyOk)
-            return Responses.notifyFail("sign_error", BizType.T_REF);
+            return Notify.fail("sign_error");
         var requestId = params.get("requestId");
         if (requestId != null && !requestId.isBlank() && !refund.getRefundNo().equals(requestId))
-            return Responses.notifyFail("refund_mismatch", BizType.T_REF);
+            return Notify.fail("refund_mismatch");
         var refundResult = params.get("refundResult");
         try {
-            switch (refundResult) {
+            switch (refundResult == null ? "" : refundResult) {
                 case "0" -> Sdk.completeRefundOk(ctx, refund.getRefundNo(), requestId, null);
                 case "1" -> Sdk.completeRefundFail(ctx, refund.getRefundNo(), refundResult, null);
-                default -> Sdk.completeRefundIng(ctx, refund.getRefundNo(), requestId, refundResult, null);
+                default -> Sdk.completeRefundWait(ctx, refund.getRefundNo(), requestId, refundResult, null);
             }
         } catch (Exception e) {
-            return Responses.notifyFail("complete_error", BizType.T_REF);
+            return Notify.fail("complete_error");
         }
-        return Responses.notifyOk("success", BizType.T_REF);
+        return Notify.ok("success");
     }
 
     // =========================================================================
     // 付款至二级户通知
     // =========================================================================
 
-    public PageResponse payMerchantNotify(InvokeContext ctx) {
+    public NotifyResponse payMerchantNotify(InvokeContext ctx) {
         var cfg = SumapayConfig.from(ctx);
         var params = parseNotifyForm(ctx);
         if (!SumapaySignUtil.verify(cfg.getAppkey(), SumapaySignUtil.concat(params, PAY_MERCHANT_NOTIFY_FIELDS),
                 params.get("signature")))
-            return Responses.notifyFail("sign_error", BizType.T_NONE);
+            return Notify.fail("sign_error");
         // 仅确认签收，不推进任何业务状态（转入结果由后续退款查单/重试兜底）
-        return Responses.notifyOk("success", BizType.T_NONE);
+        return Notify.ok("success");
     }
 
     // =========================================================================

@@ -108,7 +108,12 @@ public final class SumapaySignUtil {
                       .replaceAll("-----END [A-Z0-9 ]+-----", "")
                       .replaceAll("\\s", "")
                 : key.replaceAll("\\s", "");
-        return Base64.getDecoder().decode(base64);
+        try {
+            return Base64.getDecoder().decode(base64);
+        } catch (IllegalArgumentException e) {
+            // 密钥格式错误属配置失败，不是插件缺陷
+            throw new ExpectedFailureException("密钥格式非法", e);
+        }
     }
 
     /** 极简 DER 解析（仅 PKCS1 密钥结构需要）：SEQUENCE 展开子节点，其余只取内容。 */

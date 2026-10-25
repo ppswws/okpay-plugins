@@ -1,6 +1,5 @@
 package com.okpay.plugin.joinpay.handler;
 
-import com.okpay.plugin.enums.BizType;
 import static com.okpay.plugin.sdk.PaymentUtils.toCents;
 
 import com.okpay.plugin.model.*;
@@ -41,86 +40,85 @@ public class JoinpayNotifyHandler {
     // 支付通知
     // =========================================================================
 
-    public PageResponse payNotify(InvokeContext ctx) {
+    public NotifyResponse payNotify(InvokeContext ctx) {
         var cfg = JoinpayConfig.from(ctx);
         var params = parseNotifyBody(ctx);
         if (params.isEmpty() || !JoinpaySignUtil.verify(params, ORDER_NOTIFY_FIELDS, cfg.getAppkey()))
-            return Responses.notifyFail(params.isEmpty() ? "invalid_notify_params" : "sign_error", BizType.T_PAY);
+            return Notify.fail(params.isEmpty() ? "invalid_notify_params" : "sign_error");
         var status = params.getOrDefault("r6_Status", "");
         if (!"100".equals(status))
-            return Responses.notifyFail("status=" + status, BizType.T_PAY);
+            return Notify.fail("status=" + status);
         // 契约：notify 回调实体恒非空（PluginPageService.dispatch 无单据即 404）
         var order = ctx.getOrder();
         if (!order.getTradeNo().equals(params.get("r2_OrderNo")))
-            return Responses.notifyFail("order_mismatch", BizType.T_PAY);
+            return Notify.fail("order_mismatch");
         if (order.getReal() != toCents(params.getOrDefault("r3_Amount", "0")))
-            return Responses.notifyFail("amount_mismatch", BizType.T_PAY);
+            return Notify.fail("amount_mismatch");
         try {
             Sdk.completeOrderOk(ctx, order.getTradeNo(),
                     params.get("r7_TrxNo"), params.get("rd_OpenId"));
         } catch (Exception e) {
-            return Responses.notifyFail("fail", BizType.T_PAY);
+            log.error("支付通知推进订单失败, tradeNo={}", order.getTradeNo(), e);
+            return Notify.fail("fail");
         }
-        return Responses.notifyOk("success", BizType.T_PAY);
+        return Notify.ok("success");
     }
 
     // =========================================================================
     // 退款通知
     // =========================================================================
 
-    public PageResponse refundNotify(InvokeContext ctx) {
+    public NotifyResponse refundNotify(InvokeContext ctx) {
         var cfg = JoinpayConfig.from(ctx);
         var params = parseNotifyBody(ctx);
         if (params.isEmpty() || !JoinpaySignUtil.verify(params, REFUND_NOTIFY_FIELDS, cfg.getAppkey()))
-            return Responses.notifyFail(params.isEmpty() ? "invalid_notify_params" : "sign_error", BizType.T_REF);
+            return Notify.fail(params.isEmpty() ? "invalid_notify_params" : "sign_error");
         var status = params.getOrDefault("ra_Status", "");
         var refund = ctx.getRefund();
         if (!refund.getRefundNo().equals(params.get("r3_RefundOrderNo")))
-            return Responses.notifyFail("refund_mismatch", BizType.T_REF);
+            return Notify.fail("refund_mismatch");
         if (refund.getAmount() != toCents(params.getOrDefault("r4_RefundAmount", "0")))
-            return Responses.notifyFail("amount_mismatch", BizType.T_REF);
+            return Notify.fail("amount_mismatch");
         try {
             switch (status) {
                 case "100" -> Sdk.completeRefundOk(ctx, refund.getRefundNo(), params.get("r5_RefundTrxNo"), params.get("rc_CodeMsg"));
                 case "101" -> Sdk.completeRefundFail(ctx, refund.getRefundNo(), status, params.get("rc_CodeMsg"));
-                default -> Sdk.completeRefundIng(ctx, refund.getRefundNo(), params.get("r5_RefundTrxNo"), status, params.get("rc_CodeMsg"));
+                default -> Sdk.completeRefundWait(ctx, refund.getRefundNo(), params.get("r5_RefundTrxNo"), status, params.get("rc_CodeMsg"));
             }
         } catch (Exception e) {
-            return Responses.notifyFail("fail", BizType.T_REF);
+            log.error("退款通知推进退款失败, refundNo={}", refund.getRefundNo(), e);
+            return Notify.fail("fail");
         }
-        return "100".equals(status)
-                   ? Responses.notifyOk("success", BizType.T_REF)
-                   : Responses.notifyFail("status=" + status, BizType.T_REF);
+        return "100".equals(status) ? Notify.ok("success") : Notify.fail("status=" + status);
     }
 
     // =========================================================================
     // 打款通知
     // =========================================================================
 
-    public PageResponse transferNotify(InvokeContext ctx) {
+    public NotifyResponse transferNotify(InvokeContext ctx) {
         var cfg = JoinpayConfig.from(ctx);
         var params = parseNotifyBody(ctx);
         if (params.isEmpty() || !JoinpaySignUtil.verify(params, TRANSFER_NOTIFY_FIELDS, cfg.getAppkey()))
-            return Responses.notifyFail(params.isEmpty() ? "invalid_notify_params" : "sign_error", BizType.T_XFER);
+            return Notify.fail(params.isEmpty() ? "invalid_notify_params" : "sign_error");
         var status = params.getOrDefault("status", "");
         var transfer = ctx.getTransfer();
         if (!transfer.getTradeNo().equals(params.get("merchantOrderNo")))
-            return Responses.notifyFail("transfer_mismatch", BizType.T_XFER);
+            return Notify.fail("transfer_mismatch");
         try {
             switch (status) {
                 case "205" -> Sdk.completeTransferOk(ctx, transfer.getTradeNo(),
                         params.get("platformSerialNo"), params.get("errorCodeDesc"));
                 case "204","208","214" -> Sdk.completeTransferFail(ctx, transfer.getTradeNo(),
                         params.get("errorCode"), params.get("errorCodeDesc"));
-                default -> Sdk.completeTransferIng(ctx, transfer.getTradeNo(),
+                default -> Sdk.completeTransferWait(ctx, transfer.getTradeNo(),
                         params.get("platformSerialNo"), params.get("errorCode"), params.get("errorCodeDesc"));
             }
         } catch (Exception e) {
-            return Responses.notifyFail("fail", BizType.T_XFER);
+            log.error("打款通知推进打款失败, tradeNo={}", transfer.getTradeNo(), e);
+            return Notify.fail("fail");
         }
-        return "205".equals(status)
-                   ? Responses.notifyOk("success", BizType.T_XFER)
-                   : Responses.notifyFail("status=" + status, BizType.T_XFER);
+        return "205".equals(status) ? Notify.ok("success") : Notify.fail("status=" + status);
     }
 
     // =========================================================================

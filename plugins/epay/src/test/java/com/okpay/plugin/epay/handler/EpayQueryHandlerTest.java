@@ -46,22 +46,22 @@ class EpayQueryHandlerTest {
     }
 
     @Test
-    @DisplayName("code 非成功 → S_ING")
-    void nonSuccessCodeIsIng() throws Exception {
+    @DisplayName("code 非成功 → S_WAIT（支付订单查单不使用 S_FAIL）")
+    void nonSuccessCodeIsWait() throws Exception {
         var result = queryWithBody("{\"code\":\"0\",\"msg\":\"订单未支付\"}");
 
-        assertThat(result.getState()).isEqualTo(BizState.S_ING);
+        assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
     }
 
     @Test
-    @DisplayName("渠道查询异常 → S_ING（瞬时失败视为未终态）")
-    void channelErrorKeepsIng() {
+    @DisplayName("渠道查询异常 → S_WAIT（瞬时失败视为未终态）")
+    void channelErrorKeepsWait() {
         var ctx = ctx();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             mocked.when(() -> HttpHelper.get(any(), anyString())).thenThrow(new IOException("timeout"));
             var result = new EpayQueryHandler().handle(ctx, req());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
         }
     }
 

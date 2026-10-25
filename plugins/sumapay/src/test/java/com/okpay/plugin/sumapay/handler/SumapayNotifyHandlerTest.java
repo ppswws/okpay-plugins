@@ -3,6 +3,7 @@ package com.okpay.plugin.sumapay.handler;
 import com.okpay.plugin.HostCallback;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.HttpHelper;
+import com.okpay.plugin.sdk.Notify;
 import com.okpay.plugin.sumapay.TestKeys;
 import com.okpay.plugin.sumapay.util.SumapaySignUtil;
 import org.junit.jupiter.api.DisplayName;
@@ -24,7 +25,7 @@ import static org.mockito.Mockito.verify;
 
 /**
  * SumapayNotifyHandler 通知：GBK 表单解析、双路径退款验签、金额校验、
- * 状态推进（completeOrder/completeRefund）与 ack 文案。
+ * 状态推进（completeOrder/completeRefund）与 ack 文案（Notify.ok / Notify.fail）。
  */
 @DisplayName("SumapayNotifyHandler 通知")
 class SumapayNotifyHandlerTest {
@@ -54,8 +55,7 @@ class SumapayNotifyHandlerTest {
 
         var resp = new SumapayNotifyHandler().notify(ctx);
 
-        assertThat(resp.getType()).isEqualTo("html");
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(resp).isEqualTo(Notify.ok("success"));
         var captor = ArgumentCaptor.forClass(com.okpay.plugin.model.CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         assertThat(captor.getValue().getApiNo()).isEqualTo("FX202608230001");
@@ -87,7 +87,7 @@ class SumapayNotifyHandlerTest {
 
         var resp = new SumapayNotifyHandler().notify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(resp).isEqualTo(Notify.ok("success"));
     }
 
     @Test
@@ -99,7 +99,7 @@ class SumapayNotifyHandlerTest {
 
         var resp = new SumapayNotifyHandler().notify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("amount_mismatch");
+        assertThat(resp).isEqualTo(Notify.fail("amount_mismatch"));
     }
 
     @Test
@@ -112,7 +112,7 @@ class SumapayNotifyHandlerTest {
 
         var resp = new SumapayNotifyHandler().notify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("sign_error");
+        assertThat(resp).isEqualTo(Notify.fail("sign_error"));
         verify(cb, never()).completeBiz(any());
     }
 
@@ -124,7 +124,7 @@ class SumapayNotifyHandlerTest {
 
         var resp = new SumapayNotifyHandler().notify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("fail");
+        assertThat(resp).isEqualTo(Notify.fail("fail"));
     }
 
     @Test
@@ -136,7 +136,7 @@ class SumapayNotifyHandlerTest {
 
         var resp = new SumapayNotifyHandler().notify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("fail");
+        assertThat(resp).isEqualTo(Notify.fail("fail"));
     }
 
     // =========================================================================
@@ -153,7 +153,7 @@ class SumapayNotifyHandlerTest {
 
         var resp = new SumapayNotifyHandler().refundNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(resp).isEqualTo(Notify.ok("success"));
         var captor = ArgumentCaptor.forClass(com.okpay.plugin.model.CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         assertThat(captor.getValue().getState()).isEqualTo(com.okpay.plugin.enums.BizState.S_OK);
@@ -186,7 +186,7 @@ class SumapayNotifyHandlerTest {
 
         var captor = ArgumentCaptor.forClass(com.okpay.plugin.model.CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
-        assertThat(captor.getValue().getState()).isEqualTo(com.okpay.plugin.enums.BizState.S_ING);
+        assertThat(captor.getValue().getState()).isEqualTo(com.okpay.plugin.enums.BizState.S_WAIT);
     }
 
     @Test
@@ -198,7 +198,7 @@ class SumapayNotifyHandlerTest {
 
         var resp = new SumapayNotifyHandler().refundNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("refund_mismatch");
+        assertThat(resp).isEqualTo(Notify.fail("refund_mismatch"));
     }
 
     @Test
@@ -212,7 +212,7 @@ class SumapayNotifyHandlerTest {
 
         var resp = new SumapayNotifyHandler().refundNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("refund_mismatch");
+        assertThat(resp).isEqualTo(Notify.fail("refund_mismatch"));
     }
 
     @Test
@@ -225,7 +225,7 @@ class SumapayNotifyHandlerTest {
 
         var resp = new SumapayNotifyHandler().refundNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("sign_error");
+        assertThat(resp).isEqualTo(Notify.fail("sign_error"));
     }
 
     // =========================================================================
@@ -241,7 +241,7 @@ class SumapayNotifyHandlerTest {
 
         var resp = new SumapayNotifyHandler().payMerchantNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(resp).isEqualTo(Notify.ok("success"));
     }
 
     @Test
@@ -252,7 +252,7 @@ class SumapayNotifyHandlerTest {
 
         var resp = new SumapayNotifyHandler().payMerchantNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("sign_error");
+        assertThat(resp).isEqualTo(Notify.fail("sign_error"));
     }
 
     // =========================================================================

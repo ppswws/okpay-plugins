@@ -8,6 +8,7 @@ import com.okpay.plugin.model.ChannelSnapshot;
 import com.okpay.plugin.model.CompleteBizRequest;
 import com.okpay.plugin.model.ConfigSnapshot;
 import com.okpay.plugin.model.InvokeContext;
+import com.okpay.plugin.model.NotifyResponse;
 import com.okpay.plugin.model.OrderSnapshot;
 import com.okpay.plugin.model.RefundSnapshot;
 import com.okpay.plugin.model.RequestSnapshot;
@@ -28,13 +29,21 @@ import static org.mockito.Mockito.verify;
 
 /**
  * HelipayNotifyHandler 三类通知（支付/退款/打款）：验签与必填缺失 → fail、金额/单号不匹配按语义应答；
- * 打款完成推进失败 → fail 交还渠道重发（查询轮询仍为兜底）。未知单号由宿主拦截（实体缺失即 404，不进插件），
- * 本层不做判空。
+ * 完成推进失败 → fail 交还渠道重发（查询轮询仍为兜底）。未知单号由宿主拦截（实体缺失即 404，不进插件），
+ * 本层不做判空。支付通知无失败终态：渠道状态非 SUCCESS 一律只应答、不写状态。
  */
 @DisplayName("HelipayNotifyHandler 通知应答")
 class HelipayNotifyHandlerTest {
 
     private static final String KEY = "HLKEY1";
+
+    /** 渠道应答原文（Notify.ok / Notify.fail 的内容）。 */
+    private static String ack(NotifyResponse resp) {
+        return switch (resp) {
+            case NotifyResponse.Ok ok -> ok.body();
+            case NotifyResponse.Fail fail -> fail.body();
+        };
+    }
 
     // =========================================================================
     // 支付通知
@@ -49,7 +58,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().payNotify(
                 notifyCtx(cb, orderNotifyBody(params), "T1", 100L));
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(ack(resp)).isEqualTo("success");
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         var req = captor.getValue();
@@ -69,7 +78,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().payNotify(
                 notifyCtx(cb, orderNotifyBody(params), "T1", 100L));
 
-        assertThat(resp.getDataText()).isEqualTo("amount_mismatch");
+        assertThat(ack(resp)).isEqualTo("amount_mismatch");
         verify(cb, never()).completeBiz(any());
     }
 
@@ -81,7 +90,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().payNotify(
                 notifyCtx(mock(HostCallback.class), orderNotifyBody(params), "T1", 100L));
 
-        assertThat(resp.getDataText()).isEqualTo("fail");
+        assertThat(ack(resp)).isEqualTo("fail");
     }
 
     @Test
@@ -92,7 +101,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().payNotify(
                 notifyCtx(mock(HostCallback.class), orderNotifyBody(params), "T1", 100L));
 
-        assertThat(resp.getDataText()).isEqualTo("fail");
+        assertThat(ack(resp)).isEqualTo("fail");
     }
 
     @Test
@@ -104,7 +113,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().payNotify(
                 notifyCtx(mock(HostCallback.class), orderNotifyBody(params), "T1", 100L));
 
-        assertThat(resp.getDataText()).isEqualTo("fail");
+        assertThat(ack(resp)).isEqualTo("fail");
     }
 
     @Test
@@ -117,7 +126,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().payNotify(
                 notifyCtx(cb, orderNotifyBody(params), "T1", 100L));
 
-        assertThat(resp.getDataText()).isEqualTo("fail");
+        assertThat(ack(resp)).isEqualTo("fail");
     }
 
     // =========================================================================
@@ -133,7 +142,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().refundNotify(
                 notifyCtx(cb, refundNotifyBody(params), "T1", 100L, "R1", 100L, null));
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(ack(resp)).isEqualTo("success");
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         assertThat(captor.getValue().getBizType()).isEqualTo(BizType.T_REF);
@@ -151,7 +160,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().refundNotify(
                 notifyCtx(cb, refundNotifyBody(params), "T1", 100L, "R1", 100L, null));
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(ack(resp)).isEqualTo("success");
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         assertThat(captor.getValue().getState()).isEqualTo(BizState.S_FAIL);
@@ -159,8 +168,8 @@ class HelipayNotifyHandlerTest {
     }
 
     @Test
-    @DisplayName("退款通知处理中状态 → 退款处理中推进")
-    void refundNotifyIng() {
+    @DisplayName("退款通知处理中状态 → 退款 S_WAIT 簿记推进")
+    void refundNotifyPending() {
         var params = refundNotify("REFUNDING", "1.00", "R1");
         var cb = mock(HostCallback.class);
 
@@ -169,7 +178,7 @@ class HelipayNotifyHandlerTest {
 
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
-        assertThat(captor.getValue().getState()).isEqualTo(BizState.S_ING);
+        assertThat(captor.getValue().getState()).isEqualTo(BizState.S_WAIT);
     }
 
     @Test
@@ -180,7 +189,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().refundNotify(
                 notifyCtx(mock(HostCallback.class), refundNotifyBody(params), "T1", 100L, "R1", 100L, null));
 
-        assertThat(resp.getDataText()).isEqualTo("refund_mismatch");
+        assertThat(ack(resp)).isEqualTo("refund_mismatch");
     }
 
     @Test
@@ -191,7 +200,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().refundNotify(
                 notifyCtx(mock(HostCallback.class), refundNotifyBody(params), "T1", 100L, "R1", 100L, null));
 
-        assertThat(resp.getDataText()).isEqualTo("amount_mismatch");
+        assertThat(ack(resp)).isEqualTo("amount_mismatch");
     }
 
     // =========================================================================
@@ -207,7 +216,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().transferNotify(
                 notifyCtx(cb, transferNotifyBody(params), null, 0L, null, null, "T1"));
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(ack(resp)).isEqualTo("success");
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         assertThat(captor.getValue().getBizType()).isEqualTo(BizType.T_XFER);
@@ -233,8 +242,8 @@ class HelipayNotifyHandlerTest {
     }
 
     @Test
-    @DisplayName("打款通知处理中（RECEIVE/INIT/DOING）→ 打款处理中推进")
-    void transferNotifyIng() {
+    @DisplayName("打款通知处理中（RECEIVE/INIT/DOING）→ 打款 S_WAIT 簿记推进")
+    void transferNotifyPending() {
         var params = transferNotify("DOING", "T1", "SN1");
         var cb = mock(HostCallback.class);
 
@@ -243,7 +252,7 @@ class HelipayNotifyHandlerTest {
 
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
-        assertThat(captor.getValue().getState()).isEqualTo(BizState.S_ING);
+        assertThat(captor.getValue().getState()).isEqualTo(BizState.S_WAIT);
         assertThat(captor.getValue().getApiNo()).isEqualTo("SN1");
     }
 
@@ -256,7 +265,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().transferNotify(
                 notifyCtx(cb, transferNotifyBody(params), null, 0L, null, null, "T1"));
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(ack(resp)).isEqualTo("success");
         verify(cb, never()).completeBiz(any());
     }
 
@@ -270,7 +279,7 @@ class HelipayNotifyHandlerTest {
         var resp = new HelipayNotifyHandler().transferNotify(
                 notifyCtx(cb, transferNotifyBody(params), null, 0L, null, null, "T1"));
 
-        assertThat(resp.getDataText()).isEqualTo("fail");
+        assertThat(ack(resp)).isEqualTo("fail");
     }
 
     // =========================================================================

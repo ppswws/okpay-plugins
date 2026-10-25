@@ -31,7 +31,7 @@ import static org.mockito.Mockito.mockStatic;
 
 /**
  * SumapaySubmitHandler 退款编排：非当日订单先查二级户余额、不足付款至二级户再退款；
- * 当日订单直退；业务拒绝终态失败、传输失败保持处理中。
+ * 当日订单直退；明确业务拒绝终态失败、传输失败与转入受理中保持未定（S_WAIT）。
  */
 @DisplayName("SumapaySubmitHandler 退款编排")
 class SumapaySubmitHandlerTest {
@@ -52,21 +52,21 @@ class SumapaySubmitHandlerTest {
     // =========================================================================
 
     @Test
-    @DisplayName("当日订单 → 跳过余额查询/付款至二级户，直接 Refund_do")
+    @DisplayName("当日订单 → 跳过余额查询/付款至二级户，直接 Refund_do（00000 受理中）")
     void sameDayRefundsDirectly() throws Exception {
         var ctx = refundCtx(todayTradeNo());
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubSequential(mocked, List.of(refundResp("00000")));
             var result = new SumapaySubmitHandler().handle(ctx, req());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_OK);
-            assertThat(result.getApiNo()).isEqualTo("R1");
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+            assertThat(result.getCode()).isEqualTo("00000");
             mocked.verify(() -> HttpHelper.postBytes(any(), anyString(), any(), anyString(), any()));
         }
     }
 
     @Test
-    @DisplayName("退款 00000 → S_OK；请求含 requestId=退款单号/原单号/回调地址，签名域 mersignature")
+    @DisplayName("退款 00000 → S_WAIT（受理中，非成功）；请求含 requestId=退款单号/原单号/回调地址，签名域 mersignature")
     void refundOkCapturesRequest() throws Exception {
         var tradeNo = todayTradeNo();
         var ctx = refundCtx(tradeNo);
@@ -121,7 +121,7 @@ class SumapaySubmitHandlerTest {
                     });
             var result = new SumapaySubmitHandler().handle(ctx, req());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_OK);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             // 两个请求：IFSU0043（fundSharing）+ Refund_do，无 IFSU0040
             assertThat(firstBody.get()).containsEntry("requestType", "IFSU0043")
                     .containsEntry("requestId", "QR1");
@@ -155,7 +155,7 @@ class SumapaySubmitHandlerTest {
                     });
             var result = new SumapaySubmitHandler().handle(ctx, req());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_OK);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             var fund = bodies.get();
             assertThat(fund).containsEntry("requestType", "IFSU0040")
                     .containsEntry("requestId", "FR1")
@@ -168,7 +168,7 @@ class SumapaySubmitHandlerTest {
     }
 
     @Test
-    @DisplayName("非当日订单余额查询业务失败 → S_FAIL 终态，不发起转入与退款")
+    @DisplayName("非当日订单余额查询参数错误（2003）→ S_WAIT，不发起转入与退款")
     void balanceQueryRejected() throws Exception {
         var ctx = refundCtx(oldTradeNo());
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -176,15 +176,15 @@ class SumapaySubmitHandlerTest {
                     signedResp("IFSU0043", BALANCE_RESP_FIELDS, Map.of("result", "2003"))));
             var result = new SumapaySubmitHandler().handle(ctx, req());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
-            assertThat(result.getCode()).isEqualTo("REFUND_FAIL");
-            assertThat(result.getMsg()).isEqualTo("二级户余额查询失败[2003]");
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+            assertThat(result.getCode()).isEqualTo("REFUND_ERROR");
+            assertThat(result.getMsg()).isEqualTo("二级户余额查询未完成[2003]");
         }
     }
 
     @Test
-    @DisplayName("付款至二级户受理中（00001）→ S_FAIL 终止退款（防重试重复转入）")
-    void fundAcceptedFails() throws Exception {
+    @DisplayName("付款至二级户受理中（00001）→ S_WAIT 不判失败（防重试重复转入，待人工核对）")
+    void fundAcceptedWaits() throws Exception {
         var ctx = refundCtx(oldTradeNo());
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubSequential(mocked, List.of(
@@ -192,7 +192,8 @@ class SumapaySubmitHandlerTest {
                     signedResp("IFSU0040", FUND_RESP_FIELDS, Map.of("result", "00001"))));
             var result = new SumapaySubmitHandler().handle(ctx, req());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+            assertThat(result.getCode()).isEqualTo("REFUND_ERROR");
             assertThat(result.getMsg()).isEqualTo("付款至二级户已受理，请稍后再尝试退款");
         }
     }
@@ -213,7 +214,7 @@ class SumapaySubmitHandlerTest {
     }
 
     @Test
-    @DisplayName("余额查询传输失败（502）→ S_ING 保持处理中（状态未知不误判失败）")
+    @DisplayName("余额查询传输失败（502）→ S_WAIT 保持未定（状态未知不误判失败）")
     void balanceQueryChannelErrorKeepsIng() throws Exception {
         var ctx = refundCtx(oldTradeNo());
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -222,7 +223,7 @@ class SumapaySubmitHandlerTest {
                             "<html><body>502</body></html>".getBytes(StandardCharsets.UTF_8), "req", 10, 1));
             var result = new SumapaySubmitHandler().handle(ctx, req());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("REFUND_ERROR");
         }
     }
@@ -232,14 +233,14 @@ class SumapaySubmitHandlerTest {
     // =========================================================================
 
     @Test
-    @DisplayName("Refund_do 受理中（00001）→ S_ING")
+    @DisplayName("Refund_do 受理中（00001）→ S_WAIT")
     void refundAcceptedKeepsIng() throws Exception {
         var ctx = refundCtx(todayTradeNo());
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubSequential(mocked, List.of(refundResp("00001")));
             var result = new SumapaySubmitHandler().handle(ctx, req());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("00001");
         }
     }
@@ -258,15 +259,15 @@ class SumapaySubmitHandlerTest {
     }
 
     @Test
-    @DisplayName("Refund_do 其余业务码 → S_FAIL 带错误码")
+    @DisplayName("Refund_do 未文档化业务码 → S_WAIT（不盲目判失败）")
     void refundOtherCodeFails() throws Exception {
         var ctx = refundCtx(todayTradeNo());
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubSequential(mocked, List.of(refundResp("300101")));
             var result = new SumapaySubmitHandler().handle(ctx, req());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
-            assertThat(result.getMsg()).isEqualTo("退款失败[300101]");
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+            assertThat(result.getMsg()).isEqualTo("退款处理中[300101]");
         }
     }
 

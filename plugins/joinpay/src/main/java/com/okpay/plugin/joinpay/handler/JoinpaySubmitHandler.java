@@ -65,28 +65,33 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
         params.put("p3_RefundOrderNo", refund.getRefundNo());
         params.put("p4_RefundAmount", toYuan(refund.getAmount()));
         params.put("p5_RefundReason", "申请退款");
-        params.put("p6_NotifyUrl", cfg.getNotifyDomain() + "/pay/refundnotify/" + refund.getRefundNo());
+        params.put("p6_NotifyUrl", PaymentPaths.refundNotify(cfg.getNotifyDomain(), refund.getRefundNo()));
         params.put("hmac", JoinpaySignUtil.sign(params, REFUND_REQ_FIELDS, cfg.getAppkey()));
         try {
             var reqBody = PaymentUtils.encodeForm(params);
             var resp = HttpHelper.post(ctx, REFUND_URL, reqBody, "application/x-www-form-urlencoded");
-            // 渠道 HTTP 层失败：状态未知，归因渠道文案，保持处理中交还轮询
+            // 渠道 HTTP 层失败 / 响应不可解析 / 验签不过：状态未知，保持处理中交还轮询
             if (!resp.isSuccess())
-                throw new Sdk.BizFailException(channelFailure(resp.statusCode()), resp);
+                return Responses.wait("REFUND_ERROR", channelFailure(resp.statusCode()), resp);
             var m = JoinpayUtil.parseJsonNum(resp.bodyAsString());
             if (m.isEmpty())
-                throw new Sdk.BizFailException(channelFailure(resp.statusCode()), resp);
+                return Responses.wait("REFUND_ERROR", channelFailure(resp.statusCode()), resp);
             if (!JoinpaySignUtil.verify(m, REFUND_RESP_FIELDS, cfg.getAppkey()))
-                return Responses.fail("SIGN_ERROR", "返回验签失败", resp);
+                return Responses.wait("SIGN_ERROR", "返回验签失败", resp);
             var status = m.getOrDefault("ra_Status", "");
-            var state = switch (status) { case "100" -> BizState.S_OK; case "101" -> BizState.S_FAIL; default -> BizState.S_ING; };
+            // 文档退款状态：100 成功 / 101 失败 / 102 处理中。仅 101 是明确失败；
+            // rb_Code 业务码（如 20090004 退款记录不存在）不单独判失败，保持处理中由查询/通知收敛
+            var state = switch (status) { case "100" -> BizState.S_OK; case "101" -> BizState.S_FAIL; default -> BizState.S_WAIT; };
             return Responses.result(state)
                     .apiNo(m.get("r5_RefundTrxNo")).code(m.get("rb_Code")).msg(m.get("rc_CodeMsg"))
                     .traced(resp).build();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Responses.wait("REFUND_ERROR", "退款提交被中断");
         } catch (Exception e) {
             // 状态未知（渠道异常/响应异常）：保持处理中交还轮询，不误判失败
             log.debug("汇聚支付退款提交状态未知, exception={}", e.getClass().getSimpleName());
-            return Responses.ing("REFUND_ERROR", e.getMessage());
+            return Responses.wait("REFUND_ERROR", e.getMessage());
         }
     }
 
@@ -98,11 +103,11 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
         // 契约：T_XFER submit 时内核恒填 transfer，缺失即宿主缺陷，不判空
         var transfer = ctx.getTransfer();
         var cfg = JoinpayConfig.from(ctx);
-        // 账户类型仅 private/public，其他值由 PaymentUtils 显式拒绝（异常不落入 S_ING）；对公→204、对私→201
-        var accountType = com.okpay.plugin.sdk.PaymentUtils.isPublicAccount(transfer.getAccountType()) ? "204" : "201";
+        // 账户类型仅 private/public，其他值由 PaymentUtils 显式拒绝（预期失败）；对公→204、对私→201
+        var accountType = PaymentUtils.isPublicAccount(transfer.getAccountType()) ? "204" : "201";
         // 对公代付必须提供联行号（receiverBankChannelNo）
         if ("204".equals(accountType) && (transfer.getCnapsNo() == null || transfer.getCnapsNo().isBlank()))
-            return fail("对公打款必须提供联行号");
+            throw new ExpectedFailureException("对公打款必须提供联行号");
         var params = new LinkedHashMap<String, String>();
         params.put("userNo", cfg.getAppid());
         if (cfg.getAppmchid() != null && !cfg.getAppmchid().isBlank()) params.put("tradeMerchantNo", cfg.getAppmchid());
@@ -118,28 +123,32 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
         params.put("isChecked", "202");
         params.put("paidDesc", "工资发放");
         params.put("paidUse", "201");
-        params.put("callbackUrl", cfg.getNotifyDomain() + "/pay/transfernotify/" + transfer.getTradeNo());
+        params.put("callbackUrl", PaymentPaths.transferNotify(cfg.getNotifyDomain(), transfer.getTradeNo()));
         params.put("hmac", JoinpaySignUtil.sign(params, TRANSFER_REQ_FIELDS, cfg.getAppkey()));
         try {
             var resp = HttpHelper.post(ctx, TRANSFER_URL,
                     HttpHelper.MAPPER.writeValueAsString(params), "application/json");
             if (!resp.isSuccess())
-                throw new Sdk.BizFailException(channelFailure(resp.statusCode()), resp);
+                return Responses.wait("XFER_ERROR", channelFailure(resp.statusCode()), resp);
             var m = JoinpayUtil.parseJsonNumRaw(resp.bodyAsString());
             var code = String.valueOf(m.getOrDefault("statusCode", ""));
             var msg = String.valueOf(m.getOrDefault("message", ""));
-            // 应答 data 必验签（受理结果不可信未验签报文）
+            // 应答 data 必验签（受理结果不可信未验签报文）；验签不过即状态未知
             var dataRaw = flatten(m.get("data"));
             if (dataRaw.isEmpty() || !JoinpaySignUtil.verify(dataRaw, TRANSFER_RESP_FIELDS, cfg.getAppkey()))
-                return Responses.fail("SIGN_ERROR", "返回验签失败", resp);
-            // 2002 受理失败；2001 受理成功 / 2003 未知 → 均非终态，由通知/查询收敛
-            if ("2002".equals(code) || (!"2001".equals(code) && !"2003".equals(code)))
-                return Responses.fail(code.isBlank() ? "XFER_ERROR" : code, msg, resp);
-            return Responses.ing(code, msg.isBlank() ? code : msg, resp);
+                return Responses.wait("SIGN_ERROR", "返回验签失败", resp);
+            // 2002 受理失败（文档明确失败）；2001 受理成功 / 2003 未知为非终态，由通知/查询收敛；
+            // 其余未文档化的应答码同样结果未定（不臆断失败）
+            if ("2002".equals(code))
+                return Responses.fail(code, msg.isBlank() ? code : msg, resp);
+            return Responses.wait(code, msg.isBlank() ? code : msg, resp);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Responses.wait("XFER_ERROR", "打款提交被中断");
         } catch (Exception e) {
             // 状态未知（渠道异常/响应异常）：保持处理中交还轮询，不误判失败
             log.debug("汇聚支付打款提交状态未知, exception={}", e.getClass().getSimpleName());
-            return Responses.ing("XFER_ERROR", e.getMessage());
+            return Responses.wait("XFER_ERROR", e.getMessage());
         }
     }
 
@@ -154,6 +163,4 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
             m.forEach((k, v) -> out.put(String.valueOf(k), v != null ? String.valueOf(v) : ""));
         return out;
     }
-
-    private static BizResult fail(String msg) { return Responses.fail("PARAM_ERROR", msg); }
 }

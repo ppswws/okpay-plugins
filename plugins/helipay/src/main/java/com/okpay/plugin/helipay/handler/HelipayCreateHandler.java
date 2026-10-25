@@ -21,6 +21,10 @@ import java.util.concurrent.*;
  * 小程序；银联：云闪付）。方式 1 是 JSAPI 预下单（AppPayPublic，微信公众号/支付宝服务窗共用）。
  * 微信 H5 手机端支付链接逆向调微信 qbase 取 openlink（浏览器直拉起），
  * 失败回退原始链接；微信 H5 非手机端走中转页（部分安卓扫码二维码白屏规避）。</p>
+ *
+ * <p>不发渠道请求的本地页（中转页/扫码页/授权跳转/小程序 scheme/未开启方式）只按通道配置与 UA
+ * 决定，由 {@link #localOutcome} 单点产出；收银台由 SDK 基类在 ext 为空时重走建单入口，
+ * 本地页与后续渠道请求只此一条路径。</p>
  */
 public class HelipayCreateHandler {
 
@@ -31,22 +35,15 @@ public class HelipayCreateHandler {
     private static final String QBASE_URL = "https://servicewechat.com/wxa-qbase/jsoperatewxdata";
     private static final String H5_PAY_HOST = "h5pay.helipay.com";
 
-    public com.okpay.plugin.model.BizResult submit(InvokeContext ctx) {
-        return Sdk.createResult(ctx, Map.of(
-            "alipay", this::alipay, "wxpay", this::wxpay, "bank", this::bank
-        ));
-    }
-
     // =========================================================================
     // 支付方式分流
     // =========================================================================
 
-    public PageResponse alipay(InvokeContext ctx) {
+    public PageOutcome alipay(InvokeContext ctx) {
         var cfg = HelipayConfig.from(ctx);
         var modes = cfg.modeSet();
-        var ua = ctx.getRequest() != null ? ctx.getRequest().getUa() : null;
 
-        if (modes.contains("3") && HttpHelper.isMobile(ua))
+        if (modes.contains("3") && HttpHelper.isMobile(ua(ctx)))
             return Sdk.lockCreate(ctx, () -> wapOrder(ctx, cfg, "alipay"));
         if (modes.contains("4") || modes.contains("3"))
             return Sdk.lockCreate(ctx, () -> scanOrder(ctx, cfg, "alipay"));
@@ -54,120 +51,146 @@ public class HelipayCreateHandler {
             return Sdk.lockCreate(ctx, () -> appletOrder(ctx, cfg, "alipay"));
         if (modes.contains("1"))
             return Sdk.lockCreate(ctx, () -> publicOrder(ctx, cfg, "alipay"));
-        return Responses.respError("当前通道未开启支付宝支付方式");
+        return localOutcome(ctx, cfg, "alipay");
     }
 
-    public PageResponse wxpay(InvokeContext ctx) {
+    public PageOutcome wxpay(InvokeContext ctx) {
         var cfg = HelipayConfig.from(ctx);
         var modes = cfg.modeSet();
-        var ua = ctx.getRequest() != null ? ctx.getRequest().getUa() : null;
 
         if (modes.contains("3")) {
-            if (HttpHelper.isMobile(ua)) {
+            if (HttpHelper.isMobile(ua(ctx))) {
                 return Sdk.lockCreate(ctx, () -> {
                     var resp = createOrder(ctx, wapParams(ctx, cfg, "wxpay"), cfg.getAppkey());
                     var payInfo = reverseToOpenlink(ctx, payInfoOf(resp, "rt8_payInfo"));
+                    if (payInfo.isBlank()) throw missingPayInfo(resp);
                     // 逆向成功得到 openlink，走 wxpay_h5 页拉起支付；失败时 payInfo 仍是 h5pay 完整支付页，直接跳转
                     var page = payInfo.contains(H5_PAY_HOST)
-                            ? Responses.respJump(payInfo)
-                            : Responses.respPageURL("wxpay_h5", payInfo);
+                            ? Pages.redirect(payInfo)
+                            : Pages.page("wxpay_h5", payInfo);
                     return Sdk.FetchResult.of(page, resp);
                 });
             }
             // 非手机端直接返回手机支付页地址时，部分安卓扫码生成的二维码会白屏，走中转页规避
-            return Responses.respPageURL("wxpay_qrcode",
-                    buildPayUrl(ctx, cfg, Map.of("t", String.valueOf(System.currentTimeMillis() / 1000))));
+            return localOutcome(ctx, cfg, "wxpay");
         }
         if (modes.contains("4"))
             return Sdk.lockCreate(ctx, () -> scanOrder(ctx, cfg, "wxpay"));
         if (modes.contains("1"))
-            return handleWxMp(ctx, cfg, ua);
+            return handleWxMp(ctx, cfg);
         if (modes.contains("2"))
             return handleWxMini(ctx, cfg);
-        return Responses.respError("当前通道未开启微信支付方式");
+        return localOutcome(ctx, cfg, "wxpay");
     }
 
-    public PageResponse bank(InvokeContext ctx) {
+    public PageOutcome bank(InvokeContext ctx) {
         var cfg = HelipayConfig.from(ctx);
         var modes = cfg.modeSet();
         if (modes.contains("1"))
             return Sdk.lockCreate(ctx, () -> publicOrder(ctx, cfg, "bank"));
-        return Responses.respError("当前通道未开启云闪付支付方式");
+        return localOutcome(ctx, cfg, "bank");
+    }
+
+    /**
+     * 不发渠道请求的本地页，按通道配置 + UA 单点产出：
+     * 未开启方式 → 失败页；方式 1 且微信内无 code → 公众号授权跳转；
+     * 方式 1/2/3 → wxpay_qrcode 中转页（t 时间戳，重进刷新订单态）。需要 OAuth 兑换或渠道下单的分支不发本地页。
+     */
+    PageOutcome localOutcome(InvokeContext ctx, HelipayConfig cfg, String payType) {
+        var modes = cfg.modeSet();
+        var ua = ua(ctx);
+        return switch (payType) {
+            case "alipay" -> !modes.contains("1") && !modes.contains("2") && !modes.contains("3") && !modes.contains("4")
+                    ? Pages.fail("当前通道未开启支付宝支付方式")
+                    : qrcodeRelay(ctx, cfg, payType);
+            case "wxpay" -> {
+                if (modes.contains("3") || modes.contains("4") || !enabledWxModes(modes)) {
+                    yield qrcodeRelay(ctx, cfg, payType);
+                }
+                if (modes.contains("1") && (cfg.getMp() == null || cfg.getMp().getAppid() == null)) {
+                    yield Pages.fail("缺少公众号配置");
+                }
+                if (modes.contains("1") && HttpHelper.isWeChat(ua) && queryParam(ctx, "code").isBlank()) {
+                    var mp = cfg.getMp();
+                    var retUrl = buildPayUrl(ctx, cfg, timestampQuery());
+                    // 授权 URL 由 SDK 决策：已配置系统公众号 → 先经宿主 /oauth/wxmp 授权，再重定向到本通道公众号授权
+                    yield Pages.redirect(OAuthHelper.buildMpPayAuthUrl(ctx, mp.getAppid(), retUrl,
+                            ctx.getOrder().getTradeNo()));
+                }
+                yield qrcodeRelay(ctx, cfg, payType);
+            }
+            case "bank" -> modes.contains("1") ? qrcodeRelay(ctx, cfg, payType) : Pages.fail("当前通道未开启云闪付支付方式");
+            default -> throw new ExpectedFailureException("未知支付方式[" + payType + "]");
+        };
+    }
+
+    private static boolean enabledWxModes(Set<String> modes) {
+        return modes.contains("1") || modes.contains("2");
+    }
+
+    /** 二维码页展示支付链接（扫码者打开后重进收银台）：URL 为支付页地址 + t 时间戳 */
+    private static PageOutcome qrcodeRelay(InvokeContext ctx, HelipayConfig cfg, String payType) {
+        var page = "alipay".equals(payType) ? "alipay_qrcode" : "wxpay_qrcode";
+        return Pages.page(page, buildPayUrl(ctx, cfg, timestampQuery()));
+    }
+
+    private static Map<String, String> timestampQuery() {
+        return Map.of("t", String.valueOf(System.currentTimeMillis() / 1000));
     }
 
     // =========================================================================
     // 微信公众号 / 小程序
     // =========================================================================
 
-    private PageResponse handleWxMp(InvokeContext ctx, HelipayConfig cfg, String ua) {
+    private PageOutcome handleWxMp(InvokeContext ctx, HelipayConfig cfg) {
         if (cfg.getMp() == null || cfg.getMp().getAppid() == null)
-            return Responses.respError("缺少公众号配置");
+            return localOutcome(ctx, cfg, "wxpay");
         var code = queryParam(ctx, "code");
-        var retUrl = buildPayUrl(ctx, cfg, Map.of("t", String.valueOf(System.currentTimeMillis() / 1000)));
-        if (code.isBlank()) {
-            if (HttpHelper.isWeChat(ua)) {
-                // 授权 URL 由 SDK 决策：已配置系统公众号 → 先经宿主 /oauth/wxmp 授权（风控身份落库
-                // buyer），再重定向到本通道公众号授权；两条路径兑换的 openid 均属本通道公众号
-                return Responses.respJump(OAuthHelper.buildMpPayAuthUrl(ctx, cfg.getMp().getAppid(), retUrl,
-                        ctx.getOrder().getTradeNo()));
-            }
-            return Responses.respPageURL("wxpay_qrcode", retUrl);
-        }
+        if (code.isBlank()) return localOutcome(ctx, cfg, "wxpay");
         // OAuth 兑换在锁外执行；兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应均由 SDK 处理
         return OAuthHelper.exchangeMpOpenid(ctx, cfg.getMp().getAppid(), cfg.getMp().getAppsecret(), code,
-                openid -> Sdk.lockCreate(ctx, () -> {
-                    try {
-                        var resp = createOrder(ctx,
+                openid -> Sdk.lockCreate(ctx, () ->
+                        jspayResult(createOrder(ctx,
                                 publicParams(ctx, cfg, "wxpay", cfg.getMp().getAppid(), "1", openid),
-                                cfg.getAppkey());
-                        return jspayResult(resp);
-                    } catch (RuntimeException e) { throw e;
-                    } catch (Exception e) { throw new RuntimeException("公众号支付失败[" + e.getMessage() + "]", e); }
-                }));
+                                cfg.getAppkey()))));
     }
 
-    private PageResponse handleWxMini(InvokeContext ctx, HelipayConfig cfg) {
+    private PageOutcome handleWxMini(InvokeContext ctx, HelipayConfig cfg) {
         if (cfg.getMini() == null || cfg.getMini().getAppid() == null)
-            return Responses.respError("缺少小程序配置");
+            return localOutcome(ctx, cfg, "wxpay");
         var code = queryParam(ctx, "auth_code");
-        var retUrl = buildPayUrl(ctx, cfg, Map.of());
         if (code.isBlank()) {
             try {
                 var scheme = OAuthHelper.getMiniScheme(ctx, cfg.getMini().getAppid(),
                         cfg.getMini().getAppsecret(), "page/pay",
                         "real=" + toYuan(ctx.getOrder().getReal()) + "&url="
-                                + URLEncoder.encode(retUrl, StandardCharsets.UTF_8));
-                return Responses.respPageURL("wxpay_h5", scheme);
+                                + URLEncoder.encode(buildPayUrl(ctx, cfg, Map.of()), StandardCharsets.UTF_8));
+                return Pages.page("wxpay_h5", scheme);
             } catch (Exception e) {
                 if (!PluginLog.isExpected(e)) {
                     log.error("获取小程序 scheme 失败", e);
                 }
-                return Responses.respError("小程序跳转失败");
+                return Pages.fail("小程序跳转失败");
             }
         }
         // OAuth 兑换在锁外执行；兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应均由 SDK 处理
         return OAuthHelper.exchangeMiniOpenid(ctx, cfg.getMini().getAppid(), cfg.getMini().getAppsecret(), code,
-                openid -> Sdk.lockCreate(ctx, () -> {
-                    try {
-                        var resp = createOrder(ctx,
+                openid -> Sdk.lockCreate(ctx, () ->
+                        jspayResult(createOrder(ctx,
                                 appletParams(ctx, cfg, "wxpay", cfg.getMini().getAppid(), "1", openid),
-                                cfg.getAppkey());
-                        return jspayResult(resp);
-                    } catch (RuntimeException e) { throw e;
-                    } catch (Exception e) { throw new RuntimeException("小程序支付失败[" + e.getMessage() + "]", e); }
-                }));
+                                cfg.getAppkey()))));
     }
 
     /** JSAPI 调起页：渠道 payInfo 是调起参数 JSON 串，解析成对象后按 wxpay_jspay + js_api_parameters 下发 */
     private static Sdk.FetchResult jspayResult(HttpHelper.HttpResponse resp) throws Exception {
         var payInfo = payInfoOf(resp, "rt8_payInfo");
-        if (payInfo.isBlank()) throw new Sdk.BizFailException("下单成功但未返回支付参数", resp);
-        // 模板直接喂 WeixinJSBridge.invoke 须为对象；解析不出归因渠道（不冒泡成插件内部错误）
+        if (payInfo.isBlank()) throw missingPayInfo(resp);
+        // 模板直接喂 WeixinJSBridge.invoke 须为对象；解析不出属渠道返回不可用，归因渠道
         final Object jsParams;
         try { jsParams = HttpHelper.MAPPER.readValue(payInfo, Object.class); }
-        catch (Exception e) { throw new Sdk.BizFailException("渠道支付参数解析失败", resp); }
-        return Sdk.FetchResult.of(Responses.respPageData("wxpay_jspay",
-                Map.of("js_api_parameters", jsParams)), resp);
+        catch (Exception e) { throw missingPayInfo(resp); }
+        return Sdk.FetchResult.of(Pages.page("wxpay_jspay",
+                null, Map.of("js_api_parameters", jsParams)), resp);
     }
 
     // =========================================================================
@@ -178,26 +201,38 @@ public class HelipayCreateHandler {
     private Sdk.FetchResult publicOrder(InvokeContext ctx, HelipayConfig cfg, String payType) throws Exception {
         var resp = createOrder(ctx, publicParams(ctx, cfg, payType, "1", "0", "1"), cfg.getAppkey());
         var page = "bank".equals(payType) ? "bank_qrcode" : "alipay_qrcode";
-        return Sdk.FetchResult.of(Responses.respPageURL(page, payInfoOf(resp, "rt8_payInfo")), resp);
+        return pageResult(page, payInfoOf(resp, "rt8_payInfo"), resp);
     }
 
     /** 小程序下单（支付宝侧产物为二维码链接） */
     private Sdk.FetchResult appletOrder(InvokeContext ctx, HelipayConfig cfg, String payType) throws Exception {
         var resp = createOrder(ctx, appletParams(ctx, cfg, payType, "1", "0", "1"), cfg.getAppkey());
-        return Sdk.FetchResult.of(Responses.respPageURL("alipay_qrcode", payInfoOf(resp, "rt10_payInfo")), resp);
+        return pageResult("alipay_qrcode", payInfoOf(resp, "rt10_payInfo"), resp);
     }
 
     /** 扫码下单（支付宝/微信共用，二维码页按支付方式区分） */
     private Sdk.FetchResult scanOrder(InvokeContext ctx, HelipayConfig cfg, String payType) throws Exception {
         var resp = createOrder(ctx, scanParams(ctx, cfg, payType), cfg.getAppkey());
         var page = "wxpay".equals(payType) ? "wxpay_qrcode" : "alipay_qrcode";
-        return Sdk.FetchResult.of(Responses.respPageURL(page, payInfoOf(resp, "rt8_qrcode")), resp);
+        return pageResult(page, payInfoOf(resp, "rt8_qrcode"), resp);
     }
 
     /** H5 下单：直接跳转支付链接（微信 H5 由 wxpay 内联处理，不经此方法） */
     private Sdk.FetchResult wapOrder(InvokeContext ctx, HelipayConfig cfg, String payType) throws Exception {
         var resp = createOrder(ctx, wapParams(ctx, cfg, payType), cfg.getAppkey());
-        return Sdk.FetchResult.of(Responses.respJump(payInfoOf(resp, "rt9_wapurl")), resp);
+        var wapUrl = payInfoOf(resp, "rt9_wapurl");
+        if (wapUrl.isBlank()) throw missingPayInfo(resp);
+        return Sdk.FetchResult.of(Pages.redirect(wapUrl), resp);
+    }
+
+    /** 二维码页：渠道受理成功但支付地址缺位 → 失败页（渠道已响应且可解析，属明确不可用） */
+    private static Sdk.FetchResult pageResult(String page, String url, HttpHelper.HttpResponse resp) {
+        if (url.isBlank()) throw missingPayInfo(resp);
+        return Sdk.FetchResult.of(Pages.page(page, url), resp);
+    }
+
+    private static FailureException missingPayInfo(HttpHelper.HttpResponse resp) {
+        return new FailureException("下单成功但未返回支付地址", resp);
     }
 
     // =========================================================================
@@ -298,8 +333,8 @@ public class HelipayCreateHandler {
 
     /**
      * 预下单：渠道接口提交并校验（HTTP 层 / JSON 解析 / 验签 / 业务码 rt2_retCode），
-     * 失败抛 {@link Sdk.BizFailException}（渠道 HTTP 与业务失败归因渠道统一文案），
-     * 成功返回渠道响应供调用方提取支付地址。
+     * 成功返回渠道响应供调用方提取支付地址；业务失败抛 {@link FailureException}
+     * （渠道已响应且可解析、明确拒绝 → 失败页），传输层异常由 {@link HelipayApi#post} 归因结果未知。
      */
     private HttpHelper.HttpResponse createOrder(InvokeContext ctx, Map<String, String> params, String key)
             throws Exception {
@@ -307,7 +342,7 @@ public class HelipayCreateHandler {
         var respMap = PaymentUtils.parseJsonMap(resp.bodyAsString());
         if (!"0000".equals(respMap.get("rt2_retCode"))) {
             var msg = respMap.getOrDefault("rt3_retMsg", "");
-            throw new Sdk.BizFailException(msg.isBlank() ? channelFailure(resp.statusCode())
+            throw new FailureException(msg.isBlank() ? channelFailure(resp.statusCode())
                     : "[" + respMap.get("rt2_retCode") + "]" + msg, resp);
         }
         return resp;
@@ -316,16 +351,14 @@ public class HelipayCreateHandler {
     /**
      * 支付地址提取：字段位由调用场景声明（扫码 rt8_qrcode / 公众号 rt8_payInfo / 小程序 rt10_payInfo /
      * H5 rt9_wapurl），不再按「第一个非空」猜字段——后者在渠道同时返回多值时会把用户导向错误入口。
-     * 声明位为空时按其余候选回退，并告警（渠道字段位变化需要暴露，不静默吞掉）。
+     * 声明位为空时按其余候选回退（渠道字段位变化需要暴露，不静默吞掉）。
      */
     private static String payInfoOf(HttpHelper.HttpResponse resp, String expectedField) {
         var respMap = PaymentUtils.parseJsonMap(resp.bodyAsString());
         var value = respMap.get(expectedField);
         if (value != null && !value.isBlank()) return value;
-        var fallback = firstNotEmpty(respMap.get("rt8_qrcode"), respMap.get("rt8_payInfo"),
+        return firstNotEmpty(respMap.get("rt8_qrcode"), respMap.get("rt8_payInfo"),
                 respMap.get("rt10_payInfo"), respMap.get("rt9_wapurl"));
-        // 字段位回退是渠道响应差异，响应轨迹已记录，不落日志。
-        return fallback;
     }
 
     // =========================================================================
@@ -425,6 +458,10 @@ public class HelipayCreateHandler {
     // 工具
     // =========================================================================
 
+    private static String ua(InvokeContext ctx) {
+        return ctx.getRequest() != null ? ctx.getRequest().getUa() : null;
+    }
+
     private static String mapAppPayType(String payType) {
         return switch (payType) {
             case "alipay" -> "ALIPAY";
@@ -435,12 +472,12 @@ public class HelipayCreateHandler {
     }
 
     private static String notifyUrl(InvokeContext ctx, HelipayConfig cfg) {
-        return cfg.getNotifyDomain() + "/pay/notify/" + ctx.getOrder().getTradeNo();
+        return PaymentPaths.notify(cfg.getNotifyDomain(), ctx.getOrder().getTradeNo());
     }
 
     private static String buildPayUrl(InvokeContext ctx, HelipayConfig cfg, Map<String, String> query) {
         var order = ctx.getOrder();
-        var url = cfg.getSiteDomain() + "/pay/" + order.getType() + "/" + order.getTradeNo();
+        var url = PaymentPaths.cashier(cfg.getSiteDomain(), order.getTradeNo());
         if (query == null || query.isEmpty()) return url;
         var qs = new StringBuilder();
         query.forEach((k, v) -> {
@@ -455,7 +492,7 @@ public class HelipayCreateHandler {
         var q = ctx.getRequest() != null ? ctx.getRequest().getQuery() : null;
         if (q == null || q.isBlank()) return "";
         for (var pair : q.split("&")) {
-            var idx = pair.indexOf("=");
+            var idx = pair.indexOf('=');
             if (idx >= 0 && pair.substring(0, idx).equals(key))
                 return URLDecoder.decode(pair.substring(idx + 1), StandardCharsets.UTF_8);
         }
@@ -465,7 +502,7 @@ public class HelipayCreateHandler {
     private static Map<String, String> parseQuery(String qs) {
         var map = new HashMap<String, String>();
         for (var pair : qs.split("&")) {
-            var idx = pair.indexOf("=");
+            var idx = pair.indexOf('=');
             if (idx >= 0)
                 map.put(pair.substring(0, idx),
                         URLDecoder.decode(pair.substring(idx + 1), StandardCharsets.UTF_8));

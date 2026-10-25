@@ -2,7 +2,6 @@ package com.okpay.plugin.sumapay;
 
 import com.okpay.plugin.AbstractPaymentChannel;
 import com.okpay.plugin.enums.BizType;
-import com.okpay.plugin.model.*;
 import com.okpay.plugin.sumapay.handler.*;
 import org.pf4j.Extension;
 
@@ -18,25 +17,13 @@ public class SumapayPlugin extends AbstractPaymentChannel {
     private final SumapayQueryHandler queryHandler = new SumapayQueryHandler();
 
     public SumapayPlugin() {
-        on("alipay",  createHandler::alipay);
-        on("wxpay",   createHandler::wxpay);
-        on("notify",  notifyHandler::notify);
-        on("refundnotify",  notifyHandler::refundNotify);
-        on("paymerchantnotify", notifyHandler::payMerchantNotify);
-    }
-
-    @Override public PluginInfo info() { return SumapayPluginInfo.get(); }
-
-    @Override
-    public BizResult submit(InvokeContext ctx, BizRequest req) {
-        if (req.getBizType() == BizType.T_PAY) {
-            return createHandler.submit(ctx);
-        }
-        return submitHandler.handle(ctx, req);
-    }
-
-    @Override
-    public BizResult query(InvokeContext ctx, BizRequest req) {
-        return queryHandler.handle(ctx, req);
+        super(SumapayPluginDeclaration.declaration());
+        onCreate("alipay", createHandler::alipay);
+        onCreate("wxpay", createHandler::wxpay);
+        onNotify("notify", notifyHandler::notify);
+        onNotify("refundnotify", notifyHandler::refundNotify);
+        onNotify("paymerchantnotify", notifyHandler::payMerchantNotify);
+        onSubmit(BizType.T_REF, submitHandler::handle);
+        onQuery(BizType.T_PAY, queryHandler::handle);
     }
 }

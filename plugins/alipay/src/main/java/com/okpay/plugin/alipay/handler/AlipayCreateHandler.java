@@ -4,9 +4,12 @@ import static com.okpay.plugin.sdk.PaymentUtils.*;
 
 import com.okpay.plugin.alipay.util.AlipayConfig;
 import com.okpay.plugin.alipay.util.AlipayModeResolver;
+import com.okpay.plugin.PaymentChannel;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.*;
+import org.slf4j.*;
 
+import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -26,39 +29,30 @@ import java.util.concurrent.ThreadLocalRandom;
  * </ul>
  * 通道路径身份经 {@link OAuthHelper} exchange 方法内部自动闭环风控（落库 buyer + 买家黑名单，
  * 命中黑名单直接构造失败页跳转终止支付）。</p>
+ *
+ * <p>{@link #localPage} 是渠道请求之前的本地页面判定（OAuth 授权跳转 / 全局 OAuth / 回调收
+ * auth_code / 小程序 OAuth 失败）；收银台由 SDK 基类在 ext 为空时重走建单入口。</p>
+ *
+ * <p>结果映射：渠道有响应且可解析但拿不到预期支付数据 → 明确拒绝；配置/OAuth/网络/超时/
+ * 响应不可解析 → 预期失败（宿主按 S_WAIT 处理），见 {@link #call}。</p>
  */
 public class AlipayCreateHandler {
 
-    public com.okpay.plugin.model.BizResult submit(InvokeContext ctx) {
-        return Sdk.createResult(ctx, Map.of("alipay", this::alipay));
-    }
+    private static final Logger log = LoggerFactory.getLogger(AlipayCreateHandler.class);
 
-    public PageResponse alipay(InvokeContext ctx) {
+    public PageOutcome alipay(InvokeContext ctx) {
         var cfg = AlipayConfig.from(ctx);
-        var ua = ctx.getRequest() != null ? ctx.getRequest().getUa() : null;
-        var mode = AlipayModeResolver.resolve(ua, cfg.modeSet(), cfg.paymode());
-        if (mode == null) return Responses.respError("当前通道未开启支付宝支付方式");
+        var mode = resolveMode(ctx, cfg);
+        if (mode == null)
+            throw new ExpectedFailureException("当前通道未开启支付宝支付方式");
         var order = ctx.getOrder();
-        // 统一 OAuth（当面付JS/JSAPI）在 lockCreate 之外执行：跳转载荷若被锁持久化进 ext，
-        // 回跳请求被 ext 缓存短路，流程死循环（OAuth 跳转不写 ext 不记轨迹）
-        if ((mode == AlipayModeResolver.Mode.JSPAY || mode == AlipayModeResolver.Mode.JSAPI)
-                && (order.getBuyer() == null || order.getBuyer().isBlank())) {
-            return oauth(ctx, cfg, order, mode);
-        }
-        // APP 在 lockCreate 之外执行：sdkExecute 纯字符串构建（无 HTTP 轨迹），唤起页载荷不写 ext
-        if (mode == AlipayModeResolver.Mode.APP) {
-            // 合单 APP：merge.precreate 有 HTTP 轨迹 + 落库，须进锁（唤起页载荷写 ext，重入短路不重发）
-            var combinePlan = combinePlan(ctx, cfg, order);
-            if (!combinePlan.isEmpty()) {
-                return Sdk.lockCreate(ctx, () -> appCombine(ctx, cfg, order, combinePlan));
-            }
-            try {
-                var fr = App.execute(ctx, cfg, order);
-                return Responses.buildReturnPage(fr.payload());
-            } catch (Exception e) {
-                return Responses.respError("拉起支付宝失败[" + e.getMessage() + "]");
-            }
-        }
+        if (needsOAuth(mode, order)) return localPage(ctx);
+        // APP 支付：sdkExecute 纯字符串构建（无 HTTP），唤起页可直接返回；
+        // 合单 APP 有 merge.precreate HTTP + 落库，须走 lockCreate 持久化（重入短路不重发）
+        if (mode == AlipayModeResolver.Mode.APP && combinePlan(ctx, cfg, order).isEmpty())
+            return appDirect(ctx, cfg, order);
+        if (mode == AlipayModeResolver.Mode.APP)
+            return Sdk.lockCreate(ctx, () -> appCombine(ctx, cfg, order, combinePlan(ctx, cfg, order)));
         return Sdk.lockCreate(ctx, () -> switch (mode) {
             case JSPAY -> jsPay(ctx, cfg, order, order.getBuyer());
             case JSAPI -> jsApi(ctx, cfg, order, order.getBuyer());
@@ -70,19 +64,51 @@ public class AlipayCreateHandler {
     }
 
     // =========================================================================
+    // 本地页面判定（OAuth 中转）
+    // =========================================================================
+
+    /**
+     * 建单在渠道请求之前的本地页面（只依赖通道配置与请求参数，不随时间变化）：
+     * 当面付JS/JSAPI 无 buyer 时返回 OAuth 跳转/全局 OAuth/回调收 auth_code/小程序 OAuth 失败页；
+     * 小程序 OAuth 回跳后 buyer 仍空 → 预期失败（结果未知，不构造明确拒绝）。
+     * 建单在拿到 OAuth 身份后继续渠道下单，其余模式直接建单。
+     */
+    public PageOutcome localPage(InvokeContext ctx) {
+        var cfg = AlipayConfig.from(ctx);
+        var mode = resolveMode(ctx, cfg);
+        if (mode == null)
+            throw new ExpectedFailureException("当前通道未开启支付宝支付方式");
+        var order = ctx.getOrder();
+        if (needsOAuth(mode, order)) return oauth(ctx, cfg, order, mode);
+        throw new ExpectedFailureException("订单支付页面数据尚未生成");
+    }
+
+    // =========================================================================
     // 支付模式
     // =========================================================================
 
     @FunctionalInterface
     private interface Mode { Sdk.FetchResult execute(InvokeContext ctx, AlipayConfig cfg, OrderSnapshot order) throws Exception; }
 
+    /** 请求 UA + 通道配置解析支付模式；未开启任何支付宝方式 → null */
+    private static AlipayModeResolver.Mode resolveMode(InvokeContext ctx, AlipayConfig cfg) {
+        var ua = ctx.getRequest() != null ? ctx.getRequest().getUa() : null;
+        return AlipayModeResolver.resolve(ua, cfg.modeSet(), cfg.paymode());
+    }
+
+    /** 当面付JS/JSAPI 且无 OAuth 身份 → 需先走 OAuth 本地页 */
+    private static boolean needsOAuth(AlipayModeResolver.Mode mode, OrderSnapshot order) {
+        return (mode == AlipayModeResolver.Mode.JSPAY || mode == AlipayModeResolver.Mode.JSAPI)
+                && (order.getBuyer() == null || order.getBuyer().isBlank());
+    }
+
     private static String notifyUrl(AlipayConfig cfg, String tradeNo) {
-        return cfg.getNotifyDomain() + "/pay/notify/" + tradeNo;
+        return PaymentPaths.notify(cfg.getNotifyDomain(), tradeNo);
     }
 
     /** 渠道同步回跳地址：支付结果页 /pay/result/{tradeNo}，不直回商户 return_url */
     private static String resultPageUrl(AlipayConfig cfg, String tradeNo) {
-        return cfg.getSiteDomain() + "/pay/result/" + tradeNo;
+        return PaymentPaths.result(cfg.getSiteDomain(), tradeNo);
     }
 
     /** 直付通单笔：SMID 非空时注入 sub_merchant + settle_info（结算到该子商户进件默认账号，settle_period_time=1d） */
@@ -118,8 +144,8 @@ public class AlipayCreateHandler {
         var extras = new LinkedHashMap<String, String>();
         extras.put("notify_url", notifyUrl(cfg, order.getTradeNo()));
         extras.put("return_url", resultPageUrl(cfg, order.getTradeNo()));
-        return Sdk.FetchResult.of(Responses.respHTML(
-                cfg.client().pageExecute("alipay.trade.page.pay", biz, cfg.extras(extras))), null);
+        return Sdk.FetchResult.of(
+                Pages.html(cfg.client().pageExecute("alipay.trade.page.pay", biz, cfg.extras(extras))), null);
     };
 
     /** 手机网站支付 → 返回 HTML 表单；达合单阈值 → 两段式（merge.precreate → wap.merge.pay） */
@@ -138,8 +164,8 @@ public class AlipayCreateHandler {
         var extras = new LinkedHashMap<String, String>();
         extras.put("notify_url", notifyUrl(cfg, order.getTradeNo()));
         extras.put("return_url", resultPageUrl(cfg, order.getTradeNo()));
-        return Sdk.FetchResult.of(Responses.respHTML(
-                cfg.client().pageExecute("alipay.trade.wap.pay", biz, cfg.extras(extras))), null);
+        return Sdk.FetchResult.of(
+                Pages.html(cfg.client().pageExecute("alipay.trade.wap.pay", biz, cfg.extras(extras))), null);
     };
 
     /** 扫码/订单码支付（方式 3/8）→ 返回二维码 URL（官方当面付扫码统一带 QR_CODE_OFFLINE） */
@@ -151,11 +177,49 @@ public class AlipayCreateHandler {
         biz.put("product_code", "QR_CODE_OFFLINE");
         applyDirectPaySettle(cfg, biz);
         putClientIpBusinessParams(ctx, biz);
-        var resp = cfg.client().execute(ctx, "alipay.trade.precreate", biz,
-                cfg.extras(Map.of("notify_url", notifyUrl(cfg, order.getTradeNo()))));
-        if (!resp.ok()) throw new Sdk.BizFailException(alipayErrMsg(resp), resp);
-        return Sdk.FetchResult.of(Responses.respPageURL("alipay_qrcode", resp.text("qr_code")), resp);
+        var resp = call(ctx, "alipay.trade.precreate", biz,
+                cfg.extras(Map.of("notify_url", notifyUrl(cfg, order.getTradeNo()))), cfg);
+        // 渠道已受理但未返回二维码 → 拿不到预期支付数据，明确拒绝
+        var qr = resp.text("qr_code");
+        if (qr.isBlank()) return Sdk.FetchResult.of(Pages.fail("下单成功但未返回二维码"), resp);
+        return Sdk.FetchResult.of(Pages.page("alipay_qrcode", qr), resp);
     };
+
+    // =========================================================================
+    // 渠道调用与结果映射
+    // =========================================================================
+
+    /**
+     * 执行 OpenAPI 下单调用（建单语义）：
+     * <ul>
+     *   <li>渠道有响应且可解析、业务成功 → 返回响应（由调用方映射支付页；缺预期支付数据由调用方
+     *       返回 {@code Pages.fail}，请求轨迹随 lockOrderExt 正常落库）</li>
+     *   <li>渠道有响应且可解析、业务拒绝 → {@link FailureException}（建单明确拒绝）</li>
+     *   <li>HTTP 非 2xx/超时/网络不可达（客户端网关漏斗 {@link ResultUnknownException}）、响应不可解析、
+     *       同步验签失败 → {@link ResultUnknownException}（宿主 S_WAIT）</li>
+     * </ul>
+     */
+    private static AlipayOpenApiClient.ApiResponse call(InvokeContext ctx, String method,
+                                                       Map<String, Object> biz,
+                                                       Map<String, String> extras, AlipayConfig cfg) {
+        final AlipayOpenApiClient.ApiResponse resp;
+        try {
+            resp = cfg.client().execute(ctx, method, biz, extras);
+        } catch (ResultUnknownException e) {
+            // 客户端网关漏斗：HTTP 非 2xx（502/CDN 拦截）与传输层失败（超时/连接失败）均为渠道不可用，结果未知
+            log.debug("支付宝下单渠道不可用, method={}, error={}", method, PluginLog.summary(e));
+            throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ResultUnknownException("支付宝下单被中断", e);
+        } catch (IOException e) {
+            // 响应体不可解析 / 响应验签失败（客户端 fail-closed）
+            log.debug("支付宝下单响应不可用, method={}, error={}", method, PluginLog.summary(e));
+            throw new ResultUnknownException("支付宝下单响应不可用: " + e.getMessage(), e);
+        }
+        if (!resp.ok()) throw new FailureException(alipayErrMsg(resp));
+        return resp;
+    }
 
     // =========================================================================
     // 合单（大单拆小单，直付通 merge 协议）
@@ -186,7 +250,7 @@ public class AlipayCreateHandler {
         extras.put("return_url", resultPageUrl(cfg, order.getTradeNo()));
         var html = cfg.client().pageExecute("alipay.trade.wap.merge.pay",
                 Map.of("pre_order_no", preOrderNo), cfg.extras(extras));
-        return Sdk.FetchResult.of(Responses.respHTML(html), null);
+        return Sdk.FetchResult.of(Pages.html(html), null);
     }
 
     /** APP 合单：merge.precreate → app.merge.pay 只凭 pre_order_no → 唤起字符串（在 lockCreate 内执行） */
@@ -197,7 +261,7 @@ public class AlipayCreateHandler {
         extras.put("notify_url", notifyUrl(cfg, order.getTradeNo()));
         var orderStr = cfg.client().sdkExecute("alipay.trade.app.merge.pay",
                 Map.of("pre_order_no", preOrderNo), cfg.extras(extras));
-        return Sdk.FetchResult.of(Responses.respPageData("alipay_h5",
+        return Sdk.FetchResult.of(Pages.page("alipay_h5", null,
                 Map.of("url", alipayScheme(orderStr), "outTradeNo", order.getTradeNo())), null);
     }
 
@@ -205,12 +269,10 @@ public class AlipayCreateHandler {
     private static String mergePrecreate(InvokeContext ctx, AlipayConfig cfg, OrderSnapshot order,
                                          List<Long> plan, String productCode) throws Exception {
         var biz = mergeBiz(ctx, cfg, order, plan, productCode);
-        var resp = cfg.client().execute(ctx, "alipay.trade.merge.precreate", biz,
-                cfg.extras(Map.of("notify_url", notifyUrl(cfg, order.getTradeNo()))));
-        if (!resp.ok()) throw new Sdk.BizFailException(alipayErrMsg(resp), resp);
+        var resp = call(ctx, "alipay.trade.merge.precreate", biz,
+                cfg.extras(Map.of("notify_url", notifyUrl(cfg, order.getTradeNo()))), cfg);
         var preOrderNo = resp.text("pre_order_no");
-        if (preOrderNo.isBlank())
-            throw new Sdk.BizFailException("合单预创建未返回 pre_order_no", resp);
+        if (preOrderNo.isBlank()) throw new FailureException("合单预创建未返回 pre_order_no", resp);
         var items = new ArrayList<SaveSubOrdersRequest.SubOrderItem>(plan.size());
         for (int i = 0; i < plan.size(); i++) {
             items.add(SaveSubOrdersRequest.SubOrderItem.builder()
@@ -253,6 +315,23 @@ public class AlipayCreateHandler {
         return biz;
     }
 
+    // =========================================================================
+    // APP / 当面付 / JSAPI
+    // =========================================================================
+
+    /**
+     * APP 支付（方式 5，单笔）→ 唤起字符串 → 支付宝 scheme → alipay_h5 页面。
+     * sdkExecute 纯本地签名构建（无 HTTP），唤起页载荷不写 ext，可直接返回。
+     */
+    private static PageOutcome appDirect(InvokeContext ctx, AlipayConfig cfg, OrderSnapshot order) {
+        try {
+            var fr = App.execute(ctx, cfg, order);
+            return PageCache.fromMap(fr.payload());
+        } catch (Exception e) {
+            throw new ResultUnknownException("拉起支付宝失败: " + e.getMessage(), e);
+        }
+    }
+
     /** APP 支付（方式 5）→ 唤起字符串 → 支付宝 scheme → alipay_h5 页面 */
     private static final Mode App = (ctx, cfg, order) -> {
         var biz = new LinkedHashMap<String, Object>();
@@ -264,13 +343,13 @@ public class AlipayCreateHandler {
         putClientIpBusinessParams(ctx, biz);
         var orderStr = cfg.client().sdkExecute("alipay.trade.app.pay", biz,
                 cfg.extras(Map.of("notify_url", notifyUrl(cfg, order.getTradeNo()))));
-        return Sdk.FetchResult.of(Responses.respPageData("alipay_h5",
+        return Sdk.FetchResult.of(Pages.page("alipay_h5", null,
                 Map.of("url", alipayScheme(orderStr), "outTradeNo", order.getTradeNo())), null);
     };
 
     /** 当面付JS（方式 4）：支付宝 App 内 AlipayJSBridge 调起。
      *
-     * <p>需 OAuth 身份（buyer 空时在 {@link #alipay} 中先走 {@link #oauth}）。
+     * <p>需 OAuth 身份（buyer 空时在 {@link #alipay} 中先走 {@link #localPage}）。
      * 身份类型按值推断：2088 开头 → buyer_id（user_id），否则 buyer_open_id。</p>
      */
     private static Sdk.FetchResult jsPay(InvokeContext ctx, AlipayConfig cfg, OrderSnapshot order,
@@ -283,11 +362,13 @@ public class AlipayCreateHandler {
         putClientIpBusinessParams(ctx, biz);
         if (buyer.startsWith("2088")) biz.put("buyer_id", buyer);
         else biz.put("buyer_open_id", buyer);
-        var resp = cfg.client().execute(ctx, "alipay.trade.create", biz,
-                cfg.extras(Map.of("notify_url", notifyUrl(cfg, order.getTradeNo()))));
-        if (!resp.ok()) throw new Sdk.BizFailException(alipayErrMsg(resp), resp);
-        return Sdk.FetchResult.of(Responses.respPageData("alipay_jspay",
-                Map.of("alipay_trade_no", resp.text("trade_no"))), resp);
+        var resp = call(ctx, "alipay.trade.create", biz,
+                cfg.extras(Map.of("notify_url", notifyUrl(cfg, order.getTradeNo()))), cfg);
+        // 渠道已受理但未返回交易号 → 拿不到预期支付数据，明确拒绝
+        var tradeNo = resp.text("trade_no");
+        if (tradeNo.isBlank()) return Sdk.FetchResult.of(Pages.fail("下单成功但未返回交易号"), resp);
+        return Sdk.FetchResult.of(Pages.page("alipay_jspay", null,
+                Map.of("alipay_trade_no", tradeNo)), resp);
     }
 
     /**
@@ -308,11 +389,12 @@ public class AlipayCreateHandler {
         biz.put("product_code", "JSAPI_PAY");
         biz.put("op_app_id", opAppIdOf(ctx, cfg));
         biz.put("buyer_open_id", buyer);
-        var resp = cfg.client().execute(ctx, "alipay.trade.create", biz,
-                cfg.extras(Map.of("notify_url", notifyUrl(cfg, order.getTradeNo()))));
-        if (!resp.ok()) throw new Sdk.BizFailException(alipayErrMsg(resp), resp);
-        return Sdk.FetchResult.of(Responses.respPageData("alipay_jspay",
-                Map.of("alipay_trade_no", resp.text("trade_no"))), resp);
+        var resp = call(ctx, "alipay.trade.create", biz,
+                cfg.extras(Map.of("notify_url", notifyUrl(cfg, order.getTradeNo()))), cfg);
+        var tradeNo = resp.text("trade_no");
+        if (tradeNo.isBlank()) return Sdk.FetchResult.of(Pages.fail("下单成功但未返回交易号"), resp);
+        return Sdk.FetchResult.of(Pages.page("alipay_jspay", null,
+                Map.of("alipay_trade_no", tradeNo)), resp);
     }
 
     /** JSAPI 的 op_app_id：宿主回跳携带的 OAuth 来源应用（全局小程序应用）优先，否则通道应用（通道兜底同源） */
@@ -322,10 +404,10 @@ public class AlipayCreateHandler {
     }
 
     /**
-     * 统一 OAuth（当面付JS/JSAPI 共用，lockCreate 之外执行）：
+     * 统一 OAuth（当面付JS/JSAPI 共用，渠道请求之前执行）：
      * <ul>
      *   <li>JSAPI + 全局小程序应用已配置 → 跳宿主 /oauth/alimini（payment.alipay.oauth_mini，
-     *       全局应用 + buyer 风控落库）；oauth_done 回跳后 buyer 仍空 → 失败终止
+     *       全局应用 + buyer 风控落库）；oauth_done 回跳后 buyer 仍空 → 预期失败
      *       （获取失败即失败，不降级为通道 OAuth 兜底）</li>
      *   <li>当面付JS 恒走通道应用 OAuth（user_id 账号级跨应用一致，无全局网页应用键）；
      *       JSAPI 全局未配置时同样走通道应用 OAuth——直调 SDK 用通道本身的应用
@@ -333,28 +415,29 @@ public class AlipayCreateHandler {
      * </ul>
      * 兑换经 {@link OAuthHelper} exchange 方法内部自动闭环风控（落库 buyer + 黑名单，
      * 命中构造失败页跳转终止），插件无跳过路径。返回页面载荷，不写 ext 不记轨迹。
+     * 回跳地址恒为宿主本地收银台 /pay/cashier/{tradeNo}（不按支付方式拼路径）。
      */
-    private static PageResponse oauth(InvokeContext ctx, AlipayConfig cfg, OrderSnapshot order,
-                                      AlipayModeResolver.Mode mode) {
+    private static PageOutcome oauth(InvokeContext ctx, AlipayConfig cfg, OrderSnapshot order,
+                                     AlipayModeResolver.Mode mode) {
         var miniHostOAuth = mode == AlipayModeResolver.Mode.JSAPI
                 && ctx.getConfig().isOauthAlipayMiniConfigured();
-        var returnUrl = cfg.getSiteDomain() + "/pay/alipay/" + order.getTradeNo();
+        var returnUrl = cfg.getSiteDomain() + "/pay/" + PaymentChannel.CASHIER_FUNC + "/" + order.getTradeNo();
         // 首层：JSAPI + 全局小程序应用已配置 → 跳宿主统一 OAuth（入口基地址由 SDK 取平台网关域，
         // redirect_uri 回本次支付链路域下的支付页，state=tradeNo）
         if (miniHostOAuth && !queryParam(ctx, "oauth_done").equals("1")) {
-            return Responses.respJump(OAuthHelper.buildAlipayMiniPayAuthUrl(ctx, returnUrl,
+            return Pages.redirect(OAuthHelper.buildAlipayMiniPayAuthUrl(ctx, returnUrl,
                     order.getTradeNo()));
         }
         var authCode = queryParam(ctx, "auth_code");
         if (authCode.isBlank()) {
             // 全局已配置但 oauth_done 回跳后 buyer 仍空 → 获取失败即失败（不降级通道 OAuth）
-            if (miniHostOAuth) return Responses.respError("获取支付宝身份失败");
+            if (miniHostOAuth) throw new ExpectedFailureException("获取支付宝身份失败");
             // 通道应用 OAuth：跳授权页（redirect 回本站页面，回调收 auth_code）。
             // appid/私钥由 AlipayConfig.from 配置校验保证非空（通道必填字段），此处无需再防御
-            return Responses.respJump(OAuthHelper.buildAliOAuthUrl(cfg.getAppId(), returnUrl,
+            return Pages.redirect(OAuthHelper.buildAliOAuthUrl(cfg.getAppId(), returnUrl,
                     order.getTradeNo(), isProd(cfg)));
         }
-        if (miniHostOAuth) return Responses.respError("获取支付宝身份失败");
+        if (miniHostOAuth) throw new ExpectedFailureException("获取支付宝身份失败");
         // 通道 OAuth 回调：identity 与支付一致——JSPAY 取 user_id（2088 按值推断）、JSAPI 恒 open_id
         return OAuthHelper.exchangeAliIdentity(ctx, cfg.getAppId(),
                 cfg.getAppPrivateKey(), authCode, isProd(cfg),

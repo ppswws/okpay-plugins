@@ -13,28 +13,31 @@ import java.util.*;
 
 /**
  * 微信支付下单处理器（APIv3-only，零第三方 SDK，走 WechatPayV3Client）。
+ *
+ * <p>渠道请求前先判定本地页面（扫码中转页 / 公众号 OAuth 跳转 / 小程序 scheme）；
+ * 收银台由 SDK 基类在 ext 为空时重走建单入口，因此本地页与后续渠道请求只此一条路径。</p>
  */
 public class WxpayCreateHandler {
 
     private static final Logger log = LoggerFactory.getLogger(WxpayCreateHandler.class);
 
-    public BizResult submit(InvokeContext ctx) {
-        return Sdk.createResult(ctx, Map.of("wxpay", this::wxpay));
-    }
-
-    public PageResponse wxpay(InvokeContext ctx) {
-        var cfg = WxpayConfig.from(ctx);
-        var modes = cfg.modeSet();
-        var ua = ctx.getRequest() != null ? ctx.getRequest().getUa() : null;
-        var mode = WxpayModeResolver.resolve(ua, modes, cfg.mpAppId() != null, cfg.miniAppId() != null);
-        if (mode == null) return Responses.respError("当前通道未开启微信支付方式");
+    public PageOutcome wxpay(InvokeContext ctx) {
+        var mode = resolveMode(ctx);
+        if (mode == null) throw new ExpectedFailureException("当前通道未开启微信支付方式");
         return switch (mode) {
             case QRCODE -> lockCreate(ctx, Native);
             case H5     -> lockCreate(ctx, H5);
             case APP    -> lockCreate(ctx, App);
-            case MP     -> handleWxMp(ctx, cfg, ua);
-            case MINI   -> handleWxMini(ctx, cfg);
+            case MP     -> handleWxMp(ctx);
+            case MINI   -> handleWxMini(ctx);
         };
+    }
+
+    /** 按 UA + 已开启方式 + 公众号/小程序绑定解析支付模式。 */
+    private static WxpayModeResolver.Mode resolveMode(InvokeContext ctx) {
+        var cfg = WxpayConfig.from(ctx);
+        var ua = ctx.getRequest() != null ? ctx.getRequest().getUa() : null;
+        return WxpayModeResolver.resolve(ua, cfg.modeSet(), cfg.mpAppId() != null, cfg.miniAppId() != null);
     }
 
     // =========================================================================
@@ -53,7 +56,7 @@ public class WxpayCreateHandler {
         var base = new LinkedHashMap<String, Object>();
         base.put("out_trade_no", order.getTradeNo());
         base.put("description", cfg.getGoodsName());
-        base.put("notify_url", cfg.getNotifyDomain() + "/pay/notify/" + order.getTradeNo());
+        base.put("notify_url", PaymentPaths.notify(cfg.getNotifyDomain(), order.getTradeNo()));
         var amount = new LinkedHashMap<String, Object>();
         amount.put("total", Math.toIntExact(order.getReal()));
         amount.put("currency", "CNY");
@@ -144,14 +147,17 @@ public class WxpayCreateHandler {
         }
         var resp = cfg.client().post(singlePath(kind, cfg), HttpHelper.MAPPER.valueToTree(body), ctx);
         if (kind == Kind.NATIVE) {
-            return Sdk.FetchResult.of(Responses.respPageURL("wxpay_qrcode",
-                    resp.body().path("code_url").asString()), resp);
+            var codeUrl = resp.body().path("code_url").asString(null);
+            if (codeUrl == null || codeUrl.isBlank())
+                return Sdk.FetchResult.of(Pages.fail("下单未返回 code_url"), resp);
+            return Sdk.FetchResult.of(Pages.page("wxpay_qrcode", codeUrl), resp);
         }
         if (kind == Kind.H5) {
             var url = resp.body().path("h5_url").asString(null);
-            if (url == null) throw new Sdk.BizFailException("H5 下单未返回 h5_url", resp);
+            if (url == null || url.isBlank())
+                return Sdk.FetchResult.of(Pages.fail("H5 下单未返回 h5_url"), resp);
             url += "&redirect_url=" + urlEncode(resultPageUrl(cfg, ctx));
-            return Sdk.FetchResult.of(Responses.respJump(url), resp);
+            return Sdk.FetchResult.of(Pages.redirect(url), resp);
         }
         return appJsapiResult(kind, cfg, resp, appId);
     }
@@ -184,7 +190,7 @@ public class WxpayCreateHandler {
         body.put("combine_appid", cfg.genericAppId());
         body.put("combine_mchid", cfg.getMchId());
         body.put("combine_out_trade_no", order.getTradeNo());
-        body.put("notify_url", cfg.getNotifyDomain() + "/pay/notify/" + order.getTradeNo());
+        body.put("notify_url", PaymentPaths.notify(cfg.getNotifyDomain(), order.getTradeNo()));
         var subOrders = new ArrayList<Map<String, Object>>(plan.size());
         for (int i = 0; i < plan.size(); i++) {
             var sub = new LinkedHashMap<String, Object>();
@@ -232,14 +238,16 @@ public class WxpayCreateHandler {
         Sdk.saveSubOrders(ctx, order.getTradeNo(), items);
         if (kind == Kind.NATIVE) {
             var codeUrl = resp.body().path("code_url").asString(null);
-            if (codeUrl == null) throw new Sdk.BizFailException("合单下单未返回 code_url", resp);
-            return Sdk.FetchResult.of(Responses.respPageURL("wxpay_qrcode", codeUrl), resp);
+            if (codeUrl == null || codeUrl.isBlank())
+                return Sdk.FetchResult.of(Pages.fail("合单下单未返回 code_url"), resp);
+            return Sdk.FetchResult.of(Pages.page("wxpay_qrcode", codeUrl), resp);
         }
         if (kind == Kind.H5) {
             var url = resp.body().path("h5_url").asString(null);
-            if (url == null) throw new Sdk.BizFailException("合单 H5 未返回 h5_url", resp);
+            if (url == null || url.isBlank())
+                return Sdk.FetchResult.of(Pages.fail("合单 H5 未返回 h5_url"), resp);
             url += "&redirect_url=" + urlEncode(resultPageUrl(cfg, ctx));
-            return Sdk.FetchResult.of(Responses.respJump(url), resp);
+            return Sdk.FetchResult.of(Pages.redirect(url), resp);
         }
         return appJsapiResult(kind, cfg, resp, appId);
     }
@@ -248,8 +256,10 @@ public class WxpayCreateHandler {
     private static Sdk.FetchResult appJsapiResult(Kind kind, WxpayConfig cfg,
                                                   WechatPayV3Client.WxResponse resp, String appId) throws Exception {
         var prepayId = resp.body().path("prepay_id").asString(null);
-        if (prepayId == null) throw new Sdk.BizFailException(
-                (kind == Kind.APP ? "APP" : "JSAPI") + "下单未返回 prepay_id", resp);
+        // 渠道已受理且可解析、只是拿不到调起参数：明确拒绝（不能构造支付页）
+        if (prepayId == null || prepayId.isBlank())
+            return Sdk.FetchResult.of(Pages.fail(
+                    (kind == Kind.APP ? "APP" : "JSAPI") + "下单未返回 prepay_id"), resp);
         var timeStamp = String.valueOf(System.currentTimeMillis() / 1000);
         var nonceStr = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         if (kind == Kind.APP) {
@@ -263,7 +273,7 @@ public class WxpayCreateHandler {
             params.put("sign", cfg.client().appPaySign(appId,
                     Long.parseLong(timeStamp), nonceStr, prepayId));
             var codeUrl = "weixin://app/" + appId + "/pay/?" + formUrlEncode(params);
-            return Sdk.FetchResult.of(Responses.respPageURL("wxpay_h5", codeUrl), resp);
+            return Sdk.FetchResult.of(Pages.page("wxpay_h5", codeUrl), resp);
         }
         var params = new LinkedHashMap<String, Object>();
         params.put("appId", appId);
@@ -273,7 +283,7 @@ public class WxpayCreateHandler {
         params.put("signType", "RSA");
         params.put("paySign", cfg.client().paySign(appId, Long.parseLong(timeStamp), nonceStr, prepayId));
         // 模板把 js_api_parameters 直接喂 WeixinJSBridge.invoke，调起参数须落在该键且为对象
-        return Sdk.FetchResult.of(Responses.respPageData("wxpay_jspay",
+        return Sdk.FetchResult.of(Pages.page("wxpay_jspay", null,
                 Map.of("js_api_parameters", params)), resp);
     }
 
@@ -281,68 +291,92 @@ public class WxpayCreateHandler {
     // 公众号 / 小程序 OAuth（APIv3 JSAPI）
     // =========================================================================
 
-    private PageResponse handleWxMp(InvokeContext ctx, WxpayConfig cfg, String ua) {
+    private PageOutcome handleWxMp(InvokeContext ctx) {
+        var cfg = WxpayConfig.from(ctx);
+        var local = mpLocalPage(ctx, cfg);
+        if (local != null) return local;
         var mpAppId = cfg.mpAppId();
-        if (mpAppId == null) return Responses.respError("缺少公众号配置（请先在后台绑定公众号）");
-        var order = ctx.getOrder();
-        var code = queryParam(ctx, "code");
-        var retUrl = buildReturnUrl(ctx, cfg);
-        if (code.isBlank()) {
-            if (HttpHelper.isWeChat(ua)) {
-                // 授权 URL 由 SDK 内置决策：统一公众号已配置 → 先经宿主 /oauth/wxmp 用系统公众号授权
-                //（风控身份落库 buyer + 黑名单），随后微信重定向到本通道公众号授权；未配置 → 直接
-                // 通道授权。两条路径最终兑换的 openid 恒为本通道公众号 openid（支付 appid 同源），
-                // buyer 由宿主/SDK 内部管理，插件不读不判。参数已由上下文保证非空，无需防御分支
-                return Responses.respJump(OAuthHelper.buildMpPayAuthUrl(ctx, mpAppId, retUrl,
-                        order.getTradeNo()));
-            }
-            return Responses.respPageURL("wxpay_qrcode", retUrl);
-        }
         // OAuth 兑换在锁外执行：lockOrderExt 只缓存真正下单结果，openid 不做缓存。
         // 兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应全部由 SDK 内置（exchangeMpOpenid），
         // 插件只提供「拿到 openid 后如何下单」的回调，无任何风控分支
-        return OAuthHelper.exchangeMpOpenid(ctx, mpAppId, cfg.mpAppSecret(), code,
-                openid -> lockCreate(ctx, (ictx, icfg, iorder) -> {
-                    try {
-                        return jsapiPage(ictx, icfg, iorder, mpAppId, openid);
-                    } catch (RuntimeException e) { throw e;
-                    } catch (Exception e) { throw new RuntimeException("公众号支付失败[" + e.getMessage() + "]", e); }
-                }));
+        return OAuthHelper.exchangeMpOpenid(ctx, mpAppId, cfg.mpAppSecret(), queryParam(ctx, "code"),
+                openid -> lockCreate(ctx, (ictx, icfg, iorder) ->
+                        jsapiFetch(ictx, icfg, iorder, mpAppId, openid)));
     }
 
-    private PageResponse handleWxMini(InvokeContext ctx, WxpayConfig cfg) {
+    private PageOutcome handleWxMini(InvokeContext ctx) {
+        var cfg = WxpayConfig.from(ctx);
+        var local = miniLocalPage(ctx, cfg);
+        if (local != null) return local;
         var miniAppId = cfg.miniAppId();
-        if (miniAppId == null) return Responses.respError("缺少小程序配置（请先在后台绑定小程序）");
-        var code = queryParam(ctx, "auth_code");
-        var retUrl = buildReturnUrl(ctx, cfg);
-        if (code.isBlank()) {
-            try {
-                var scheme = OAuthHelper.getMiniScheme(ctx, miniAppId, cfg.miniAppSecret(), "page/pay",
-                        "real=" + toYuan(ctx.getOrder().getReal()) + "&url="
-                                + java.net.URLEncoder.encode(retUrl, java.nio.charset.StandardCharsets.UTF_8));
-                return Responses.respPageURL("wxpay_h5", scheme);
-            } catch (Exception e) {
-                if (!PluginLog.isExpected(e)) {
-                    log.error("获取小程序 scheme 失败", e);
-                }
-                return Responses.respError("小程序跳转失败");
-            }
-        }
         // OAuth 兑换在锁外执行：lockOrderExt 只缓存真正下单结果，openid 不做缓存。
         // 兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应全部由 SDK 内置（exchangeMiniOpenid），
         // 插件只提供「拿到 openid 后如何下单」的回调，无任何风控分支
-        return OAuthHelper.exchangeMiniOpenid(ctx, miniAppId, cfg.miniAppSecret(), code,
-                openid -> lockCreate(ctx, (ictx, icfg, iorder) -> {
-                    try {
-                        return jsapiPage(ictx, icfg, iorder, miniAppId, openid);
-                    } catch (RuntimeException e) { throw e;
-                    } catch (Exception e) { throw new RuntimeException("小程序支付失败[" + e.getMessage() + "]", e); }
-                }));
+        return OAuthHelper.exchangeMiniOpenid(ctx, miniAppId, cfg.miniAppSecret(), queryParam(ctx, "auth_code"),
+                openid -> lockCreate(ctx, (ictx, icfg, iorder) ->
+                        jsapiFetch(ictx, icfg, iorder, miniAppId, openid)));
+    }
+
+    /**
+     * 公众号本地页：未配置 → 预期失败；无 code → 微信内跳授权、其余 UA 出扫码中转页；
+     * 有 code → null（继续 OAuth 兑换并下单）。
+     */
+    private static PageOutcome mpLocalPage(InvokeContext ctx, WxpayConfig cfg) {
+        var mpAppId = cfg.mpAppId();
+        if (mpAppId == null) throw new ExpectedFailureException("缺少公众号配置（请先在后台绑定公众号）");
+        if (!queryParam(ctx, "code").isBlank()) return null;
+        var retUrl = buildReturnUrl(ctx, cfg);
+        if (HttpHelper.isWeChat(uaOf(ctx))) {
+            // 授权 URL 由 SDK 内置决策：统一公众号已配置 → 先经宿主 /oauth/wxmp 用系统公众号授权
+            //（风控身份落库 buyer + 黑名单），随后微信重定向到本通道公众号授权；未配置 → 直接
+            // 通道授权。两条路径最终兑换的 openid 恒为本通道公众号 openid（支付 appid 同源），
+            // buyer 由宿主/SDK 内部管理，插件不读不判。参数已由上下文保证非空，无需防御分支
+            return Pages.redirect(OAuthHelper.buildMpPayAuthUrl(ctx, mpAppId, retUrl,
+                    ctx.getOrder().getTradeNo()));
+        }
+        return Pages.page("wxpay_qrcode", retUrl);
+    }
+
+    /** 小程序本地页：未配置 → 预期失败；无 auth_code → 生成 scheme 跳小程序；有 → null（继续下单） */
+    private static PageOutcome miniLocalPage(InvokeContext ctx, WxpayConfig cfg) {
+        var miniAppId = cfg.miniAppId();
+        if (miniAppId == null) throw new ExpectedFailureException("缺少小程序配置（请先在后台绑定小程序）");
+        if (!queryParam(ctx, "auth_code").isBlank()) return null;
+        try {
+            var scheme = OAuthHelper.getMiniScheme(ctx, miniAppId, cfg.miniAppSecret(), "page/pay",
+                    "real=" + toYuan(ctx.getOrder().getReal()) + "&url="
+                            + java.net.URLEncoder.encode(buildReturnUrl(ctx, cfg),
+                            java.nio.charset.StandardCharsets.UTF_8));
+            return Pages.page("wxpay_h5", scheme);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ResultUnknownException("获取小程序 scheme 被中断", e);
+        } catch (Exception e) {
+            // 生成失败属结果未知（订单尚未建单）：预期异常原样上抛，代码缺陷记 ERROR
+            if (!PluginLog.isExpected(e)) log.error("获取小程序 scheme 失败", e);
+            throw e instanceof RuntimeException re ? re
+                    : new ResultUnknownException("小程序跳转失败: " + e.getMessage(), e);
+        }
+    }
+
+    /** lockCreate 的下单体：渠道客户端只抛受检异常（IOException/InterruptedException），统一转非受检。 */
+    private static Sdk.FetchResult jsapiFetch(InvokeContext ctx, WxpayConfig cfg, OrderSnapshot order,
+                                              String appId, String openid) {
+        try {
+            return jsapiPage(ctx, cfg, order, appId, openid);
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ResultUnknownException(channelFailure(), e);
+        } catch (Exception e) {
+            throw new ResultUnknownException("下单请求失败: " + e.getMessage(), e);
+        }
     }
 
     /** APIv3 JSAPI 下单 + 服务端 paySign（RSA），键名保持前端契约 wxpay_jspay；达阈值自动合单拆单 */
-    private Sdk.FetchResult jsapiPage(InvokeContext ctx, WxpayConfig cfg, OrderSnapshot order,
-                                      String appId, String openid) throws Exception {
+    private static Sdk.FetchResult jsapiPage(InvokeContext ctx, WxpayConfig cfg, OrderSnapshot order,
+                                             String appId, String openid) throws Exception {
         return executeWithCombine(ctx, cfg, order, Kind.JSAPI, appId, openid);
     }
 
@@ -350,23 +384,25 @@ public class WxpayCreateHandler {
     // lockCreate
     // =========================================================================
 
-    private PageResponse lockCreate(InvokeContext ctx, Mode mode) {
+    /**
+     * 渠道客户端异常归类：传输层失败与渠道 HTTP 失败均为结果未定（S_WAIT）——下单是否已受理
+     * 无法从错误响应判定；验签/解密失败（httpStatus=0）同样未知。渠道明确拒绝只来自可解析的
+     * 业务响应（由各 execute 映射为 Pages.fail）。
+     */
+    private PageOutcome lockCreate(InvokeContext ctx, Mode mode) {
         var cfg = WxpayConfig.from(ctx);
         return Sdk.lockCreate(ctx, () -> {
             try {
                 return mode.execute(ctx, cfg, ctx.getOrder());
             } catch (WechatPayException e) {
-                if (e.httpStatus() > 0) {
-                    // 渠道 HTTP 失败：微信错误 JSON 有 code/message → 透传业务失败文案；
-                    // 纯网关失败（无 code，如 502/nginx）→ 统一文案
-                    var msg = e.code() == null ? channelFailure(e.httpStatus()) : e.getMessage();
-                    throw new Sdk.BizFailException(msg, e);
-                }
-                // 验签/解密失败（httpStatus=0）：非渠道问题，保持原样冒泡
-                throw e;
+                throw new ResultUnknownException(e.httpStatus() > 0
+                        ? channelFailure(e.httpStatus()) + "[" + e.getMessage() + "]"
+                        : "微信响应校验失败[" + e.getMessage() + "]", e, e);
             } catch (IOException e) {
-                // 传输层失败（超时/连接失败）：无 HTTP 响应，归因渠道统一文案
-                throw new Sdk.BizFailException(channelFailure(), null, e);
+                throw new ResultUnknownException(channelFailure(), e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ResultUnknownException(channelFailure(), e);
             }
         });
     }
@@ -375,13 +411,17 @@ public class WxpayCreateHandler {
     // 工具
     // =========================================================================
 
-    private String buildReturnUrl(InvokeContext ctx, WxpayConfig cfg) {
-        return (cfg != null ? cfg.getSiteDomain() : "") + "/pay/wxpay/" + ctx.getOrder().getTradeNo();
+    private static String buildReturnUrl(InvokeContext ctx, WxpayConfig cfg) {
+        return PaymentPaths.cashier(cfg != null ? cfg.getSiteDomain() : "", ctx.getOrder().getTradeNo());
     }
 
     /** 渠道 H5 同步回跳统一收口：支付结果状态机页（/pay/result/{tradeNo}）。buildReturnUrl 专供 OAuth/中转，勿混用 */
     private static String resultPageUrl(WxpayConfig cfg, InvokeContext ctx) {
-        return (cfg != null ? cfg.getSiteDomain() : "") + "/pay/result/" + ctx.getOrder().getTradeNo();
+        return PaymentPaths.result(cfg != null ? cfg.getSiteDomain() : "", ctx.getOrder().getTradeNo());
+    }
+
+    private static String uaOf(InvokeContext ctx) {
+        return ctx.getRequest() != null ? ctx.getRequest().getUa() : null;
     }
 
     private static String queryParam(InvokeContext ctx, String key) {

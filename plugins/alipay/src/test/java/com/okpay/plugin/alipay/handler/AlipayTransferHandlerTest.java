@@ -191,7 +191,7 @@ class AlipayTransferHandlerTest {
     }
 
     @Test
-    @DisplayName("账户转账：登录号（手机号/邮箱）收款缺姓名 → PARAM_ERROR 拒绝（不发起请求）")
+    @DisplayName("账户转账：登录号（手机号/邮箱）收款缺姓名 → PARAM_ERROR 结果未定（不发起请求）")
     void accountTransferLogonIdRequiresName() throws Exception {
         var xfer = TransferSnapshot.builder()
                 .tradeNo(XFER_NO).type("alipay").cardNo("user@example.com")
@@ -201,12 +201,12 @@ class AlipayTransferHandlerTest {
         var result = new AlipaySubmitHandler().handle(ctx,
                 BizRequest.builder().bizType(BizType.T_XFER).bizNo(XFER_NO).build());
 
-        assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+        assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
         assertThat(result.getMsg()).contains("收款人姓名");
     }
 
     @Test
-    @DisplayName("银行卡转账缺收款人姓名 → PARAM_ERROR 拒绝（不发起请求）")
+    @DisplayName("银行卡转账缺收款人姓名 → PARAM_ERROR 结果未定（不发起请求）")
     void bankcardTransferRequiresName() throws Exception {
         var xfer = TransferSnapshot.builder()
                 .tradeNo(XFER_NO).type("bank").cardNo("6225880000001234")
@@ -216,7 +216,7 @@ class AlipayTransferHandlerTest {
         var result = new AlipaySubmitHandler().handle(ctx,
                 BizRequest.builder().bizType(BizType.T_XFER).bizNo(XFER_NO).build());
 
-        assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+        assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
         assertThat(result.getMsg()).contains("收款人姓名");
     }
 
@@ -257,18 +257,18 @@ class AlipayTransferHandlerTest {
     }
 
     @Test
-    @DisplayName("银行卡转账账户类型缺失或未知 → 显式拒绝（S_FAIL，不静默默认对私）")
+    @DisplayName("银行卡转账账户类型缺失或未知 → 结果未定（S_WAIT，不静默默认对私）")
     void bankcardTransferRejectsUnknownAccountType() throws Exception {
         var missing = ctx(transfer("bank", null), null);
         var missingResult = new AlipaySubmitHandler().handle(missing,
                 BizRequest.builder().bizType(BizType.T_XFER).bizNo(XFER_NO).build());
-        assertThat(missingResult.getState()).isEqualTo(BizState.S_FAIL);
+        assertThat(missingResult.getState()).isEqualTo(BizState.S_WAIT);
         assertThat(missingResult.getMsg()).contains("未知打款账户类型");
 
         var unknown = ctx(transfer("bank", "corp"), null);
         var unknownResult = new AlipaySubmitHandler().handle(unknown,
                 BizRequest.builder().bizType(BizType.T_XFER).bizNo(XFER_NO).build());
-        assertThat(unknownResult.getState()).isEqualTo(BizState.S_FAIL);
+        assertThat(unknownResult.getState()).isEqualTo(BizState.S_WAIT);
         assertThat(unknownResult.getMsg()).contains("未知打款账户类型");
     }
 
@@ -415,6 +415,100 @@ class AlipayTransferHandlerTest {
             assertThat(result.getState()).isEqualTo(BizState.S_OK);
             assertThat(parseBizContent(bodyCaptor.getValue()))
                     .containsEntry("product_code", "TRANS_ACCOUNT_NO_PWD");
+        }
+    }
+
+    // =========================================================================
+    // 失败语义：仅文档明确状态判 S_FAIL，其余 S_WAIT
+    // =========================================================================
+
+    private static String transferBody(String code, String subCode, String subMsg) {
+        return "{\"code\":\"" + code + "\",\"msg\":\"Business Failed\",\"sub_code\":\"" + subCode
+                + "\",\"sub_msg\":\"" + subMsg + "\"}";
+    }
+
+    @Test
+    @DisplayName("打款提交：业务码拒绝（收款账号不存在）→ S_FAIL（渠道明确拒绝）")
+    void transferBusinessRejectFails() throws Exception {
+        var ctx = ctx(transfer("alipay", null), null);
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any()))
+                    .thenAnswer(inv -> new HttpHelper.HttpResponse(200, Map.of(),
+                            signedResponse("alipay_fund_trans_uni_transfer_response",
+                                    transferBody("40004", "PAYEE_NOT_EXIST", "收款账号不存在")),
+                            "req", 10, 1));
+            var result = new AlipaySubmitHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_XFER).bizNo(XFER_NO).build());
+            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+            assertThat(result.getCode()).isEqualTo("PAYEE_NOT_EXIST");
+        }
+    }
+
+    @Test
+    @DisplayName("打款提交：40004+SYSTEM_ERROR（结果未知）→ S_WAIT")
+    void transferSystemErrorWaits() throws Exception {
+        var ctx = ctx(transfer("alipay", null), null);
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any()))
+                    .thenAnswer(inv -> new HttpHelper.HttpResponse(200, Map.of(),
+                            signedResponse("alipay_fund_trans_uni_transfer_response",
+                                    transferBody("40004", "SYSTEM_ERROR", "系统繁忙")),
+                            "req", 10, 1));
+            var result = new AlipaySubmitHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_XFER).bizNo(XFER_NO).build());
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+        }
+    }
+
+    @Test
+    @DisplayName("打款查询：status=FAIL/REFUND（退票）→ S_FAIL；DEALING → S_WAIT")
+    void queryTransferStatusSemantics() throws Exception {
+        var ctx = ctx(transfer("alipay", null), null);
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any()))
+                    .thenAnswer(inv -> new HttpHelper.HttpResponse(200, Map.of(),
+                            signedResponse("alipay_fund_trans_common_query_response",
+                                    "{\"code\":\"10000\",\"msg\":\"Success\",\"status\":\"FAIL\"}"),
+                            "req", 10, 1));
+            assertThat(new AlipayQueryHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_XFER).bizNo(XFER_NO).build()).getState())
+                    .isEqualTo(BizState.S_FAIL);
+        }
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any()))
+                    .thenAnswer(inv -> new HttpHelper.HttpResponse(200, Map.of(),
+                            signedResponse("alipay_fund_trans_common_query_response",
+                                    "{\"code\":\"10000\",\"msg\":\"Success\",\"status\":\"REFUND\"}"),
+                            "req", 10, 1));
+            assertThat(new AlipayQueryHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_XFER).bizNo(XFER_NO).build()).getState())
+                    .isEqualTo(BizState.S_FAIL);
+        }
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any()))
+                    .thenAnswer(inv -> new HttpHelper.HttpResponse(200, Map.of(),
+                            signedResponse("alipay_fund_trans_common_query_response",
+                                    "{\"code\":\"10000\",\"msg\":\"Success\",\"status\":\"DEALING\"}"),
+                            "req", 10, 1));
+            assertThat(new AlipayQueryHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_XFER).bizNo(XFER_NO).build()).getState())
+                    .isEqualTo(BizState.S_WAIT);
+        }
+    }
+
+    @Test
+    @DisplayName("打款查询：ACQ.TRADE_NOT_EXIST 业务错误 → S_WAIT（不臆断失败）")
+    void queryTransferNotExistWaits() throws Exception {
+        var ctx = ctx(transfer("alipay", null), null);
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any()))
+                    .thenAnswer(inv -> new HttpHelper.HttpResponse(200, Map.of(),
+                            signedResponse("alipay_fund_trans_common_query_response",
+                                    transferBody("40004", "ACQ.TRADE_NOT_EXIST", "交易不存在")),
+                            "req", 10, 1));
+            assertThat(new AlipayQueryHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_XFER).bizNo(XFER_NO).build()).getState())
+                    .isEqualTo(BizState.S_WAIT);
         }
     }
 }

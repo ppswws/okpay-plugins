@@ -41,8 +41,8 @@ import static org.mockito.Mockito.when;
 
 /**
  * AlipayQueryHandler 合单分支：逐子单 alipay.trade.query 聚合（QueryScanner 兜底），
- * 全 TRADE_SUCCESS/FINISHED 且金额一致 → 逐子单已付 + S_OK；含 WAIT_BUYER_PAY → ing；
- * 含 TRADE_CLOSED → fail；金额不符 → fail；查询异常 → ing。
+ * 全 TRADE_SUCCESS/FINISHED 且金额一致 → 逐子单已付 + S_OK；含 WAIT_BUYER_PAY / TRADE_CLOSED /
+ * 业务错误 → S_WAIT（订单查单永不 S_FAIL）；金额不符 → S_WAIT；查询异常 → S_WAIT。
  * 退款查询（T_REF）：主单有子单 → 复用 refundCombine 逐单续退。
  */
 @DisplayName("AlipayQueryHandler 合单查询")
@@ -182,8 +182,8 @@ class AlipayCombineQueryHandlerTest {
     }
 
     @Test
-    @DisplayName("含 WAIT_BUYER_PAY → S_ING（保持待支付，等 QueryScanner 再扫）")
-    void waitPayIng() throws Exception {
+    @DisplayName("含 WAIT_BUYER_PAY → S_WAIT（保持待支付，等 QueryScanner 再扫）")
+    void waitPayWait() throws Exception {
         var ctx = ctx(null);
         var cb = ctx.getCallback();
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
@@ -196,15 +196,15 @@ class AlipayCombineQueryHandlerTest {
             var result = new AlipayQueryHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_PAY).bizNo(TRADE_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("WAIT_BUYER_PAY");
             verify(cb, never()).updateSubOrder(any());
         }
     }
 
     @Test
-    @DisplayName("含 TRADE_CLOSED → S_FAIL")
-    void closedFails() throws Exception {
+    @DisplayName("含 TRADE_CLOSED → S_WAIT（关闭不是支付失败，可能为未付款超时或全额退款）")
+    void closedWaits() throws Exception {
         var ctx = ctx(null);
         var cb = ctx.getCallback();
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
@@ -217,15 +217,15 @@ class AlipayCombineQueryHandlerTest {
             var result = new AlipayQueryHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_PAY).bizNo(TRADE_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("TRADE_CLOSED");
             verify(cb, never()).updateSubOrder(any());
         }
     }
 
     @Test
-    @DisplayName("子单金额不符（查询 total_amount 元字符串）→ S_FAIL COMBINE_MISMATCH")
-    void amountMismatchFails() throws Exception {
+    @DisplayName("子单金额不符（查询 total_amount 元字符串）→ S_WAIT COMBINE_MISMATCH")
+    void amountMismatchWaits() throws Exception {
         var ctx = ctx(null);
         var cb = ctx.getCallback();
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
@@ -238,15 +238,15 @@ class AlipayCombineQueryHandlerTest {
             var result = new AlipayQueryHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_PAY).bizNo(TRADE_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("COMBINE_MISMATCH");
             verify(cb, never()).updateSubOrder(any());
         }
     }
 
     @Test
-    @DisplayName("查询异常（业务处理中/网络抖动）→ S_ING（不误判终态）")
-    void queryErrorIng() throws Exception {
+    @DisplayName("子单查询业务错误（ACQ.TRADE_NOT_EXIST）→ S_WAIT（不误判终态）")
+    void queryErrorWait() throws Exception {
         var ctx = ctx(null);
         var cb = ctx.getCallback();
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
@@ -262,7 +262,7 @@ class AlipayCombineQueryHandlerTest {
             var result = new AlipayQueryHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_PAY).bizNo(TRADE_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             verify(cb, never()).updateSubOrder(any());
         }
     }

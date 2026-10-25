@@ -2,7 +2,6 @@ package com.okpay.plugin.alipay;
 
 import com.okpay.plugin.AbstractPaymentChannel;
 import com.okpay.plugin.enums.BizType;
-import com.okpay.plugin.model.*;
 import com.okpay.plugin.alipay.handler.*;
 import org.pf4j.Extension;
 
@@ -21,28 +20,15 @@ public class AlipayPlugin extends AbstractPaymentChannel {
     private final AlipaySubmitHandler submitHandler = new AlipaySubmitHandler();
 
     public AlipayPlugin() {
-        on("alipay",  createHandler::alipay);
-
-        // 通知
-        on("notify",       notifyHandler::payNotify);
-        on("refundnotify", notifyHandler::refundNotify);
-    }
-
-    @Override
-    public PluginInfo info() {
-        return AlipayPluginInfo.get();
-    }
-
-    @Override
-    public BizResult submit(InvokeContext ctx, BizRequest req) {
-        if (req.getBizType() == BizType.T_PAY) {
-            return createHandler.submit(ctx);
-        }
-        return submitHandler.handle(ctx, req);
-    }
-
-    @Override
-    public BizResult query(InvokeContext ctx, BizRequest req) {
-        return queryHandler.handle(ctx, req);
+        super(AlipayPluginDeclaration.declaration());
+        onCreate("alipay", createHandler::alipay);
+        onNotify("notify", notifyHandler::payNotify);
+        onNotify("refundnotify", notifyHandler::refundNotify);
+        onSubmit(BizType.T_REF, submitHandler::handle);
+        onSubmit(BizType.T_XFER, submitHandler::handle);
+        onQuery(BizType.T_PAY, queryHandler::handle);
+        onQuery(BizType.T_REF, queryHandler::handle);
+        onQuery(BizType.T_XFER, queryHandler::handle);
+        onQuery(BizType.T_BAL, queryHandler::handle);
     }
 }

@@ -12,7 +12,9 @@ import com.okpay.plugin.model.OrderSnapshot;
 import com.okpay.plugin.model.RefundSnapshot;
 import com.okpay.plugin.model.RequestSnapshot;
 import com.okpay.plugin.model.TransferSnapshot;
+import com.okpay.plugin.model.NotifyResponse;
 import com.okpay.plugin.sdk.HttpHelper;
+import com.okpay.plugin.sdk.Notify;
 import com.okpay.plugin.sdk.PaymentUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -56,7 +58,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().payNotify(
                 ctx(cb, null, orderQuery(orderNotify("100", "1.00", "T1")), "T1", 100L, null, null, null));
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertAckOk(resp, "success");
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         var req = captor.getValue();
@@ -75,7 +77,8 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().payNotify(
                 ctx(cb, null, orderQuery(orderNotify("101", "1.00", "T1")), "T1", 100L, null, null, null));
 
-        assertThat(resp.getDataText()).isEqualTo("status=101");
+        assertAckFail(resp, "status=101");
+        // 支付订单没有失败终态：只应答，不写状态/结果（不得推进 S_FAIL）
         verify(cb, never()).completeBiz(any());
     }
 
@@ -89,7 +92,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().payNotify(
                 ctx(cb, null, orderQuery(params), "T1", 100L, null, null, null));
 
-        assertThat(resp.getDataText()).isEqualTo("sign_error");
+        assertAckFail(resp, "sign_error");
         verify(cb, never()).completeBiz(any());
     }
 
@@ -101,7 +104,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().payNotify(
                 ctx(cb, null, orderQuery(orderNotify("100", "9.99", "T1")), "T1", 100L, null, null, null));
 
-        assertThat(resp.getDataText()).isEqualTo("amount_mismatch");
+        assertAckFail(resp, "amount_mismatch");
         verify(cb, never()).completeBiz(any());
     }
 
@@ -111,7 +114,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().payNotify(
                 ctx(mock(HostCallback.class), null, orderQuery(orderNotify("100", "1.00", "OTHER1")), "T1", 100L, null, null, null));
 
-        assertThat(resp.getDataText()).isEqualTo("order_mismatch");
+        assertAckFail(resp, "order_mismatch");
     }
 
     @Test
@@ -123,7 +126,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().payNotify(
                 ctx(cb, null, orderQuery(orderNotify("100", "1.00", "T1")), "T1", 100L, null, null, null));
 
-        assertThat(resp.getDataText()).isEqualTo("fail");
+        assertAckFail(resp, "fail");
     }
 
     // =========================================================================
@@ -138,7 +141,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().refundNotify(
                 ctx(cb, json(refundNotify("100", "1.00", "R1")), null, null, 0L, "R1", 100L, null));
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertAckOk(resp, "success");
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         assertThat(captor.getValue().getBizType()).isEqualTo(BizType.T_REF);
@@ -155,7 +158,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().refundNotify(
                 ctx(cb, json(refundNotify("101", "1.00", "R1")), null, null, 0L, "R1", 100L, null));
 
-        assertThat(resp.getDataText()).isEqualTo("status=101");
+        assertAckFail(resp, "status=101");
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         assertThat(captor.getValue().getState()).isEqualTo(BizState.S_FAIL);
@@ -171,7 +174,7 @@ class JoinpayNotifyHandlerTest {
 
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
-        assertThat(captor.getValue().getState()).isEqualTo(BizState.S_ING);
+        assertThat(captor.getValue().getState()).isEqualTo(BizState.S_WAIT);
     }
 
     @Test
@@ -180,7 +183,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().refundNotify(
                 ctx(mock(HostCallback.class), json(refundNotify("100", "0.50", "R1")), null, null, 0L, "R1", 100L, null));
 
-        assertThat(resp.getDataText()).isEqualTo("amount_mismatch");
+        assertAckFail(resp, "amount_mismatch");
     }
 
     @Test
@@ -189,7 +192,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().refundNotify(
                 ctx(mock(HostCallback.class), json(refundNotify("100", "1.00", "R-OTHER")), null, null, 0L, "R1", 100L, null));
 
-        assertThat(resp.getDataText()).isEqualTo("refund_mismatch");
+        assertAckFail(resp, "refund_mismatch");
     }
 
     @Test
@@ -202,7 +205,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().refundNotify(
                 ctx(cb, json(params), null, null, 0L, "R1", 100L, null));
 
-        assertThat(resp.getDataText()).isEqualTo("sign_error");
+        assertAckFail(resp, "sign_error");
         verify(cb, never()).completeBiz(any());
     }
 
@@ -220,7 +223,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().refundNotify(
                 ctx(cb, json(m), null, null, 0L, REAL_REFUND_NO, 100L, null));
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertAckOk(resp, "success");
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         assertThat(captor.getValue().getState()).isEqualTo(BizState.S_OK);
@@ -239,7 +242,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().refundNotify(
                 ctx(cb, json(m), null, null, 0L, REAL_REFUND_NO, 100L, null));
 
-        assertThat(resp.getDataText()).isEqualTo("sign_error");
+        assertAckFail(resp, "sign_error");
         verify(cb, never()).completeBiz(any());
     }
 
@@ -256,7 +259,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().refundNotify(
                 ctx(cb, json(m), null, null, 0L, REAL_REFUND_NO, 100L, null));
 
-        assertThat(resp.getDataText()).isEqualTo("sign_error");
+        assertAckFail(resp, "sign_error");
         verify(cb, never()).completeBiz(any());
     }
 
@@ -291,7 +294,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().transferNotify(
                 ctx(cb, json(transferNotify("205", "T1")), null, null, 0L, null, null, "T1"));
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertAckOk(resp, "success");
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         assertThat(captor.getValue().getBizType()).isEqualTo(BizType.T_XFER);
@@ -308,7 +311,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().transferNotify(
                 ctx(cb, json(transferNotify("204", "T1", "300002014", "订单记录不存在")), null, null, 0L, null, null, "T1"));
 
-        assertThat(resp.getDataText()).isEqualTo("status=204");
+        assertAckFail(resp, "status=204");
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         assertThat(captor.getValue().getState()).isEqualTo(BizState.S_FAIL);
@@ -325,7 +328,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().transferNotify(
                 ctx(cb, json(params), null, null, 0L, null, null, "T1"));
 
-        assertThat(resp.getDataText()).isEqualTo("sign_error");
+        assertAckFail(resp, "sign_error");
         verify(cb, never()).completeBiz(any());
     }
 
@@ -339,7 +342,7 @@ class JoinpayNotifyHandlerTest {
 
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
-        assertThat(captor.getValue().getState()).isEqualTo(BizState.S_ING);
+        assertThat(captor.getValue().getState()).isEqualTo(BizState.S_WAIT);
         assertThat(captor.getValue().getApiNo()).isEqualTo("PSN1");
     }
 
@@ -349,7 +352,7 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().transferNotify(
                 ctx(mock(HostCallback.class), json(transferNotify("205", "OTHER1")), null, null, 0L, null, null, "T1"));
 
-        assertThat(resp.getDataText()).isEqualTo("transfer_mismatch");
+        assertAckFail(resp, "transfer_mismatch");
     }
 
     @Test
@@ -375,7 +378,21 @@ class JoinpayNotifyHandlerTest {
         var resp = new JoinpayNotifyHandler().transferNotify(
                 ctx(mock(HostCallback.class), HttpHelper.MAPPER.writeValueAsBytes(m), null, null, 0L, null, null, "T1"));
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertAckOk(resp, "success");
+    }
+
+    // =========================================================================
+    // 内部：应答断言
+    // =========================================================================
+
+    /** 应答成功（宿主写 HTTP 200）：渠道不再补发 */
+    private static void assertAckOk(NotifyResponse resp, String body) {
+        assertThat(resp).isEqualTo(Notify.ok(body));
+    }
+
+    /** 应答失败（宿主写 HTTP 400）：触发渠道补发 */
+    private static void assertAckFail(NotifyResponse resp, String body) {
+        assertThat(resp).isEqualTo(Notify.fail(body));
     }
 
     // =========================================================================

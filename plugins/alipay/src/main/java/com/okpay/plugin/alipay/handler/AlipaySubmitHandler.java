@@ -14,6 +14,11 @@ import java.util.*;
 
 /**
  * 支付宝 Submit 处理器 — 退款/打款（零第三方 SDK，走 AlipayOpenApiClient）。
+ *
+ * <p>失败语义：退款提交“受理成功（10000）≠ 资金变动成功”，fund_change=Y 才成功；业务拒绝/SYSTEM_ERROR/
+ * 网络未知均为结果未定（S_WAIT），文档未给出明确的“退款失败”状态码，不据此判失败。
+ * 打款提交业务拒绝（如收款账号/姓名不符）为渠道明确拒绝 → S_FAIL；SYSTEM_ERROR/网络未知 → S_WAIT。
+ * 打款本地参数校验（账户类型缺失/未知、登录号收款缺姓名）为明确拒绝 → S_FAIL（不发起请求）。</p>
  */
 public class AlipaySubmitHandler extends AbstractBizHandler {
 
@@ -33,11 +38,11 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
         var refund = ctx.getRefund();
         var order = ctx.getOrder();
         try {
-            // 合单退款：合单订单才查子单 → 逐子单提交（出参语义：全退 S_OK / 首败 S_FAIL / 部分 S_ING）；
+            // 合单退款：合单订单才查子单 → 逐子单提交（出参语义：全退 S_OK / 无任何成功 S_FAIL / 部分 S_WAIT）；
             // is_combine=1 但子单缺失 = 数据不一致，拒退不静默降级单笔
             if (order.isCombine()) {
                 var subs = Sdk.getSubOrders(ctx, order.getTradeNo());
-                if (subs.isEmpty()) return Responses.fail("REFUND_ERROR", "合单订单子单数据缺失");
+                if (subs.isEmpty()) return Responses.wait("REFUND_ERROR", "合单订单子单数据缺失");
                 return Sdk.refundCombine(ctx, refund, subs, AlipaySubmitHandler::submitSubRefund);
             }
 
@@ -47,7 +52,7 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
             biz.put("out_request_no", refund.getRefundNo());
             biz.put("refund_amount", toYuan(refund.getAmount()));
             biz.put("refund_reason", refund.getRemark() != null ? refund.getRemark() : "退款");
-            biz.put("notify_url", cfg.getNotifyDomain() + "/pay/refundnotify/" + refund.getRefundNo());
+            biz.put("notify_url", PaymentPaths.refundNotify(cfg.getNotifyDomain(), refund.getRefundNo()));
 
             var resp = cfg.client().execute(ctx, "alipay.trade.refund", biz, cfg.extras(null));
             if (resp.ok()) {
@@ -58,13 +63,13 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
                 }
                 log.debug("支付宝退款受理但资金未变动, refundNo={}, fundChange={}",
                         refund.getRefundNo(), resp.text("fund_change"));
-                return Responses.ingMsg("退款受理，待查询确认", resp);
+                return Responses.waitMsg("退款受理，待查询确认", resp);
             }
-            if (isUnknownOutcome(resp)) return Responses.ing(resp.code(), resp.subMsg(), resp);
-            return Responses.fail(resp.subCode(), resp.subMsg(), resp);
+            // 业务拒绝/SYSTEM_ERROR/响应不可解析：文档无明确退款失败状态，结果未定交查单
+            return Responses.wait(refundErrCode(resp), resp.subMsg(), resp);
         } catch (Exception e) {
             log.debug("支付宝退款提交状态未知, refundNo={}, exception={}", refund.getRefundNo(), e.getClass().getSimpleName());
-            return Responses.ing("REFUND_ERROR", e.getMessage());
+            return Responses.wait("REFUND_ERROR", e.getMessage());
         }
     }
 
@@ -72,14 +77,21 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
     // 合单退款（逐子单；submit 与 query(T_REF) 共用 Sdk.refundCombine 骨架）
     // =========================================================================
 
-    /** 40004+SYSTEM_ERROR = 系统错误结果未知 → 处理中（交查单确认），不作失败终态 */
+    /** 40004+SYSTEM_ERROR = 系统错误结果未知 → 等待（交查单确认），不作失败终态 */
     static boolean isUnknownOutcome(AlipayOpenApiClient.ApiResponse resp) {
         return "40004".equals(resp.code()) && "SYSTEM_ERROR".equals(resp.subCode());
     }
 
+    /** 退款等待结果的错误码：SYSTEM_ERROR → 原样透出；其余业务拒绝用 CHANNEL_REJECT（不据以判失败） */
+    static String refundErrCode(AlipayOpenApiClient.ApiResponse resp) {
+        if (isUnknownOutcome(resp)) return resp.code();
+        return resp.subCode() == null || resp.subCode().isBlank() ? "CHANNEL_REJECT" : resp.subCode();
+    }
+
     /**
      * 单子单退款提交（Sdk.refundCombine 子提交器）：成功 S_OK（apiNo=渠道交易号）/
-     * 确定性拒绝 S_FAIL / 受理中或网络未知 S_ING。out_request_no=refundNo_序号 唯一（重跑幂等）。
+     * 受理中、业务拒绝或网络未知 S_WAIT（文档无明确退款失败状态，不判失败）。
+     * out_request_no=refundNo_序号 唯一（重跑幂等）。
      */
     static com.okpay.plugin.model.BizResult submitSubRefund(InvokeContext ctx,
             com.okpay.plugin.model.RefundSnapshot refund, SubOrderSnapshot sub, long quota, int idx) {
@@ -90,7 +102,7 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
             biz.put("out_request_no", refund.getRefundNo() + "_" + idx);
             biz.put("refund_amount", toYuan(quota));
             biz.put("refund_reason", refund.getRemark() != null ? refund.getRemark() : "退款");
-            biz.put("notify_url", cfg.getNotifyDomain() + "/pay/refundnotify/" + refund.getRefundNo());
+            biz.put("notify_url", PaymentPaths.refundNotify(cfg.getNotifyDomain(), refund.getRefundNo()));
             var resp = cfg.client().execute(ctx, "alipay.trade.refund", biz, cfg.extras(null));
             if (resp.ok()) {
                 // 同单笔退款：受理成功 ≠ 资金变动成功，fund_change=Y 才计成功（N/缺失交查单确认）
@@ -99,16 +111,15 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
                 }
                 log.debug("合单退款子单受理但资金未变动, refundNo={}, sub={}, fundChange={}",
                         refund.getRefundNo(), sub.getSubTradeNo(), resp.text("fund_change"));
-                return Responses.ingMsg("退款受理，待查询确认", resp);
+                return Responses.waitMsg("退款受理，待查询确认", resp);
             }
             log.debug("合单退款子单被拒, refundNo={}, sub={}, subCode={}",
                     refund.getRefundNo(), sub.getSubTradeNo(), resp.subCode());
-            if (isUnknownOutcome(resp)) return Responses.ing(resp.code(), resp.subMsg(), resp);
-            return Responses.fail(resp.subCode(), resp.subMsg(), resp);
+            return Responses.wait(refundErrCode(resp), resp.subMsg(), resp);
         } catch (Exception e) {
             log.debug("合单退款子单状态未知, refundNo={}, sub={}, exception={}",
                     refund.getRefundNo(), sub.getSubTradeNo(), e.getClass().getSimpleName());
-            return Responses.ing("REFUND_ERROR", e.getMessage());
+            return Responses.wait("REFUND_ERROR", e.getMessage());
         }
     }
 
@@ -119,14 +130,13 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
     private com.okpay.plugin.model.BizResult submitTransfer(InvokeContext ctx, BizRequest req) {
         // 契约：T_XFER submit 时内核恒填 transfer，缺失即宿主缺陷——不再判空兜底
         var transfer = ctx.getTransfer();
-        // 银行卡打款的账户类型是本地参数契约（PaymentUtils 单点判定）：前置校验并转 S_FAIL，
-        // 不与渠道请求同处 try——参数错误不能落入「状态未知 → S_ING」的 catch
+        // 银行卡打款的账户类型是本地参数契约（PaymentUtils 单点判定）：本地前置校验失败 → S_WAIT
         String bankAccountType = null;
         if ("bank".equals(transfer.getType())) {
             try {
                 bankAccountType = PaymentUtils.isPublicAccount(transfer.getAccountType()) ? "1" : "2";
             } catch (ExpectedFailureException e) {
-                return Responses.fail("PARAM_ERROR", e.getMessage());
+                return Responses.wait("PARAM_ERROR", e.getMessage());
             }
         }
         try {
@@ -147,7 +157,7 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
                 payee.put("bankcard_ext_info", Map.of("account_type", bankAccountType));
                 // 银行卡打款必须校验收款人姓名（cardNo 与姓名不符时上游拒绝打款）
                 if (isBlank(transfer.getCardName()))
-                    return Responses.fail("PARAM_ERROR", "银行卡打款必须填写收款人姓名");
+                    return Responses.wait("PARAM_ERROR", "银行卡打款必须填写收款人姓名");
             } else {
                 biz.put("product_code", "TRANS_ACCOUNT_NO_PWD");
                 var identity = transfer.getCardNo() != null ? transfer.getCardNo() : "";
@@ -157,7 +167,7 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
                 biz.put("business_params", "{\"payer_show_name_use_alias\":\"true\"}");
                 // 官方要求：identity_type=ALIPAY_LOGON_ID（手机号/邮箱）时 name 必填
                 if ("ALIPAY_LOGON_ID".equals(identityType) && isBlank(transfer.getCardName()))
-                    return Responses.fail("PARAM_ERROR", "按登录账号（手机号/邮箱）打款必须填写收款人姓名");
+                    return Responses.wait("PARAM_ERROR", "按登录账号（手机号/邮箱）打款必须填写收款人姓名");
             }
             if (!isBlank(transfer.getCardName()))
                 payee.put("name", transfer.getCardName());
@@ -170,11 +180,12 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
             if (resp.ok()) {
                 return Responses.ok(resp.text("order_id"), resp);
             }
-            if (isUnknownOutcome(resp)) return Responses.ing(resp.code(), resp.subMsg(), resp);
-            return Responses.fail(resp.code(), resp.subMsg(), resp);
+            // SYSTEM_ERROR 结果未知 → 等待；其余业务码为渠道明确拒绝
+            if (isUnknownOutcome(resp)) return Responses.wait(resp.code(), resp.subMsg(), resp);
+            return Responses.fail(resp.subCode(), resp.subMsg(), resp);
         } catch (Exception e) {
             log.debug("支付宝打款提交状态未知, tradeNo={}, exception={}", transfer.getTradeNo(), e.getClass().getSimpleName());
-            return Responses.ing("XFER_ERROR", e.getMessage());
+            return Responses.wait("XFER_ERROR", e.getMessage());
         }
     }
 

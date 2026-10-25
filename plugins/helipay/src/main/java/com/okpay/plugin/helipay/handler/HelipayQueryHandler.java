@@ -13,8 +13,9 @@ import java.util.*;
 /**
  * 合利宝查询处理器（订单/退款/打款/余额）。
  *
- * <p>查询失败的语义：查单接口业务失败（rt2_retCode != 0000）或渠道异常
- * 一律保持处理中（S_ING）交还定时轮询；余额查询失败直接失败返回。</p>
+ * <p>查询失败的语义：支付订单查单不使用 S_FAIL（未支付/不存在/渠道异常一律 S_WAIT）；
+ * 退款/打款仅在渠道明确给出终态失败（退款 FAIL/CLOSE、打款 FAIL/REFUND）时 S_FAIL，
+ * 其余业务失败与渠道异常保持 S_WAIT 交还定时轮询；余额查询无单据状态，业务失败直接失败返回。</p>
  */
 public class HelipayQueryHandler extends AbstractBizHandler {
 
@@ -45,12 +46,9 @@ public class HelipayQueryHandler extends AbstractBizHandler {
             var m = PaymentUtils.parseJsonMap(resp.bodyAsString());
             if (!"0000".equals(m.get("rt2_retCode")))
                 return processing(m, resp);
+            // 支付订单查单不使用 S_FAIL：非成功一律结果未定，由回调/TTL 收敛
             var status = upper(m.get("rt7_orderStatus"));
-            var state = switch (status) {
-                case "SUCCESS" -> BizState.S_OK;
-                case "FAIL", "CLOSE", "CANCEL" -> BizState.S_FAIL;
-                default -> BizState.S_ING;
-            };
+            var state = "SUCCESS".equals(status) ? BizState.S_OK : BizState.S_WAIT;
             return Responses.result(state)
                     .apiNo(m.get("rt6_serialNumber")).buyer(m.get("rt11_openId"))
                     .code(m.get("rt2_retCode")).msg(m.get("rt3_retMsg"))
@@ -58,7 +56,7 @@ public class HelipayQueryHandler extends AbstractBizHandler {
         } catch (Exception e) {
             // 查询失败（渠道异常）：保持处理中交还轮询
             log.debug("合利宝订单查询暂时失败, exception={}", e.getClass().getSimpleName());
-            return Responses.ing("QUERY_ERROR", e.getMessage());
+            return Responses.wait("QUERY_ERROR", e.getMessage());
         }
     }
 
@@ -84,7 +82,7 @@ public class HelipayQueryHandler extends AbstractBizHandler {
             var state = switch (status) {
                 case "SUCCESS" -> BizState.S_OK;
                 case "FAIL", "CLOSE" -> BizState.S_FAIL;
-                default -> BizState.S_ING;
+                default -> BizState.S_WAIT;
             };
             return Responses.result(state)
                     .apiNo(m.get("rt7_serialNumber")).code(m.get("rt2_retCode"))
@@ -92,7 +90,7 @@ public class HelipayQueryHandler extends AbstractBizHandler {
                     .traced(resp).build();
         } catch (Exception e) {
             log.debug("合利宝退款查询暂时失败, exception={}", e.getClass().getSimpleName());
-            return Responses.ing("QUERY_ERROR", e.getMessage());
+            return Responses.wait("QUERY_ERROR", e.getMessage());
         }
     }
 
@@ -116,7 +114,7 @@ public class HelipayQueryHandler extends AbstractBizHandler {
             var state = switch (status) {
                 case "SUCCESS" -> BizState.S_OK;
                 case "FAIL", "REFUND" -> BizState.S_FAIL;
-                default -> BizState.S_ING;
+                default -> BizState.S_WAIT;
             };
             return Responses.result(state)
                     .apiNo(m.get("rt6_serialNumber")).code(m.get("rt2_retCode"))
@@ -124,7 +122,7 @@ public class HelipayQueryHandler extends AbstractBizHandler {
                     .traced(resp).build();
         } catch (Exception e) {
             log.debug("合利宝打款查询暂时失败, exception={}", e.getClass().getSimpleName());
-            return Responses.ing("QUERY_ERROR", e.getMessage());
+            return Responses.wait("QUERY_ERROR", e.getMessage());
         }
     }
 
@@ -159,7 +157,7 @@ public class HelipayQueryHandler extends AbstractBizHandler {
 
     /** 渠道侧查询失败（无业务结果）：保持处理中，携带渠道错误码与说明 */
     private static BizResult processing(Map<String, String> m, HttpHelper.HttpResponse resp) {
-        return Responses.result(BizState.S_ING)
+        return Responses.result(BizState.S_WAIT)
                 .code(m.get("rt2_retCode"))
                 .msg(firstNonBlank(m.get("rt3_retMsg"), m.get("rt2_retCode")))
                 .traced(resp).build();

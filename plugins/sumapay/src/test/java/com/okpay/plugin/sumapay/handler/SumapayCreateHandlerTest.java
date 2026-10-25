@@ -1,8 +1,12 @@
 package com.okpay.plugin.sumapay.handler;
 
 import com.okpay.plugin.HostCallback;
+import com.okpay.plugin.PaymentChannel;
 import com.okpay.plugin.model.*;
+import com.okpay.plugin.sdk.ExpectedFailureException;
 import com.okpay.plugin.sdk.HttpHelper;
+import com.okpay.plugin.sdk.ResultUnknownException;
+import com.okpay.plugin.sumapay.SumapayPlugin;
 import com.okpay.plugin.sumapay.TestKeys;
 import com.okpay.plugin.sumapay.util.SumapaySignUtil;
 import org.junit.jupiter.api.DisplayName;
@@ -16,16 +20,18 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * SumapayCreateHandler 下单矩阵：H5（scheme 提取/域名跳转）、聚合扫码（二维码图优先）、
- * 桌面端扫码中转、公众号 OAuth、未开启支付方式/渠道业务失败。
+ * 桌面端扫码中转、公众号 OAuth、未开启支付方式/渠道业务失败，以及 ext 缺失时的收银台本地页。
  */
 @DisplayName("SumapayCreateHandler 下单")
 class SumapayCreateHandlerTest {
@@ -47,10 +53,9 @@ class SumapayCreateHandlerTest {
             stubApi(mocked, signedResp(ALIPAY_H5_VERIFY, Map.of(
                     "payUrl", "https://www.sumapay.com/wap/pay?scheme="
                             + "alipays%3A%2F%2Fplatformapi%2Fstartapp%3FappId%3D20000123")));
-            var resp = new SumapayCreateHandler().alipay(ctx);
+            var outcome = createAlipay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("jump");
-            assertThat(resp.getUrl()).isEqualTo(
+            assertThat(redirectUrl(outcome)).isEqualTo(
                     "alipays://platformapi/startapp?appId=20000123");
         }
     }
@@ -62,10 +67,9 @@ class SumapayCreateHandlerTest {
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubApi(mocked, signedResp(ALIPAY_H5_VERIFY, Map.of(
                     "payUrl", "https://www.sumapay.com/wap/pay?token=abc")));
-            var resp = new SumapayCreateHandler().alipay(ctx);
+            var outcome = createAlipay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("jump");
-            assertThat(resp.getUrl()).isEqualTo("https://www.sumapay.com/wap/pay?token=abc");
+            assertThat(redirectUrl(outcome)).isEqualTo("https://www.sumapay.com/wap/pay?token=abc");
         }
     }
 
@@ -76,38 +80,66 @@ class SumapayCreateHandlerTest {
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubApi(mocked, signedResp(ALIPAY_H5_VERIFY, Map.of(
                     "payUrl", "https://pay.example.com/qr/ABC")));
-            var resp = new SumapayCreateHandler().alipay(ctx);
+            var outcome = createAlipay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("alipay_qrcode");
-            assertThat(resp.getUrl()).isEqualTo("https://pay.example.com/qr/ABC");
+            assertThat(pageOf(outcome).page()).isEqualTo("alipay_qrcode");
+            assertThat(pageOf(outcome).url()).isEqualTo("https://pay.example.com/qr/ABC");
         }
     }
 
     @Test
-    @DisplayName("支付宝H5：result 非 00000 → error 页带渠道错误码，不落 ext")
+    @DisplayName("支付宝H5：参数错误码 2003 → 结果未定（ExpectedFailureException）")
     void alipayH5ChannelRejected() throws Exception {
         var ctx = ctx("alipay", "1", null, null);
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubApi(mocked, signedResp(ALIPAY_H5_VERIFY, Map.of(
                     "result", "2003", "errorMsg", "参数错误", "payUrl", "")));
-            var resp = new SumapayCreateHandler().alipay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("error");
-            assertThat(resp.getMsg()).isEqualTo("[2003]参数错误");
+            assertThatThrownBy(() -> createAlipay(ctx))
+                    .isInstanceOf(ExpectedFailureException.class)
+                    .hasMessage("[2003]参数错误");
         }
     }
 
     @Test
-    @DisplayName("支付宝H5：渠道未返回 payUrl → error 页")
+    @DisplayName("支付宝H5：渠道成功但未返回 payUrl → 明确失败页")
     void alipayH5MissingPayUrl() throws Exception {
         var ctx = ctx("alipay", "1", null, null);
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubApi(mocked, signedResp(ALIPAY_H5_VERIFY, Map.of("payUrl", "")));
-            var resp = new SumapayCreateHandler().alipay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("error");
-            assertThat(resp.getMsg()).isEqualTo("渠道未返回支付地址");
+            var outcome = createAlipay(ctx);
+            assertThat(outcome).isInstanceOf(PageOutcome.Failed.class);
+            assertThat(((PageOutcome.Failed) outcome).failure().message()).isEqualTo("渠道未返回支付地址");
+        }
+    }
+
+    @Test
+    @DisplayName("支付宝H5：渠道 HTTP 502 → ResultUnknownException（结果未知）")
+    void alipayH5ChannelHttpFailure() throws Exception {
+        var ctx = ctx("alipay", "1", null, null);
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            stubApi(mocked, new HttpHelper.HttpResponse(502, Map.of(),
+                    "<html><head><title>502 Bad Gateway</title></head></html>"
+                            .getBytes(StandardCharsets.UTF_8), "req", 10, 1));
+
+            assertThatThrownBy(() -> createAlipay(ctx))
+                    .isInstanceOf(ResultUnknownException.class)
+                    .hasMessageContaining("502");
+        }
+    }
+
+    @Test
+    @DisplayName("支付宝H5：响应不可解析（CDN 拦截页）→ ResultUnknownException（结果未知）")
+    void alipayH5UnparseableBody() throws Exception {
+        var ctx = ctx("alipay", "1", null, null);
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            stubApi(mocked, new HttpHelper.HttpResponse(200, Map.of(),
+                    "<html>cloudflare 拦截页</html>".getBytes(StandardCharsets.UTF_8), "req", 10, 1));
+
+            assertThatThrownBy(() -> createAlipay(ctx))
+                    .isInstanceOf(ResultUnknownException.class)
+                    .hasMessageContaining("HTTP Status Code:200");
         }
     }
 
@@ -122,11 +154,10 @@ class SumapayCreateHandlerTest {
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubApi(mocked, signedResp(SCAN_VERIFY, Map.of(
                     "codeImgString", "iVBORw0KGgo=", "codeUrl", "https://qr.example.com/x")));
-            var resp = new SumapayCreateHandler().alipay(ctx);
+            var outcome = createAlipay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("alipay_qrcode");
-            assertThat(resp.getUrl()).isEqualTo("data:image/png;base64,iVBORw0KGgo=");
+            assertThat(pageOf(outcome).page()).isEqualTo("alipay_qrcode");
+            assertThat(pageOf(outcome).url()).isEqualTo("data:image/png;base64,iVBORw0KGgo=");
         }
     }
 
@@ -137,11 +168,10 @@ class SumapayCreateHandlerTest {
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubApi(mocked, signedResp(SCAN_VERIFY, Map.of(
                     "codeUrl", "https://qr.example.com/wx")));
-            var resp = new SumapayCreateHandler().wxpay(ctx);
+            var outcome = createWxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("wxpay_qrcode");
-            assertThat(resp.getUrl()).isEqualTo("https://qr.example.com/wx");
+            assertThat(pageOf(outcome).page()).isEqualTo("wxpay_qrcode");
+            assertThat(pageOf(outcome).url()).isEqualTo("https://qr.example.com/wx");
         }
     }
 
@@ -157,11 +187,10 @@ class SumapayCreateHandlerTest {
             stubUa(mocked);
             stubApi(mocked, signedResp(WX_H5_VERIFY, Map.of(
                     "payUrl", "https://wx.tenpay.com/cgi-bin/mmpayweb-bin/checkmweb?x=1")));
-            var resp = new SumapayCreateHandler().wxpay(ctx);
+            var outcome = createWxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("wxpay_h5");
-            assertThat(resp.getUrl()).isEqualTo("https://wx.tenpay.com/cgi-bin/mmpayweb-bin/checkmweb?x=1");
+            assertThat(pageOf(outcome).page()).isEqualTo("wxpay_h5");
+            assertThat(pageOf(outcome).url()).isEqualTo("https://wx.tenpay.com/cgi-bin/mmpayweb-bin/checkmweb?x=1");
         }
     }
 
@@ -171,11 +200,10 @@ class SumapayCreateHandlerTest {
         var ctx = ctx("wxpay", "1", UA_DESKTOP, null);
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubUa(mocked);
-            var resp = new SumapayCreateHandler().wxpay(ctx);
+            var outcome = createWxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("wxpay_qrcode");
-            assertThat(resp.getUrl()).startsWith("https://pay.example.com/pay/wxpay/T1?t=");
+            assertThat(pageOf(outcome).page()).isEqualTo("wxpay_qrcode");
+            assertThat(pageOf(outcome).url()).startsWith("https://pay.example.com/pay/cashier/T1?t=");
             // 桌面端不发起任何渠道请求
             mocked.verify(() -> HttpHelper.postBytes(any(), anyString(), any(), anyString(), any()),
                     never());
@@ -192,13 +220,13 @@ class SumapayCreateHandlerTest {
         var ctx = ctx("wxpay", "2", UA_WECHAT, null);
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubUa(mocked);
-            var resp = new SumapayCreateHandler().wxpay(ctx);
+            var outcome = createWxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("jump");
-            assertThat(resp.getUrl()).startsWith("https://open.weixin.qq.com/connect/oauth2/authorize");
-            assertThat(resp.getUrl()).contains("appid=wxMPAPP1");
-            assertThat(URLDecoder.decode(resp.getUrl(), StandardCharsets.UTF_8))
-                    .contains("redirect_uri=https://pay.example.com/pay/wxpay/T1");
+            var url = redirectUrl(outcome);
+            assertThat(url).startsWith("https://open.weixin.qq.com/connect/oauth2/authorize");
+            assertThat(url).contains("appid=wxMPAPP1");
+            assertThat(URLDecoder.decode(url, StandardCharsets.UTF_8))
+                    .contains("redirect_uri=https://pay.example.com/pay/cashier/T1");
             mocked.verify(() -> HttpHelper.postBytes(any(), anyString(), any(), anyString(), any()),
                     never());
         }
@@ -210,10 +238,9 @@ class SumapayCreateHandlerTest {
         var ctx = ctx("wxpay", "2", UA_DESKTOP, null);
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubUa(mocked);
-            var resp = new SumapayCreateHandler().wxpay(ctx);
+            var outcome = createWxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("wxpay_qrcode");
+            assertThat(pageOf(outcome).page()).isEqualTo("wxpay_qrcode");
             mocked.verify(() -> HttpHelper.postBytes(any(), anyString(), any(), anyString(), any()),
                     never());
         }
@@ -235,12 +262,12 @@ class SumapayCreateHandlerTest {
             // IOZ2011 建单：pay_info 为 JS 支付参数 JSON
             stubApi(mocked, signedResp(JSAPI_VERIFY, Map.of(
                     "pay_info", "{\"appId\":\"wxMPAPP1\",\"timeStamp\":\"1700000000\"}")));
-            var resp = new SumapayCreateHandler().wxpay(ctx);
+            var outcome = createWxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("wxpay_jspay");
+            assertThat(pageOf(outcome).page()).isEqualTo("wxpay_jspay");
             // 模板把 data.js_api_parameters 直接喂 WeixinJSBridge.invoke：必须是对象（渠道回的是 JSON 串）
-            var params = HttpHelper.MAPPER.readTree(resp.getDataRaw()).path("js_api_parameters");
+            var params = HttpHelper.MAPPER.valueToTree(pageOf(outcome).data())
+                    .path("js_api_parameters");
             assertThat(params.isObject()).isTrue();
             assertThat(params.path("appId").asString()).isEqualTo("wxMPAPP1");
         }
@@ -249,14 +276,13 @@ class SumapayCreateHandlerTest {
     }
 
     @Test
-    @DisplayName("公众号未配置 → error 提示缺少公众号配置")
+    @DisplayName("公众号未配置 → ExpectedFailureException 提示缺少公众号配置")
     void wxMpMissingConfig() {
         var ctx = ctxNoMp("wxpay", "2", UA_WECHAT, null);
 
-        var resp = new SumapayCreateHandler().wxpay(ctx);
-
-        assertThat(resp.getType()).isEqualTo("error");
-        assertThat(resp.getMsg()).isEqualTo("缺少公众号配置");
+        assertThatThrownBy(() -> createWxpay(ctx))
+                .isInstanceOf(ExpectedFailureException.class)
+                .hasMessage("缺少公众号配置");
     }
 
     // =========================================================================
@@ -264,14 +290,13 @@ class SumapayCreateHandlerTest {
     // =========================================================================
 
     @Test
-    @DisplayName("支付宝方式未开启（biztype 仅微信）→ error")
+    @DisplayName("支付宝方式未开启（biztype 仅微信）→ ExpectedFailureException")
     void alipayNotEnabled() {
         var ctx = ctx("alipay", "3", null, null);
 
-        var resp = new SumapayCreateHandler().alipay(ctx);
-
-        assertThat(resp.getType()).isEqualTo("error");
-        assertThat(resp.getMsg()).isEqualTo("当前通道未开启支付宝支付方式");
+        assertThatThrownBy(() -> createAlipay(ctx))
+                .isInstanceOf(ExpectedFailureException.class)
+                .hasMessage("当前通道未开启支付宝支付方式");
     }
 
     @Test
@@ -280,12 +305,126 @@ class SumapayCreateHandlerTest {
         var ctx = ctx("wxpay", null, UA_DESKTOP, null);
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubUa(mocked);
-            var resp = new SumapayCreateHandler().wxpay(ctx);
+            var outcome = createWxpay(ctx);
 
-            assertThat(resp.getPage()).isEqualTo("wxpay_qrcode");
+            assertThat(pageOf(outcome).page()).isEqualTo("wxpay_qrcode");
             mocked.verify(() -> HttpHelper.postBytes(any(), anyString(), any(), anyString(), any()),
                     never());
         }
+    }
+
+    // =========================================================================
+    // 收银台（SDK 固定重入：ext 非空还原，ext 空重走 create）
+    // =========================================================================
+
+    @Test
+    @DisplayName("收银台：订单 ext 为空 + 微信H5桌面端 → 重走 create，本地中转页不请求渠道")
+    void cashierBlankExtDesktopRelay() {
+        var ctx = ctx("wxpay", "1", UA_DESKTOP, null);
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            stubUa(mocked);
+            var outcome = (PageOutcome) new SumapayPlugin().handle(cashierCtx(ctx));
+
+            assertThat(pageOf(outcome).page()).isEqualTo("wxpay_qrcode");
+            assertThat(pageOf(outcome).url()).startsWith("https://pay.example.com/pay/cashier/T1?t=");
+            mocked.verify(() -> HttpHelper.postBytes(any(), anyString(), any(), anyString(), any()),
+                    never());
+        }
+    }
+
+    @Test
+    @DisplayName("收银台：订单 ext 为空 + 微信内公众号无 code → 重走 create，本地授权跳转")
+    void cashierBlankExtMpAuth() {
+        var ctx = ctx("wxpay", "2", UA_WECHAT, null);
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            stubUa(mocked);
+            var outcome = (PageOutcome) new SumapayPlugin().handle(cashierCtx(ctx));
+
+            assertThat(redirectUrl(outcome)).startsWith("https://open.weixin.qq.com/connect/oauth2/authorize");
+            mocked.verify(() -> HttpHelper.postBytes(any(), anyString(), any(), anyString(), any()),
+                    never());
+        }
+    }
+
+    @Test
+    @DisplayName("收银台：订单 ext 为空 + 手机端 H5 → 重走 create 请求渠道并写 ext，返回支付页")
+    void cashierBlankExtMobileBuildsViaCreateFlow() throws Exception {
+        var ctx = ctx("wxpay", "1", "Mozilla/5.0 (iPhone) Safari/604.1", null);
+        stubHostExtStore(ctx.getCallback());
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            stubUa(mocked);
+            stubApi(mocked, signedResp(WX_H5_VERIFY, Map.of(
+                    "payUrl", "https://wx.tenpay.com/cgi-bin/mmpayweb-bin/checkmweb?x=1")));
+            var outcome = (PageOutcome) new SumapayPlugin().handle(cashierCtx(ctx));
+
+            assertThat(pageOf(outcome).page()).isEqualTo("wxpay_h5");
+            assertThat(pageOf(outcome).url()).isEqualTo("https://wx.tenpay.com/cgi-bin/mmpayweb-bin/checkmweb?x=1");
+        }
+    }
+
+    @Test
+    @DisplayName("收银台：ext 非空 → 直接还原已固化页面，不再重走 create")
+    void cashierRestoresExtWithoutCreate() {
+        var ctx = ctx("wxpay", "1", UA_DESKTOP, null);
+        var cb = mock(HostCallback.class);
+        var cashier = InvokeContext.builder()
+                .requestId("r2")
+                .funcName(PaymentChannel.CASHIER_FUNC)
+                .channel(ctx.getChannel())
+                .order(OrderSnapshot.builder().tradeNo("T1").type("wxpay")
+                        .ext("{\"kind\":\"page\",\"page\":\"wxpay_h5\",\"url\":\"https://qr.example.com/wx\"}")
+                        .build())
+                .callback(cb)
+                .config(ctx.getConfig())
+                .build();
+        when(cb.lockOrderExt(any()))
+                .thenReturn(LockExtResult.builder()
+                        .extData(Map.of("kind", "page", "page", "wxpay_h5", "url", "https://qr.example.com/wx"))
+                        .build());
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            stubUa(mocked);
+            var outcome = (PageOutcome) new SumapayPlugin().handle(cashier);
+
+            assertThat(pageOf(outcome).page()).isEqualTo("wxpay_h5");
+            assertThat(pageOf(outcome).url()).isEqualTo("https://qr.example.com/wx");
+            mocked.verify(() -> HttpHelper.postBytes(any(), anyString(), any(), anyString(), any()),
+                    never());
+        }
+    }
+
+    @Test
+    @DisplayName("收银台：公众号 OAuth 回跳 code → 重走 create 兑换 openid 并下单（中转链第二阶段）")
+    void cashierOAuthCallbackContinuesCreate() throws Exception {
+        var ctx = ctx("wxpay", "2", UA_WECHAT, "code=CODE1");
+        var cb = ctx.getCallback();
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            stubUa(mocked);
+            mocked.when(() -> HttpHelper.get(any(), anyString())).thenAnswer(inv ->
+                    new HttpHelper.HttpResponse(200, Map.of(),
+                            "{\"openid\":\"wxOPENID1\"}".getBytes(StandardCharsets.UTF_8), "req", 10, 1));
+            stubApi(mocked, signedResp(JSAPI_VERIFY, Map.of(
+                    "pay_info", "{\"appId\":\"wxMPAPP1\",\"timeStamp\":\"1700000000\"}")));
+
+            var outcome = (PageOutcome) new SumapayPlugin().handle(cashierCtx(ctx));
+
+            assertThat(pageOf(outcome).page()).isEqualTo("wxpay_jspay");
+        }
+        verify(cb).recordOAuthIdentity(any());
+    }
+
+    /** 模拟宿主 lockOrderExt：首次探测空结果；带 extRaw 写入后回读返回该 ext */
+    private static void stubHostExtStore(HostCallback cb) throws Exception {
+        var store = new java.util.HashMap<String, Map<String, Object>>();
+        when(cb.lockOrderExt(any())).thenAnswer(inv -> {
+            var req = (LockExtRequest) inv.getArgument(0);
+            var cached = store.get(req.getTradeNo());
+            if (cached != null) return new LockExtResult(cached, null);
+            if (req.getExtRaw() != null) {
+                Map<String, Object> written = HttpHelper.MAPPER.readValue(req.getExtRaw(), EXT_MAP);
+                store.put(req.getTradeNo(), written);
+            }
+            return LockExtResult.builder().build();
+        });
     }
 
     // =========================================================================
@@ -296,6 +435,26 @@ class SumapayCreateHandlerTest {
     private static final List<String> WX_H5_VERIFY = List.of("requestId", "result", "payUrl", "mpAppId", "mpPath", "errorMsg");
     private static final List<String> SCAN_VERIFY = List.of("requestId", "result", "codeUrl", "codeImgString", "errorMsg");
     private static final List<String> JSAPI_VERIFY = List.of("requestId", "result", "passThrough", "pay_info");
+    private static final tools.jackson.core.type.TypeReference<Map<String, Object>> EXT_MAP =
+            new tools.jackson.core.type.TypeReference<>() {};
+
+    private static PageOutcome createAlipay(InvokeContext ctx) {
+        return new SumapayCreateHandler().alipay(ctx);
+    }
+
+    private static PageOutcome createWxpay(InvokeContext ctx) {
+        return new SumapayCreateHandler().wxpay(ctx);
+    }
+
+    private static PageOutcome.Page pageOf(PageOutcome outcome) {
+        assertThat(outcome).isInstanceOf(PageOutcome.Page.class);
+        return (PageOutcome.Page) outcome;
+    }
+
+    private static String redirectUrl(PageOutcome outcome) {
+        assertThat(outcome).isInstanceOf(PageOutcome.Redirect.class);
+        return ((PageOutcome.Redirect) outcome).url();
+    }
 
     private InvokeContext ctx(String payType, String biztype, String ua, String query) {
         return ctx(payType, biztype, ua, query, true);
@@ -311,7 +470,7 @@ class SumapayCreateHandlerTest {
                 .requestId("r1")
                 .channel(ChannelSnapshot.builder().cfgRaw(cfgRaw(biztype, withMp)).build())
                 .order(order)
-                .callback(mock(HostCallback.class))
+                .callback(callback())
                 .config(ConfigSnapshot.builder().siteDomain("https://pay.example.com")
                         .notifyDomain("https://pay.example.com").goodsName("元宝充值").build());
         if (ua != null || query != null) {
@@ -321,6 +480,27 @@ class SumapayCreateHandlerTest {
             b.request(req.build());
         }
         return b.build();
+    }
+
+    /** 收银台重入：订单无 ext，UA/query 同创建阶段 */
+    private static InvokeContext cashierCtx(InvokeContext createCtx) {
+        var order = OrderSnapshot.builder()
+                .tradeNo("T1").real(100L).type(createCtx.getOrder().getType()).build();
+        return InvokeContext.builder()
+                .requestId("r2")
+                .funcName(PaymentChannel.CASHIER_FUNC)
+                .channel(createCtx.getChannel())
+                .order(order)
+                .callback(createCtx.getCallback())
+                .config(createCtx.getConfig())
+                .request(createCtx.getRequest())
+                .build();
+    }
+
+    private static HostCallback callback() {
+        var cb = mock(HostCallback.class);
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+        return cb;
     }
 
     private static byte[] cfgRaw(String biztype, boolean withMp) {

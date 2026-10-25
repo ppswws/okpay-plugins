@@ -5,6 +5,7 @@ import com.okpay.plugin.enums.BizType;
 import com.okpay.plugin.model.ChannelSnapshot;
 import com.okpay.plugin.model.CompleteBizRequest;
 import com.okpay.plugin.model.InvokeContext;
+import com.okpay.plugin.model.NotifyResponse;
 import com.okpay.plugin.model.OrderSnapshot;
 import com.okpay.plugin.model.RequestSnapshot;
 import com.okpay.plugin.model.SubOrderSnapshot;
@@ -42,6 +43,14 @@ import static org.mockito.Mockito.when;
  */
 @DisplayName("AlipayNotifyHandler 合单支付通知")
 class AlipayCombineNotifyHandlerTest {
+
+    /** 通知应答体（Ok/Fail 共用可读文案） */
+    private static String bodyOf(NotifyResponse resp) {
+        return switch (resp) {
+            case NotifyResponse.Ok ok -> ok.body();
+            case NotifyResponse.Fail fail -> fail.body();
+        };
+    }
 
     private static final String APP_ID = "2021000000000001";
     private static final String TRADE_NO = "P202608181200000000001";
@@ -133,7 +142,7 @@ class AlipayCombineNotifyHandlerTest {
 
         var resp = new AlipayNotifyHandler().payNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(bodyOf(resp)).isEqualTo("success");
         var updates = ArgumentCaptor.forClass(UpdateSubOrderRequest.class);
         verify(cb, times(2)).updateSubOrder(updates.capture());
         assertThat(updates.getAllValues()).extracting(u -> u.getSubTradeNo())
@@ -159,7 +168,7 @@ class AlipayCombineNotifyHandlerTest {
 
         var resp = new AlipayNotifyHandler().payNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(bodyOf(resp)).isEqualTo("success");
         verify(cb, never()).updateSubOrder(any());
         verify(cb, never()).completeBiz(any());
     }
@@ -174,7 +183,7 @@ class AlipayCombineNotifyHandlerTest {
 
         var resp = new AlipayNotifyHandler().payNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("amount_mismatch");
+        assertThat(bodyOf(resp)).isEqualTo("amount_mismatch");
         verify(cb, never()).updateSubOrder(any());
         verify(cb, never()).completeBiz(any());
     }
@@ -189,7 +198,7 @@ class AlipayCombineNotifyHandlerTest {
 
         var resp = new AlipayNotifyHandler().payNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("amount_mismatch");
+        assertThat(bodyOf(resp)).isEqualTo("amount_mismatch");
         verify(cb, never()).updateSubOrder(any());
         verify(cb, never()).completeBiz(any());
     }
@@ -205,7 +214,7 @@ class AlipayCombineNotifyHandlerTest {
 
         var resp = new AlipayNotifyHandler().payNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("amount_mismatch");
+        assertThat(bodyOf(resp)).isEqualTo("amount_mismatch");
         verify(cb, never()).updateSubOrder(any());
     }
 
@@ -219,7 +228,7 @@ class AlipayCombineNotifyHandlerTest {
 
         var resp = new AlipayNotifyHandler().payNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("amount_mismatch");
+        assertThat(bodyOf(resp)).isEqualTo("amount_mismatch");
         verify(cb, never()).updateSubOrder(any());
     }
 
@@ -233,7 +242,7 @@ class AlipayCombineNotifyHandlerTest {
 
         var resp = new AlipayNotifyHandler().payNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("order_mismatch");
+        assertThat(bodyOf(resp)).isEqualTo("order_mismatch");
         verify(cb, never()).updateSubOrder(any());
         verify(cb, never()).completeBiz(any());
     }
@@ -256,7 +265,7 @@ class AlipayCombineNotifyHandlerTest {
 
         var resp = new AlipayNotifyHandler().payNotify(ctx);
 
-        assertThat(resp.getDataText()).isEqualTo("sign_error");
+        assertThat(bodyOf(resp)).isEqualTo("sign_error");
         verify(cb, never()).updateSubOrder(any());
         verify(cb, never()).completeBiz(any());
     }

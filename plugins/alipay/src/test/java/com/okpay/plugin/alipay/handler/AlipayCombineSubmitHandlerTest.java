@@ -42,7 +42,8 @@ import static org.mockito.Mockito.when;
 
 /**
  * AlipaySubmitHandler 合单退款：逐子单 alipay.trade.refund（out_request_no=refundNo_序号，
- * quota=min(remaining, money-refundMoney)）。全退 S_OK / 首败 S_FAIL / 部分 S_ING。
+ * quota=min(remaining, money-refundMoney)）。全退 S_OK / 首败 S_FAIL（本地数据不一致拒退）/
+ * 渠道业务拒绝 → S_WAIT（文档无明确退款失败状态）/ 部分 S_WAIT。
  */
 @DisplayName("AlipaySubmitHandler 合单退款")
 class AlipayCombineSubmitHandlerTest {
@@ -228,7 +229,7 @@ class AlipayCombineSubmitHandlerTest {
     }
 
     @Test
-    @DisplayName("首个子单即被拒（无任何成功）→ S_FAIL REFUND_FAIL（宿主回滚余额）")
+    @DisplayName("首个子单即被渠道拒绝（无任何成功）→ S_WAIT REFUND_PARTIAL（文档无明确退款失败状态，不判失败）")
     void firstSubRejectedFails() throws Exception {
         var ctx = ctx(refund(30000));
         var cb = ctx.getCallback();
@@ -245,15 +246,15 @@ class AlipayCombineSubmitHandlerTest {
             var result = new AlipaySubmitHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
-            assertThat(result.getCode()).isEqualTo("REFUND_FAIL");
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+            assertThat(result.getCode()).isEqualTo("REFUND_PARTIAL");
             verify(cb, never()).updateSubOrder(any());
         }
     }
 
     @Test
-    @DisplayName("中途失败（部分成功）→ S_ING REFUND_PARTIAL（余额已扣，靠查单续退）")
-    void partialFailureIng() throws Exception {
+    @DisplayName("中途失败（部分成功）→ S_WAIT REFUND_PARTIAL（余额已扣，靠查单续退）")
+    void partialFailureWait() throws Exception {
         var ctx = ctx(refund(30000));
         var cb = ctx.getCallback();
         when(cb.getSubOrders(any())).thenReturn(subs(15000, 0, 0));
@@ -272,7 +273,7 @@ class AlipayCombineSubmitHandlerTest {
             var result = new AlipaySubmitHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("REFUND_PARTIAL");
             verify(cb, times(1)).updateSubOrder(any());
         }
@@ -296,7 +297,7 @@ class AlipayCombineSubmitHandlerTest {
     }
 
     @Test
-    @DisplayName("合单订单子单数据缺失 → 拒退不静默降级单笔（REFUND_ERROR）")
+    @DisplayName("合单订单子单数据缺失 → 结果未定，不静默降级单笔（REFUND_ERROR）")
     void noSubsRejectsRefund() throws Exception {
         var ctx = ctx(refund(30000));
         var cb = ctx.getCallback();
@@ -306,7 +307,7 @@ class AlipayCombineSubmitHandlerTest {
             var result = new AlipaySubmitHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("REFUND_ERROR");
             mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
         }

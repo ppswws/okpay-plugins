@@ -1,6 +1,5 @@
 package com.okpay.plugin.helipay.handler;
 
-import com.okpay.plugin.enums.BizType;
 import static com.okpay.plugin.sdk.PaymentUtils.toCents;
 
 import com.okpay.plugin.helipay.util.*;
@@ -23,67 +22,67 @@ public class HelipayNotifyHandler {
     // 支付通知
     // =========================================================================
 
-    public PageResponse payNotify(InvokeContext ctx) {
+    public NotifyResponse payNotify(InvokeContext ctx) {
         var cfg = HelipayConfig.from(ctx);
         var params = parseNotifyBody(ctx);
         if (params.isEmpty() || !requiredOrderNotify(params)
                 || !HelipaySignUtil.verifyNotify(params, cfg.getAppkey()))
-            return Responses.notifyFail("fail", BizType.T_PAY);
+            return Notify.fail("fail");
         if (!"SUCCESS".equals(params.get("rt4_status")))
-            return Responses.notifyFail("fail", BizType.T_PAY);
+            return Notify.fail("fail");
         // 契约：notify 回调实体恒非空（PluginPageService.dispatch 无单据即 404）
         var order = ctx.getOrder();
         if (!order.getTradeNo().equals(params.get("rt2_orderId")))
-            return Responses.notifyFail("fail", BizType.T_PAY);
+            return Notify.fail("fail");
         if (order.getReal() != toCents(params.getOrDefault("rt5_orderAmount", "0")))
-            return Responses.notifyFail("amount_mismatch", BizType.T_PAY);
+            return Notify.fail("amount_mismatch");
         try {
             Sdk.completeOrderOk(ctx, order.getTradeNo(),
                     params.get("rt3_systemSerial"), params.get("rt10_openId"));
         } catch (Exception e) {
-            return Responses.notifyFail("fail", BizType.T_PAY);
+            return Notify.fail("fail");
         }
-        return Responses.notifyOk("success", BizType.T_PAY);
+        return Notify.ok("success");
     }
 
     // =========================================================================
     // 退款通知
     // =========================================================================
 
-    public PageResponse refundNotify(InvokeContext ctx) {
+    public NotifyResponse refundNotify(InvokeContext ctx) {
         var cfg = HelipayConfig.from(ctx);
         var params = parseNotifyBody(ctx);
         if (params.isEmpty() || !requiredRefundNotify(params)
                 || !HelipaySignUtil.verifyNotify(params, cfg.getAppkey()))
-            return Responses.notifyFail("fail", BizType.T_REF);
+            return Notify.fail("fail");
         var refund = ctx.getRefund();
         if (!refund.getRefundNo().equals(params.get("rt3_refundOrderId")))
-            return Responses.notifyFail("refund_mismatch", BizType.T_REF);
+            return Notify.fail("refund_mismatch");
         if (notBlank(params.get("rt6_amount")) && refund.getAmount() != toCents(params.get("rt6_amount")))
-            return Responses.notifyFail("amount_mismatch", BizType.T_REF);
+            return Notify.fail("amount_mismatch");
         var status = upper(params.get("rt5_status"));
         try {
             switch (status) {
                 case "SUCCESS" -> Sdk.completeRefundOk(ctx, refund.getRefundNo(), params.get("rt4_systemSerial"));
                 case "FAIL", "CLOSE" -> Sdk.completeRefundFail(ctx, refund.getRefundNo(), params.get("rt5_status"), null);
-                default -> Sdk.completeRefundIng(ctx, refund.getRefundNo(), params.get("rt4_systemSerial"), params.get("rt5_status"), null);
+                default -> Sdk.completeRefundWait(ctx, refund.getRefundNo(), params.get("rt4_systemSerial"), params.get("rt5_status"), null);
             }
         } catch (Exception e) {
-            return Responses.notifyFail("fail", BizType.T_REF);
+            return Notify.fail("fail");
         }
-        return Responses.notifyOk("success", BizType.T_REF);
+        return Notify.ok("success");
     }
 
     // =========================================================================
     // 打款通知
     // =========================================================================
 
-    public PageResponse transferNotify(InvokeContext ctx) {
+    public NotifyResponse transferNotify(InvokeContext ctx) {
         var cfg = HelipayConfig.from(ctx);
         var params = parseNotifyBody(ctx);
         if (params.isEmpty() || !requiredTransferNotify(params)
                 || !HelipaySignUtil.verifyNotify(params, cfg.getAppkey()))
-            return Responses.notifyFail("fail", BizType.T_XFER);
+            return Notify.fail("fail");
         var transfer = ctx.getTransfer();
         var status = upper(params.get("rt7_orderStatus"));
         try {
@@ -92,15 +91,15 @@ public class HelipayNotifyHandler {
                         params.get("rt6_serialNumber"), params.get("rt9_reason"));
                 case "FAIL", "REFUND" -> Sdk.completeTransferFail(ctx, transfer.getTradeNo(),
                         params.get("rt2_retCode"), params.get("rt9_reason"));
-                case "RECEIVE", "INIT", "DOING" -> Sdk.completeTransferIng(ctx, transfer.getTradeNo(),
+                case "RECEIVE", "INIT", "DOING" -> Sdk.completeTransferWait(ctx, transfer.getTradeNo(),
                         params.get("rt6_serialNumber"), params.get("rt2_retCode"), params.get("rt9_reason"));
                 default -> { /* 未知状态不推进，交由查询轮询 */ }
             }
         } catch (Exception e) {
             // 推进失败交还渠道重发：渠道重发触发同一状态机重试，查询轮询仍为兜底
-            return Responses.notifyFail("fail", BizType.T_XFER);
+            return Notify.fail("fail");
         }
-        return Responses.notifyOk("success", BizType.T_XFER);
+        return Notify.ok("success");
     }
 
     // =========================================================================

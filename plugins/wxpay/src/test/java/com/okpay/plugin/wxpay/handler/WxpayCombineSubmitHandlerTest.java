@@ -43,7 +43,7 @@ import static org.mockito.Mockito.when;
 /**
  * WxpaySubmitHandler 合单退款：逐子单提交（out_refund_no=退款单_序号，total=子单金额），
  * 已退部分抵扣（quota=min(remaining, money-refundMoney)，≤0 跳过）保证重跑幂等。
- * 语义：全退完 S_OK / 首单即失败 S_FAIL / 中途失败 S_ING（靠查单续退）。
+ * 语义：全退完 S_OK / 首单即渠道终态失败（CLOSED）S_FAIL / ABNORMAL、部分完成、处理中 S_WAIT（靠查单/人工）。
  */
 @DisplayName("WxpaySubmitHandler 合单退款")
 class WxpayCombineSubmitHandlerTest {
@@ -263,8 +263,8 @@ class WxpayCombineSubmitHandlerTest {
     }
 
     @Test
-    @DisplayName("首个提交即被拒（无任何成功）→ S_FAIL（宿主回滚余额）")
-    void firstSubRejectedFails() throws Exception {
+    @DisplayName("首个提交即 CLOSED（渠道终态失败，无任何成功）→ S_FAIL（宿主回滚余额）")
+    void firstSubClosedFails() throws Exception {
         var ctx = ctx(30000, 0, 0, 0);
         var cb = ctx.getCallback();
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
@@ -284,8 +284,8 @@ class WxpayCombineSubmitHandlerTest {
     }
 
     @Test
-    @DisplayName("中途失败（部分成功）→ S_ING 部分完成，靠查单续退")
-    void partialFailureIng() throws Exception {
+    @DisplayName("中途失败（部分成功）→ S_WAIT 部分完成，靠查单续退")
+    void partialFailureWaits() throws Exception {
         var ctx = ctx(30000, 0, 0, 0);
         var cb = ctx.getCallback();
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
@@ -303,7 +303,7 @@ class WxpayCombineSubmitHandlerTest {
             var result = new WxpaySubmitHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("REFUND_PARTIAL");
             // 第 1、3 单成功累计，第 2 单被拒
             verify(cb, times(2)).updateSubOrder(any());
@@ -322,5 +322,63 @@ class WxpayCombineSubmitHandlerTest {
 
         assertThat(result.getState()).isEqualTo(BizState.S_OK);
         verify(cb, never()).updateSubOrder(any());
+    }
+
+    @Test
+    @DisplayName("子单 ABNORMAL（官方定义非终态）→ S_WAIT，不判失败")
+    void abnormalSubWaits() throws Exception {
+        var ctx = ctx(30000, 0, 0, 0);
+        when(ctx.getCallback().getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            stubPlatformCertDownload(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any(), any()))
+                    .thenAnswer(inv -> signedOk("{\"status\":\"ABNORMAL\"}"));
+
+            var result = new WxpaySubmitHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
+
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+        }
+    }
+
+    @Test
+    @DisplayName("子单 PROCESSING（受理中）→ S_WAIT，不累计不判失败（通知/查单续退）")
+    void processingSubWaits() throws Exception {
+        var ctx = ctx(30000, 0, 0, 0);
+        var cb = ctx.getCallback();
+        when(cb.getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            stubPlatformCertDownload(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any(), any()))
+                    .thenAnswer(inv -> signedOk("{\"status\":\"PROCESSING\"}"));
+
+            var result = new WxpaySubmitHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
+
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+            verify(cb, never()).updateSubOrder(any());
+        }
+    }
+
+    @Test
+    @DisplayName("子单提交渠道错误响应（是否受理无法判定）→ S_WAIT，不判失败")
+    void channelErrorSubWaits() throws Exception {
+        var ctx = ctx(30000, 0, 0, 0);
+        when(ctx.getCallback().getSubOrders(any())).thenReturn(subs(10000, 0, 0, 0));
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            stubPlatformCertDownload(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any(), any()))
+                    .thenAnswer(inv -> new HttpHelper.HttpResponse(500, Map.of(),
+                            "{\"code\":\"SYSTEM_ERROR\",\"message\":\"系统繁忙\"}"
+                                    .getBytes(StandardCharsets.UTF_8), "req", 10, 1));
+
+            var result = new WxpaySubmitHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
+
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+        }
     }
 }

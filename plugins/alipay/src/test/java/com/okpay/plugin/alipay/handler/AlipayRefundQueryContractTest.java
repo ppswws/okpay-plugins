@@ -32,7 +32,8 @@ import static org.mockito.Mockito.when;
 /**
  * 单笔退款成功判定与查单不存在语义（官方口径）：
  * alipay.trade.refund code=10000 仅代表受理成功，fund_change=Y 才是资金变动成功；
- * N/缺失（幂等重放等场景）保持 S_ING 交查单确认；查单 ACQ.TRADE_NOT_EXIST → S_ING。
+ * N/缺失（幂等重放等场景）保持 S_WAIT 交查单确认。文档未给出明确的“退款失败”状态，退款业务拒绝亦 S_WAIT；
+ * 支付订单查单永不 S_FAIL：ACQ.TRADE_NOT_EXIST / 其他业务错误 / TRADE_CLOSED 一律 S_WAIT。
  */
 @DisplayName("AlipaySubmitHandler/QueryHandler 退款成功判定与查单不存在")
 class AlipayRefundQueryContractTest {
@@ -118,35 +119,35 @@ class AlipayRefundQueryContractTest {
     }
 
     @Test
-    @DisplayName("退款 10000 但 fund_change 缺失 → S_ING（受理≠资金变动，交查单确认）")
-    void refundWithoutFundChangeIng() throws Exception {
+    @DisplayName("退款 10000 但 fund_change 缺失 → S_WAIT（受理≠资金变动，交查单确认）")
+    void refundWithoutFundChangeWait() throws Exception {
         var ctx = ctx(false);
         try (var mocked = responding(signedResponse("alipay_trade_refund_response",
                 "{\"code\":\"10000\",\"msg\":\"Success\",\"trade_no\":\"TX1\"}"))) {
             var result = new AlipaySubmitHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getMsg()).contains("待查询确认");
         }
     }
 
     @Test
-    @DisplayName("退款 10000 但 fund_change=N → S_ING（官方口径：N 需查询确认）")
-    void refundFundChangeNIng() throws Exception {
+    @DisplayName("退款 10000 但 fund_change=N → S_WAIT（官方口径：N 需查询确认）")
+    void refundFundChangeNWait() throws Exception {
         var ctx = ctx(false);
         try (var mocked = responding(signedResponse("alipay_trade_refund_response",
                 "{\"code\":\"10000\",\"msg\":\"Success\",\"fund_change\":\"N\",\"trade_no\":\"TX1\"}"))) {
             var result = new AlipaySubmitHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
         }
     }
 
     @Test
-    @DisplayName("退款 40004+SYSTEM_ERROR → S_ING（系统超时状态未知，重试/查单兜底）")
-    void refundSystemErrorIng() throws Exception {
+    @DisplayName("退款 40004+SYSTEM_ERROR → S_WAIT（系统超时状态未知，重试/查单兜底）")
+    void refundSystemErrorWait() throws Exception {
         var ctx = ctx(false);
         try (var mocked = responding(signedResponse("alipay_trade_refund_response",
                 "{\"code\":\"40004\",\"msg\":\"Business Failed\","
@@ -154,14 +155,14 @@ class AlipayRefundQueryContractTest {
             var result = new AlipaySubmitHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("40004");
         }
     }
 
     @Test
-    @DisplayName("退款 40004 其他业务错误 → S_FAIL（确定性拒绝）")
-    void refundBusinessFail() throws Exception {
+    @DisplayName("退款 40004 业务错误（如金额超限）→ S_WAIT（文档无明确退款失败状态，不判失败）")
+    void refundBusinessErrorWait() throws Exception {
         var ctx = ctx(false);
         try (var mocked = responding(signedResponse("alipay_trade_refund_response",
                 "{\"code\":\"40004\",\"msg\":\"Business Failed\","
@@ -169,18 +170,19 @@ class AlipayRefundQueryContractTest {
             var result = new AlipaySubmitHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("REFUND_AMT_RESTRICTION");
+            assertThat(result.getMsg()).isEqualTo("退款金额超限");
         }
     }
 
     // =========================================================================
-    // 单笔查单：ACQ.TRADE_NOT_EXIST = 未支付（S_ING），其余业务错误 S_FAIL
+    // 单笔查单：ACQ.TRADE_NOT_EXIST = 未支付（S_WAIT），其余业务错误同样 S_WAIT
     // =========================================================================
 
     @Test
-    @DisplayName("查单 ACQ.TRADE_NOT_EXIST → S_ING（交易不存在=等待买家付款，不作失败终态）")
-    void queryTradeNotExistIng() throws Exception {
+    @DisplayName("查单 ACQ.TRADE_NOT_EXIST → S_WAIT（交易不存在=等待买家付款，不作失败终态）")
+    void queryTradeNotExistWait() throws Exception {
         var ctx = ctx(false);
         try (var mocked = responding(signedResponse("alipay_trade_query_response",
                 "{\"code\":\"40004\",\"msg\":\"Business Failed\","
@@ -188,14 +190,15 @@ class AlipayRefundQueryContractTest {
             var result = new AlipayQueryHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_PAY).bizNo(TRADE_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
-            assertThat(result.getMsg()).contains("等待买家付款");
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+            assertThat(result.getCode()).isEqualTo("ACQ.TRADE_NOT_EXIST");
+            assertThat(result.getMsg()).isEqualTo("交易不存在");
         }
     }
 
     @Test
-    @DisplayName("查单其他业务错误 → S_FAIL")
-    void queryBusinessFail() throws Exception {
+    @DisplayName("查单其他业务错误 → S_WAIT（订单查单永不 S_FAIL）")
+    void queryBusinessErrorWait() throws Exception {
         var ctx = ctx(false);
         try (var mocked = responding(signedResponse("alipay_trade_query_response",
                 "{\"code\":\"40004\",\"msg\":\"Business Failed\","
@@ -203,7 +206,7 @@ class AlipayRefundQueryContractTest {
             var result = new AlipayQueryHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_PAY).bizNo(TRADE_NO).build());
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("ACQ.INVALID_PARAMETER");
         }
     }
@@ -222,6 +225,36 @@ class AlipayRefundQueryContractTest {
             assertThat(result.getState()).isEqualTo(BizState.S_OK);
             assertThat(result.getApiNo()).isEqualTo("ALI_TX1");
             assertThat(result.getBuyer()).isEqualTo("2088123456789012");
+        }
+    }
+
+    @Test
+    @DisplayName("查单 TRADE_CLOSED → S_WAIT（未付款超时关闭或已全额退款，不是支付失败）")
+    void queryTradeClosedWait() throws Exception {
+        var ctx = ctx(false);
+        try (var mocked = responding(signedResponse("alipay_trade_query_response",
+                "{\"code\":\"10000\",\"msg\":\"Success\",\"trade_no\":\"ALI_TX1\","
+                        + "\"trade_status\":\"TRADE_CLOSED\",\"total_amount\":\"100.00\"}"))) {
+            var result = new AlipayQueryHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_PAY).bizNo(TRADE_NO).build());
+
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+            assertThat(result.getCode()).isEqualTo("TRADE_CLOSED");
+        }
+    }
+
+    @Test
+    @DisplayName("退款查询：仅 REFUND_SUCCESS 成功；ACQ.TRADE_NOT_EXIST 等非成功 → S_WAIT（不判失败）")
+    void queryRefundNotExistWait() throws Exception {
+        var ctx = ctx(false);
+        try (var mocked = responding(signedResponse("alipay_trade_fastpay_refund_query_response",
+                "{\"code\":\"40004\",\"msg\":\"Business Failed\","
+                        + "\"sub_code\":\"ACQ.TRADE_NOT_EXIST\",\"sub_msg\":\"交易不存在\"}"))) {
+            var result = new AlipayQueryHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
+
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+            assertThat(result.getCode()).isEqualTo("ACQ.TRADE_NOT_EXIST");
         }
     }
 }

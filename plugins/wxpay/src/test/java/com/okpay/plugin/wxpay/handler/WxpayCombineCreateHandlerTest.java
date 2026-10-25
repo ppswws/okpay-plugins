@@ -6,6 +6,7 @@ import com.okpay.plugin.model.ConfigSnapshot;
 import com.okpay.plugin.model.InvokeContext;
 import com.okpay.plugin.model.LockExtResult;
 import com.okpay.plugin.model.OrderSnapshot;
+import com.okpay.plugin.model.PageOutcome;
 import com.okpay.plugin.model.RequestSnapshot;
 import com.okpay.plugin.model.SaveSubOrdersRequest;
 import com.okpay.plugin.sdk.HttpHelper;
@@ -196,8 +197,7 @@ class WxpayCombineCreateHandlerTest {
 
             var resp = new WxpayCreateHandler().wxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("wxpay_qrcode");
+            assertThat(pageOf(resp).page()).isEqualTo("wxpay_qrcode");
             // 落库与报文共用同一份确定性子单号
             var saved = ArgumentCaptor.forClass(SaveSubOrdersRequest.class);
             verify(cb).saveSubOrders(saved.capture());
@@ -266,7 +266,7 @@ class WxpayCombineCreateHandlerTest {
 
             var resp = new WxpayCreateHandler().wxpay(ctx);
 
-            assertThat(resp.getPage()).isEqualTo("wxpay_qrcode");
+            assertThat(pageOf(resp).page()).isEqualTo("wxpay_qrcode");
             verify(cb, never()).saveSubOrders(any());
         }
     }
@@ -300,8 +300,9 @@ class WxpayCombineCreateHandlerTest {
     void extShortCircuitSkipsNetworkAndSave() throws Exception {
         var ctx = ctx(30000, cfgRaw("1", true, null));
         var cb = ctx.getCallback();
+        // ext 经 JSON 落库，缓存载荷按新格式（kind 键）回读
         when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder()
-                .extData(Map.of("type", "page", "url", "wx://cached")).build());
+                .extData(Map.of("kind", "page", "page", "wxpay_qrcode", "url", "wx://cached")).build());
 
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             letRealUaChecks(mocked);
@@ -309,8 +310,8 @@ class WxpayCombineCreateHandlerTest {
 
             var resp = new WxpayCreateHandler().wxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getUrl()).isEqualTo("wx://cached");
+            assertThat(pageOf(resp).page()).isEqualTo("wxpay_qrcode");
+            assertThat(pageOf(resp).url()).isEqualTo("wx://cached");
             mocked.verify(() -> HttpHelper.post(any(), any(), any(), any(), any()), never());
             verify(cb, never()).saveSubOrders(any());
         }
@@ -334,8 +335,9 @@ class WxpayCombineCreateHandlerTest {
 
             var resp = new WxpayCreateHandler().wxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("jump");
-            assertThat(resp.getUrl()).startsWith("https://wx.tenpay.com/combine-h5&redirect_url=");
+            assertThat(resp).isInstanceOf(PageOutcome.Redirect.class);
+            assertThat(((PageOutcome.Redirect) resp).url())
+                    .startsWith("https://wx.tenpay.com/combine-h5&redirect_url=");
             verify(cb).saveSubOrders(any());
         }
     }
@@ -358,10 +360,9 @@ class WxpayCombineCreateHandlerTest {
 
             var resp = new WxpayCreateHandler().wxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("wxpay_h5");
-            assertThat(resp.getUrl()).startsWith("weixin://app/" + APP_ID + "/pay/?");
-            assertThat(resp.getUrl()).contains("prepayid=wxCOMBINEPREPAY");
+            assertThat(pageOf(resp).page()).isEqualTo("wxpay_h5");
+            assertThat(pageOf(resp).url()).startsWith("weixin://app/" + APP_ID + "/pay/?");
+            assertThat(pageOf(resp).url()).contains("prepayid=wxCOMBINEPREPAY");
             verify(cb).saveSubOrders(any());
         }
     }
@@ -406,5 +407,10 @@ class WxpayCombineCreateHandlerTest {
 
     private static String SdkSubNo(String mainTradeNo, int idx) {
         return com.okpay.plugin.sdk.Sdk.subTradeNo(mainTradeNo, idx);
+    }
+
+    private static PageOutcome.Page pageOf(PageOutcome outcome) {
+        assertThat(outcome).isInstanceOf(PageOutcome.Page.class);
+        return (PageOutcome.Page) outcome;
     }
 }

@@ -6,7 +6,7 @@ import static com.okpay.plugin.sdk.PaymentUtils.encodeForm;
 import com.okpay.plugin.model.InvokeContext;
 import com.okpay.plugin.sdk.HttpHelper;
 import com.okpay.plugin.sdk.PaymentUtils;
-import com.okpay.plugin.sdk.Sdk;
+import com.okpay.plugin.sdk.ResultUnknownException;
 
 import java.io.IOException;
 import java.util.LinkedHashMap;
@@ -14,8 +14,10 @@ import java.util.Map;
 
 /**
  * 合利宝接口调用封装：追加 signatureType=MD5 + sign，表单 POST 提交，
- * 统一校验 HTTP 层 / 响应解析 / 响应验签，失败抛 {@link Sdk.BizFailException}
- * （渠道 HTTP 与解析失败归因渠道统一文案）。
+ * 统一校验 HTTP 层 / 响应解析 / 响应验签。
+ *
+ * <p>失败分类：传输层异常（超时/连接失败）、HTTP 非 2xx、响应体解析不出 JSON、响应验签失败
+ * → 结果未知，统一抛 {@link ResultUnknownException}。</p>
  *
  * <p>业务码 rt2_retCode 的判定语义随接口不同（下单/退款/查单/余额），由调用方各自处理。</p>
  */
@@ -34,7 +36,7 @@ public final class HelipayApi {
      * {@link PaymentUtils#parseJsonMap} 二次解析业务字段。
      */
     public static HttpHelper.HttpResponse post(InvokeContext ctx, String url, Map<String, String> params, String key)
-            throws Exception {
+            throws ResultUnknownException {
         var form = new LinkedHashMap<>(params);
         form.put("signatureType", "MD5");
         form.put("sign", HelipaySignUtil.signRequest(params, key));
@@ -42,22 +44,32 @@ public final class HelipayApi {
         try {
             resp = HttpHelper.post(ctx, url, encodeForm(form),
                     "application/x-www-form-urlencoded;charset=UTF-8");
-        } catch (IOException e) {
-            // 传输层失败（超时/连接失败）：无 HTTP 响应，归因渠道统一文案
-            throw new Sdk.BizFailException(channelFailure(), null, e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new Sdk.BizFailException(channelFailure(), null, e);
+        } catch (IOException | InterruptedException e) {
+            // 传输层失败（超时/连接失败）：无 HTTP 响应，结果未知
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            throw new ResultUnknownException(channelFailure() + "[" + e.getClass().getSimpleName() + "]", e);
         }
-        // 渠道 HTTP 层失败（502/5xx，body 是 nginx 错误页非 JSON）：归因渠道、统一文案
+        // 渠道 HTTP 层失败（502/5xx，body 是 nginx 错误页非 JSON）：结果未知
         if (!resp.isSuccess())
-            throw new Sdk.BizFailException(channelFailure(resp.statusCode()), resp);
+            throw new ResultUnknownException(
+                channelFailure(resp.statusCode()) + "[" + safeBody(resp) + "]",
+                new IllegalStateException("HTTP " + resp.statusCode() + " 响应不可用"));
         var respMap = PaymentUtils.parseJsonMap(resp.bodyAsString());
-        // 预期 JSON 完全解析不出（CDN 拦截页/HTML 垃圾/空 body）→ 验签无从谈起，先归因渠道
+        // 预期 JSON 完全解析不出（CDN 拦截页/HTML 垃圾/空 body）→ 无法判断结果
         if (respMap.isEmpty())
-            throw new Sdk.BizFailException(channelFailure(resp.statusCode()), resp);
+            throw new ResultUnknownException(
+                channelFailure(resp.statusCode()) + "[" + safeBody(resp) + "]",
+                new IllegalStateException("HTTP " + resp.statusCode() + " 响应不可用"));
         if (!HelipaySignUtil.verifyResponse(respMap, key))
-            throw new Sdk.BizFailException("返回验签失败", resp);
+            throw new ResultUnknownException("返回验签失败", resp);
         return resp;
+    }
+
+    /** 响应体摘要（仅用于失败记录，避免把错误页原文当异常消息） */
+    private static String safeBody(HttpHelper.HttpResponse resp) {
+        var body = resp.bodyAsString();
+        if (body == null) return "";
+        var t = body.trim();
+        return t.length() > 120 ? t.substring(0, 120) + "…" : t;
     }
 }

@@ -3,9 +3,10 @@ package com.okpay.plugin.sumapay.util;
 import static com.okpay.plugin.sdk.PaymentUtils.channelFailure;
 
 import com.okpay.plugin.model.InvokeContext;
+import com.okpay.plugin.sdk.ExpectedFailureException;
 import com.okpay.plugin.sdk.HttpHelper;
 import com.okpay.plugin.sdk.PaymentUtils;
-import com.okpay.plugin.sdk.Sdk;
+import com.okpay.plugin.sdk.ResultUnknownException;
 
 import java.io.IOException;
 import java.nio.charset.Charset;
@@ -16,10 +17,10 @@ import java.util.Map;
 
 /**
  * 丰付支付接口调用封装：请求按接口约定字段表生成 RSA 签名后 GBK 编码传输，
- * 统一校验 HTTP 层 / 响应解码 / 响应验签，失败抛 {@link Sdk.BizFailException}
- * （渠道 HTTP 与解析失败归因渠道统一文案）。
+ * 统一校验 HTTP 层 / 响应解码 / 响应验签。
  *
- * <p>业务码 result 的判定语义随接口不同（下单/退款/查单/分账），由调用方各自处理。</p>
+ * <p>传输层、HTTP 层、响应不可解析与验签失败均为结果未知（{@link ResultUnknownException}），
+ * 不构造明确失败；业务码 result 的判定语义随接口不同（下单/退款/查单/分账），由调用方各自处理。</p>
  */
 public final class SumapayApi {
 
@@ -43,6 +44,7 @@ public final class SumapayApi {
      * POST 表单到渠道接口：按签名字段表生成签名追加到参数表，GBK 编码请求体，
      * 校验 HTTP 层 / 响应解码 / 响应验签；成功返回渠道响应，调用方用
      * {@link #decode} 解码后按 {@link PaymentUtils#parseJsonMap} 解析业务字段。
+     * 失败分支的响应轨迹随 {@link ResultUnknownException} 携带（异常链），由 SDK 提取。
      *
      * @param signKeys    请求签名参与字段（顺序敏感，空值跳过）
      * @param signField   请求签名字段名（signature / mersignature）
@@ -60,23 +62,33 @@ public final class SumapayApi {
         try {
             resp = HttpHelper.postBytes(ctx, url, encodeFormGBK(form), GBK_CONTENT_TYPE, Map.of());
         } catch (IOException e) {
-            // 传输层失败（超时/连接失败）：无 HTTP 响应，归因渠道统一文案
-            throw new Sdk.BizFailException(channelFailure(), null, e);
+            // 传输层失败（超时/连接失败）：无 HTTP 响应，结果未知
+            throw new ResultUnknownException(channelFailure(), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new Sdk.BizFailException(channelFailure(), null, e);
+            throw new ResultUnknownException(channelFailure(), e);
         }
-        // 渠道 HTTP 层失败（502/5xx，body 是 nginx 错误页非 JSON）：归因渠道、统一文案
+        // 渠道 HTTP 层失败（502/5xx，body 是 nginx 错误页非 JSON）：结果未知
         if (!resp.isSuccess())
-            throw new Sdk.BizFailException(channelFailure(resp.statusCode()), resp);
+            throw unknown(channelFailure(resp.statusCode()), resp);
         var respMap = PaymentUtils.parseJsonMap(decode(resp));
-        // 预期 JSON 完全解析不出（CDN 拦截页/HTML 垃圾/空 body）→ 验签无从谈起，先归因渠道
+        // 预期 JSON 完全解析不出（CDN 拦截页/HTML 垃圾/空 body）→ 结果未知
         if (respMap.isEmpty())
-            throw new Sdk.BizFailException(channelFailure(resp.statusCode()), resp);
+            throw unknown(channelFailure(resp.statusCode()), resp);
         if (!SumapaySignUtil.verify(fengfuPublicKey,
                 SumapaySignUtil.concat(respMap, verifyKeys), respMap.get(verifyField)))
-            throw new Sdk.BizFailException("返回验签失败", resp);
+            throw expected("返回验签失败", resp);
         return resp;
+    }
+
+    /** 结果未知并携带响应轨迹。 */
+    private static ResultUnknownException unknown(String message, HttpHelper.HttpResponse resp) {
+        return new ResultUnknownException(message, resp);
+    }
+
+    /** 预期失败并携带响应轨迹。 */
+    private static ExpectedFailureException expected(String message, HttpHelper.HttpResponse resp) {
+        return new ExpectedFailureException(message, resp);
     }
 
     /**

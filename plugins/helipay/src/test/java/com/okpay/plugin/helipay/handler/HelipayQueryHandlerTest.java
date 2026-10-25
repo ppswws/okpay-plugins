@@ -29,8 +29,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 
 /**
- * HelipayQueryHandler 四类查询状态机：订单/退款/打款按渠道状态映射 S_OK/S_FAIL/S_ING
- * （渠道业务失败与异常保持处理中交还轮询）；余额查询失败直接失败返回，余额取 rt15_amountToBeSettled。
+ * HelipayQueryHandler 四类查询状态机：订单只映射 S_OK/S_WAIT（支付订单无失败终态）；
+ * 退款/打款仅 api.txt 明确终态失败映射 S_FAIL；渠道业务失败与异常保持 S_WAIT 交还轮询；
+ * 余额查询失败直接失败返回，余额取 rt15_amountToBeSettled。
  */
 @DisplayName("HelipayQueryHandler 查询状态机")
 class HelipayQueryHandlerTest {
@@ -83,49 +84,51 @@ class HelipayQueryHandlerTest {
     }
 
     @Test
-    @DisplayName("查单 FAIL/CLOSE/CANCEL → S_FAIL")
-    void queryOrderFailed() throws Exception {
-        var ctx = orderCtx("SN1");
-        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
-            stubFormApi(mocked, signedOk("AppPayQuery", Map.of(
-                    "rt5_orderId", "T1", "rt7_orderStatus", "CLOSE")));
-            var result = new HelipayQueryHandler().handle(ctx, req(BizType.T_PAY));
+    @DisplayName("查单 FAIL/CLOSE/CANCEL → S_WAIT（支付订单查单不使用 S_FAIL）")
+    void queryOrderClosedIsWait() throws Exception {
+        for (var status : new String[] {"FAIL", "CLOSE", "CANCEL"}) {
+            var ctx = orderCtx("SN1");
+            try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+                stubFormApi(mocked, signedOk("AppPayQuery", Map.of(
+                        "rt5_orderId", "T1", "rt7_orderStatus", status)));
+                var result = new HelipayQueryHandler().handle(ctx, req(BizType.T_PAY));
 
-            assertThat(result.getState()).isEqualTo(BizState.S_FAIL);
+                assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+            }
         }
     }
 
     @Test
-    @DisplayName("查单处理中状态 → S_ING（保持轮询）")
-    void queryOrderIng() throws Exception {
+    @DisplayName("查单处理中状态 → S_WAIT（保持轮询）")
+    void queryOrderPending() throws Exception {
         var ctx = orderCtx("SN1");
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubFormApi(mocked, signedOk("AppPayQuery", Map.of(
                     "rt5_orderId", "T1", "rt7_orderStatus", "PAYING")));
             var result = new HelipayQueryHandler().handle(ctx, req(BizType.T_PAY));
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
         }
     }
 
     @Test
-    @DisplayName("查单业务失败（rt2 非 0000）→ S_ING（携带渠道码与说明，交还轮询）")
-    void queryOrderBizErrorKeepsIng() throws Exception {
+    @DisplayName("查单业务失败（rt2 非 0000）→ S_WAIT（携带渠道码与说明，交还轮询）")
+    void queryOrderBizErrorKeepsWait() throws Exception {
         var ctx = orderCtx("SN1");
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubFormApi(mocked, signedOk("AppPayQuery", Map.of(
                     "rt2_retCode", "0005", "rt3_retMsg", "订单不存在", "rt5_orderId", "T1")));
             var result = new HelipayQueryHandler().handle(ctx, req(BizType.T_PAY));
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("0005");
             assertThat(result.getMsg()).isEqualTo("订单不存在");
         }
     }
 
     @Test
-    @DisplayName("查单渠道异常 → S_ING QUERY_ERROR（不误判失败）")
-    void queryOrderChannelErrorKeepsIng() throws Exception {
+    @DisplayName("查单渠道异常 → S_WAIT QUERY_ERROR（不误判失败）")
+    void queryOrderChannelErrorKeepsWait() throws Exception {
         var ctx = orderCtx("SN1");
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             mocked.when(() -> HttpHelper.post(any(), anyString(), anyString(), anyString())).thenAnswer(inv ->
@@ -133,7 +136,7 @@ class HelipayQueryHandlerTest {
                             "<html><body>502</body></html>".getBytes(StandardCharsets.UTF_8), "req", 10, 1));
             var result = new HelipayQueryHandler().handle(ctx, req(BizType.T_PAY));
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("QUERY_ERROR");
         }
     }
@@ -143,25 +146,25 @@ class HelipayQueryHandlerTest {
     // =========================================================================
 
     @Test
-    @DisplayName("退款查询 SUCCESS → S_OK（apiNo=rt7）；FAIL/CLOSE → S_FAIL；其余 → S_ING（msg=retReasonDesc）")
+    @DisplayName("退款查询 SUCCESS → S_OK（apiNo=rt7）；FAIL/CLOSE（api.txt 终态）→ S_FAIL；其余 → S_WAIT（msg=retReasonDesc）")
     void queryRefundStates() throws Exception {
         assertState(refundCtx(), Map.of("rt8_orderStatus", "SUCCESS", "rt7_serialNumber", "SN1"),
                 BizState.S_OK, "SN1");
         assertState(refundCtx(), Map.of("rt8_orderStatus", "FAIL"), BizState.S_FAIL, null);
         assertState(refundCtx(), Map.of("rt8_orderStatus", "DOING",
-                "retReasonDesc", "退费受理中"), BizState.S_ING, null);
+                "retReasonDesc", "退费受理中"), BizState.S_WAIT, null);
     }
 
     @Test
-    @DisplayName("退款查询业务失败 → S_ING")
-    void queryRefundBizErrorKeepsIng() throws Exception {
+    @DisplayName("退款查询业务失败 → S_WAIT")
+    void queryRefundBizErrorKeepsWait() throws Exception {
         var ctx = refundCtx();
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubFormApi(mocked, signedOk("AppPayRefundQuery", Map.of(
                     "rt2_retCode", "0005", "rt3_retMsg", "退款单不存在", "rt5_orderId", "T1")));
             var result = new HelipayQueryHandler().handle(ctx, req(BizType.T_REF));
 
-            assertThat(result.getState()).isEqualTo(BizState.S_ING);
+            assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(result.getCode()).isEqualTo("0005");
         }
     }
@@ -171,13 +174,13 @@ class HelipayQueryHandlerTest {
     // =========================================================================
 
     @Test
-    @DisplayName("打款查询 SUCCESS → S_OK；FAIL/REFUND → S_FAIL；其余 → S_ING（msg=rt8_reason）")
+    @DisplayName("打款查询 SUCCESS → S_OK；FAIL/REFUND（api.txt 终态）→ S_FAIL；其余 → S_WAIT（msg=rt8_reason）")
     void queryTransferStates() throws Exception {
         assertState(transferCtx(), Map.of("rt7_orderStatus", "SUCCESS", "rt6_serialNumber", "SN1"),
                 BizState.S_OK, "SN1");
         assertState(transferCtx(), Map.of("rt7_orderStatus", "REFUND"), BizState.S_FAIL, null);
         assertState(transferCtx(), Map.of("rt7_orderStatus", "DOING",
-                "rt8_reason", "银行处理中"), BizState.S_ING, null);
+                "rt8_reason", "银行处理中"), BizState.S_WAIT, null);
     }
 
     // =========================================================================

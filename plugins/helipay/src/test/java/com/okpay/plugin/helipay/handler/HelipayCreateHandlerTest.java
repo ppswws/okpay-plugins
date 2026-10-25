@@ -1,15 +1,21 @@
 package com.okpay.plugin.helipay.handler;
 
 import com.okpay.plugin.HostCallback;
+import com.okpay.plugin.PaymentChannel;
+import com.okpay.plugin.helipay.HelipayPlugin;
 import com.okpay.plugin.helipay.util.HelipaySignUtil;
 import com.okpay.plugin.model.ChannelSnapshot;
 import com.okpay.plugin.model.ConfigSnapshot;
 import com.okpay.plugin.model.InvokeContext;
 import com.okpay.plugin.model.LockExtResult;
 import com.okpay.plugin.model.OrderSnapshot;
+import com.okpay.plugin.model.PageOutcome;
 import com.okpay.plugin.model.RequestSnapshot;
 import com.okpay.plugin.sdk.HttpHelper;
+import com.okpay.plugin.sdk.Pages;
+import com.okpay.plugin.sdk.PageCache;
 import com.okpay.plugin.sdk.PaymentUtils;
+import com.okpay.plugin.sdk.ResultUnknownException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -21,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
@@ -33,7 +40,8 @@ import static org.mockito.Mockito.when;
 /**
  * HelipayCreateHandler 支付方式分流：支付宝 H5 手机端跳链接 / 扫码 / 小程序 / 公众号，
  * 微信 H5 手机端逆向取 openlink（失败回退）+ 非手机中转页、公众号/小程序 OAuth 兑换后 JSAPI，
- * 银联扫码；渠道 HTTP 失败归因渠道文案。
+ * 银联扫码；渠道 HTTP 失败/响应不可解析 → 结果未知（ResultUnknownException），
+ * 渠道明确业务拒绝 → 失败页；收银台由 SDK 基类固定重入 create（ext 非空还原，ext 空重走建单）。
  */
 @DisplayName("HelipayCreateHandler 支付方式分流")
 class HelipayCreateHandlerTest {
@@ -43,6 +51,25 @@ class HelipayCreateHandlerTest {
     private static final String UA_IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148";
     private static final String UA_PC = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
     private static final String QBASE_URL = "https://servicewechat.com/wxa-qbase/jsoperatewxdata";
+
+    private static PageOutcome.Page pageOf(PageOutcome outcome) {
+        assertThat(outcome).isInstanceOf(PageOutcome.Page.class);
+        return (PageOutcome.Page) outcome;
+    }
+
+    /** 跳转页 / 页面 URL（Redirect / Page 两种形态统一取 url）。 */
+    private static String pageUrl(PageOutcome outcome) {
+        return switch (outcome) {
+            case PageOutcome.Redirect r -> r.url();
+            case PageOutcome.Page p -> p.url();
+            default -> throw new AssertionError("不是跳转/页面结果: " + outcome);
+        };
+    }
+
+    private static String failMessage(PageOutcome outcome) {
+        assertThat(outcome).isInstanceOf(PageOutcome.Failed.class);
+        return ((PageOutcome.Failed) outcome).failure().message();
+    }
 
     // =========================================================================
     // 支付宝
@@ -64,8 +91,8 @@ class HelipayCreateHandlerTest {
                     "rt9_orderAmount", "1.00", "rt10_currency", "CNY", "rt11_payType", "WAP")));
             var resp = new HelipayCreateHandler().alipay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("jump");
-            assertThat(resp.getUrl()).isEqualTo("https://h5pay.helipay.com/wap?token=WAP1");
+            assertThat(resp).isInstanceOf(PageOutcome.Redirect.class);
+            assertThat(pageUrl(resp)).isEqualTo("https://h5pay.helipay.com/wap?token=WAP1");
         }
         verify(cb, atLeastOnce()).lockOrderExt(any());
     }
@@ -94,7 +121,7 @@ class HelipayCreateHandlerTest {
                 .containsEntry("P12_applicationId", "https://pay.example.com")
                 .containsEntry("P2_orderId", "T1")
                 .containsEntry("subMerchantId", "SUB1")
-                .containsEntry("successToUrl", "https://pay.example.com/pay/wxpay/T1");
+                .containsEntry("successToUrl", "https://pay.example.com/pay/cashier/T1");
     }
 
     @Test
@@ -109,9 +136,9 @@ class HelipayCreateHandlerTest {
                     "rt5_orderId", "T1", "rt8_qrcode", "https://qr.example.com/ALI1")));
             var resp = new HelipayCreateHandler().alipay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("alipay_qrcode");
-            assertThat(resp.getUrl()).isEqualTo("https://qr.example.com/ALI1");
+            assertThat(resp).isInstanceOf(PageOutcome.Page.class);
+            assertThat(pageOf(resp).page()).isEqualTo("alipay_qrcode");
+            assertThat(pageUrl(resp)).isEqualTo("https://qr.example.com/ALI1");
 
             mocked.verify(() -> HttpHelper.post(any(), anyString(), bodyCaptor.capture(), anyString()));
         }
@@ -133,9 +160,9 @@ class HelipayCreateHandlerTest {
                     "rt5_orderId", "T1", "rt10_payInfo", "https://qr.example.com/ALIAPP")));
             var resp = new HelipayCreateHandler().alipay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("alipay_qrcode");
-            assertThat(resp.getUrl()).isEqualTo("https://qr.example.com/ALIAPP");
+            assertThat(resp).isInstanceOf(PageOutcome.Page.class);
+            assertThat(pageOf(resp).page()).isEqualTo("alipay_qrcode");
+            assertThat(pageUrl(resp)).isEqualTo("https://qr.example.com/ALIAPP");
 
             mocked.verify(() -> HttpHelper.post(any(), anyString(), bodyCaptor.capture(), anyString()));
         }
@@ -155,8 +182,8 @@ class HelipayCreateHandlerTest {
                     "rt5_orderId", "T1", "rt10_payInfo", "https://qr.example.com/ALIPUB")));
             var resp = new HelipayCreateHandler().alipay(ctx);
 
-            assertThat(resp.getPage()).isEqualTo("alipay_qrcode");
-            assertThat(resp.getUrl()).isEqualTo("https://qr.example.com/ALIPUB");
+            assertThat(pageOf(resp).page()).isEqualTo("alipay_qrcode");
+            assertThat(pageUrl(resp)).isEqualTo("https://qr.example.com/ALIPUB");
         }
     }
 
@@ -164,8 +191,8 @@ class HelipayCreateHandlerTest {
     @DisplayName("支付宝未开启任何方式 → error 页")
     void alipayNoModeError() {
         var resp = new HelipayCreateHandler().alipay(ctx(UA_PC, null, false, cfgRaw("", false, false, null)));
-        assertThat(resp.getType()).isEqualTo("error");
-        assertThat(resp.getMsg()).isEqualTo("当前通道未开启支付宝支付方式");
+        assertThat(resp).isInstanceOf(PageOutcome.Failed.class);
+        assertThat(failMessage(resp)).isEqualTo("当前通道未开启支付宝支付方式");
     }
 
     // =========================================================================
@@ -200,9 +227,9 @@ class HelipayCreateHandlerTest {
             });
             var resp = new HelipayCreateHandler().wxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("wxpay_h5");
-            assertThat(resp.getUrl()).isEqualTo("weixin://dl/business/?t=OL1");
+            assertThat(resp).isInstanceOf(PageOutcome.Page.class);
+            assertThat(pageOf(resp).page()).isEqualTo("wxpay_h5");
+            assertThat(pageUrl(resp)).isEqualTo("weixin://dl/business/?t=OL1");
         }
         verify(ctx.getCallback(), atLeastOnce()).lockOrderExt(any());
     }
@@ -229,8 +256,8 @@ class HelipayCreateHandlerTest {
             });
             var resp = new HelipayCreateHandler().wxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("jump");
-            assertThat(resp.getUrl()).isEqualTo(
+            assertThat(resp).isInstanceOf(PageOutcome.Redirect.class);
+            assertThat(pageUrl(resp)).isEqualTo(
                     "https://h5pay.helipay.com/pay?appid=wxMPAPP1&prepayid=PP1&sign=SIG1");
         }
     }
@@ -241,10 +268,10 @@ class HelipayCreateHandlerTest {
         var ctx = ctx(UA_PC, null, false, cfgRaw("3", false, false, null));
         var resp = new HelipayCreateHandler().wxpay(ctx);
 
-        assertThat(resp.getType()).isEqualTo("page");
-        assertThat(resp.getPage()).isEqualTo("wxpay_qrcode");
+        assertThat(resp).isInstanceOf(PageOutcome.Page.class);
+        assertThat(pageOf(resp).page()).isEqualTo("wxpay_qrcode");
         // 中转页 URL 为支付页地址 + t 时间戳（重进页面刷新订单态）
-        assertThat(resp.getUrl()).startsWith("https://pay.example.com/pay/wxpay/T1?t=");
+        assertThat(pageUrl(resp)).startsWith("https://pay.example.com/pay/cashier/T1?t=");
         // 中转页不占下单锁、不发渠道请求
         verify(ctx.getCallback(), never()).lockOrderExt(any());
     }
@@ -261,8 +288,8 @@ class HelipayCreateHandlerTest {
                     "rt5_orderId", "T1", "rt8_qrcode", "https://qr.example.com/WXP1")));
             var resp = new HelipayCreateHandler().wxpay(ctx);
 
-            assertThat(resp.getPage()).isEqualTo("wxpay_qrcode");
-            assertThat(resp.getUrl()).isEqualTo("https://qr.example.com/WXP1");
+            assertThat(pageOf(resp).page()).isEqualTo("wxpay_qrcode");
+            assertThat(pageUrl(resp)).isEqualTo("https://qr.example.com/WXP1");
 
             mocked.verify(() -> HttpHelper.post(any(), anyString(), bodyCaptor.capture(), anyString()));
         }
@@ -281,8 +308,8 @@ class HelipayCreateHandlerTest {
         var ctx = ctx(UA_WECHAT, null, true, cfgRaw("1", true, false, null));
         var resp = new HelipayCreateHandler().wxpay(ctx);
 
-        assertThat(resp.getType()).isEqualTo("jump");
-        var url = resp.getUrl();
+        assertThat(resp).isInstanceOf(PageOutcome.Redirect.class);
+        var url = pageUrl(resp);
         // 首层入口基地址恒为平台网关域（系统公众号绑定的授权域名），非通道前端域
         assertThat(url).startsWith("https://gw.example.com/oauth/wxmp?redirect_uri=");
         assertThat(URLDecoder.decode(url, StandardCharsets.UTF_8))
@@ -298,9 +325,9 @@ class HelipayCreateHandlerTest {
         var ctx = ctx(UA_PC, null, false, cfgRaw("1", true, false, null));
         var resp = new HelipayCreateHandler().wxpay(ctx);
 
-        assertThat(resp.getType()).isEqualTo("page");
-        assertThat(resp.getPage()).isEqualTo("wxpay_qrcode");
-        assertThat(resp.getUrl()).startsWith("https://pay.example.com/pay/wxpay/T1?t=");
+        assertThat(resp).isInstanceOf(PageOutcome.Page.class);
+        assertThat(pageOf(resp).page()).isEqualTo("wxpay_qrcode");
+        assertThat(pageUrl(resp)).startsWith("https://pay.example.com/pay/cashier/T1?t=");
         verify(ctx.getCallback(), never()).lockOrderExt(any());
     }
 
@@ -327,10 +354,11 @@ class HelipayCreateHandlerTest {
                             + "\"package\":\"prepay_id=PP1\",\"signType\":\"MD5\",\"paySign\":\"PS1\"}")));
             var resp = new HelipayCreateHandler().wxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("wxpay_jspay");
+            assertThat(resp).isInstanceOf(PageOutcome.Page.class);
+            assertThat(pageOf(resp).page()).isEqualTo("wxpay_jspay");
             // 模板把 data.js_api_parameters 直接喂 WeixinJSBridge.invoke：必须是对象
-            var params = HttpHelper.MAPPER.readTree(resp.getDataRaw()).path("js_api_parameters");
+            var params = HttpHelper.MAPPER.readTree(
+                    HttpHelper.MAPPER.writeValueAsString(pageOf(resp).data())).path("js_api_parameters");
             assertThat(params.isObject()).isTrue();
             assertThat(params.path("paySign").asString()).isEqualTo("PS1");
 
@@ -348,7 +376,7 @@ class HelipayCreateHandlerTest {
     }
 
     @Test
-    @DisplayName("渠道 payInfo 不是合法 JSON → 归因渠道的 error 页（不冒泡成插件内部错误）")
+    @DisplayName("渠道 payInfo 不是合法 JSON → 渠道已受理但支付参数不可用：失败页（不冒泡成插件内部错误）")
     void wxpayMpInvalidPayInfoAttributesToChannel() throws Exception {
         var ctx = ctx(UA_WECHAT, "code=CODE2", false, cfgRaw("1", true, false, null));
         when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
@@ -363,8 +391,8 @@ class HelipayCreateHandlerTest {
 
             var resp = new HelipayCreateHandler().wxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("error");
-            assertThat(resp.getMsg()).isEqualTo("渠道支付参数解析失败");
+            assertThat(resp).isInstanceOf(PageOutcome.Failed.class);
+            assertThat(failMessage(resp)).isEqualTo("下单成功但未返回支付地址");
         }
     }
 
@@ -396,9 +424,9 @@ class HelipayCreateHandlerTest {
             });
             var resp = new HelipayCreateHandler().wxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("wxpay_h5");
-            assertThat(resp.getUrl()).isEqualTo("weixin://dl/business/?t=SCHEME1");
+            assertThat(resp).isInstanceOf(PageOutcome.Page.class);
+            assertThat(pageOf(resp).page()).isEqualTo("wxpay_h5");
+            assertThat(pageUrl(resp)).isEqualTo("weixin://dl/business/?t=SCHEME1");
         }
         // 未兑换、未下单：无风控落库、不占下单锁
         verify(ctx.getCallback(), never()).recordOAuthIdentity(any());
@@ -426,8 +454,8 @@ class HelipayCreateHandlerTest {
                     "rt10_payInfo", "{\"timeStamp\":\"TS1\",\"package\":\"prepay_id=PP1\",\"paySign\":\"PS1\"}")));
             var resp = new HelipayCreateHandler().wxpay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("wxpay_jspay");
+            assertThat(resp).isInstanceOf(PageOutcome.Page.class);
+            assertThat(pageOf(resp).page()).isEqualTo("wxpay_jspay");
 
             mocked.verify(() -> HttpHelper.post(any(), anyString(), bodyCaptor.capture(), anyString()));
         }
@@ -455,9 +483,9 @@ class HelipayCreateHandlerTest {
                     "rt5_orderId", "T1", "rt10_payInfo", "https://qr.example.com/BANK1")));
             var resp = new HelipayCreateHandler().bank(ctx);
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("bank_qrcode");
-            assertThat(resp.getUrl()).isEqualTo("https://qr.example.com/BANK1");
+            assertThat(resp).isInstanceOf(PageOutcome.Page.class);
+            assertThat(pageOf(resp).page()).isEqualTo("bank_qrcode");
+            assertThat(pageUrl(resp)).isEqualTo("https://qr.example.com/BANK1");
 
             mocked.verify(() -> HttpHelper.post(any(), anyString(), bodyCaptor.capture(), anyString()));
         }
@@ -469,8 +497,8 @@ class HelipayCreateHandlerTest {
     @DisplayName("云闪付未开启 → error 页")
     void bankNoModeError() {
         var resp = new HelipayCreateHandler().bank(ctx(UA_PC, null, false, cfgRaw("4", false, false, null)));
-        assertThat(resp.getType()).isEqualTo("error");
-        assertThat(resp.getMsg()).isEqualTo("当前通道未开启云闪付支付方式");
+        assertThat(resp).isInstanceOf(PageOutcome.Failed.class);
+        assertThat(failMessage(resp)).isEqualTo("当前通道未开启云闪付支付方式");
     }
 
     // =========================================================================
@@ -478,8 +506,8 @@ class HelipayCreateHandlerTest {
     // =========================================================================
 
     @Test
-    @DisplayName("渠道 HTTP 层失败（502 nginx 错误页）：error 页文案归因渠道，不报插件内部错误")
-    void channelHttpFailureReturnsChannelErrorPage() throws Exception {
+    @DisplayName("渠道 HTTP 层失败（502 nginx 错误页）：结果未知，抛 ResultUnknownException")
+    void channelHttpFailureThrowsResultUnknown() throws Exception {
         var ctx = ctx(UA_PC, null, false, cfgRaw("4", false, false, null));
         when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
 
@@ -488,16 +516,69 @@ class HelipayCreateHandlerTest {
                     new HttpHelper.HttpResponse(502, Map.of(),
                             "<html><head><title>502 Bad Gateway</title></head><body></body></html>"
                                     .getBytes(StandardCharsets.UTF_8), "req", 10, 1));
-            var resp = new HelipayCreateHandler().alipay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("error");
-            assertThat(resp.getMsg())
-                    .isEqualTo("接口通道服务异常，未返回预期响应！HTTP Status Code:502");
+            assertThatThrownBy(() -> new HelipayCreateHandler().alipay(ctx))
+                    .isInstanceOf(ResultUnknownException.class)
+                    .hasMessageContaining("HTTP Status Code:502");
         }
     }
 
     @Test
-    @DisplayName("渠道业务失败（rt2_retCode 非 0000 带说明）：error 页文案带业务码")
+    @DisplayName("渠道 200 但响应体不是预期 JSON（CDN 拦截页）：结果未知，抛 ResultUnknownException")
+    void channelUnparseableBodyThrowsResultUnknown() throws Exception {
+        var ctx = ctx(UA_PC, null, false, cfgRaw("4", false, false, null));
+        when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.post(any(), anyString(), anyString(), anyString())).thenAnswer(inv ->
+                    new HttpHelper.HttpResponse(200, Map.of(),
+                            "<html>cloudflare 拦截页</html>".getBytes(StandardCharsets.UTF_8), "req", 10, 1));
+
+            assertThatThrownBy(() -> new HelipayCreateHandler().alipay(ctx))
+                    .isInstanceOf(ResultUnknownException.class)
+                    .hasMessageContaining("HTTP Status Code:200");
+        }
+    }
+
+    @Test
+    @DisplayName("渠道响应可解析但验签失败 → 结果未知（S_WAIT），不构造明确失败")
+    void channelVerifyFailureThrowsResultUnknown() throws Exception {
+        var ctx = ctx(UA_PC, null, false, cfgRaw("4", false, false, null));
+        when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            var m = new LinkedHashMap<String, String>();
+            m.put("rt1_bizType", "AppPay");
+            m.put("rt2_retCode", "0000");
+            m.put("rt8_qrcode", "https://qr.example.com/ALI1");
+            m.put("sign", "bogus");
+            stubFormApi(mocked, new HttpHelper.HttpResponse(200, Map.of(),
+                    HttpHelper.MAPPER.writeValueAsBytes(m), "req", 10, 1));
+
+            assertThatThrownBy(() -> new HelipayCreateHandler().alipay(ctx))
+                    .isInstanceOf(ResultUnknownException.class)
+                    .hasMessage("返回验签失败");
+        }
+    }
+
+    @Test
+    @DisplayName("渠道传输层失败（超时）→ 结果未知，抛 ResultUnknownException")
+    void channelIoFailureThrowsResultUnknown() throws Exception {
+        var ctx = ctx(UA_PC, null, false, cfgRaw("4", false, false, null));
+        when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.post(any(), anyString(), anyString(), anyString()))
+                    .thenThrow(new java.net.http.HttpTimeoutException("timeout"));
+
+            assertThatThrownBy(() -> new HelipayCreateHandler().alipay(ctx))
+                    .isInstanceOf(ResultUnknownException.class)
+                    .hasMessageContaining("HttpTimeoutException");
+        }
+    }
+
+    @Test
+    @DisplayName("渠道业务失败（rt2_retCode 非 0000 带说明）：失败页文案带业务码")
     void channelBizFailureIncludesCodeAndMsg() throws Exception {
         var ctx = ctx(UA_PC, null, false, cfgRaw("4", false, false, null));
         when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
@@ -507,8 +588,96 @@ class HelipayCreateHandlerTest {
                     "rt2_retCode", "0002", "rt3_retMsg", "余额不足", "rt5_orderId", "T1")));
             var resp = new HelipayCreateHandler().alipay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("error");
-            assertThat(resp.getMsg()).isEqualTo("[0002]余额不足");
+            assertThat(resp).isInstanceOf(PageOutcome.Failed.class);
+            assertThat(failMessage(resp)).isEqualTo("[0002]余额不足");
+        }
+    }
+
+    // =========================================================================
+    // 收银台重入
+    // =========================================================================
+
+    @Test
+    @DisplayName("收银台 ext 非空 → 还原 lockCreate 缓存的下单结果（不再请求渠道）")
+    void cashierRestoresCachedOutcome() throws Exception {
+        var cached = Pages.page("alipay_qrcode", "https://qr.example.com/CACHED");
+        var ctx = ctx(UA_PC, null, false, cfgRaw("4", false, false, null), "{\"kind\":\"page\"}");
+        when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder()
+                // ext 经 JSON 落库，缓存载荷按同一形态回读
+                .extData(new LinkedHashMap<String, Object>(PaymentUtils.parseJsonMap(
+                        HttpHelper.MAPPER.writeValueAsString(PageCache.toMap(cached)))))
+                .build());
+        ctx.setFuncName(PaymentChannel.CASHIER_FUNC);
+
+        var outcome = (PageOutcome) new HelipayPlugin().handle(ctx);
+
+        assertThat(outcome).isEqualTo(cached);
+    }
+
+    @Test
+    @DisplayName("收银台 ext 为空 + 微信 H5 非手机端 → 重走 create，返回 wxpay_qrcode 中转页")
+    void cashierBlankExtRebuildsRelayPage() {
+        var ctx = ctx(UA_PC, null, false, cfgRaw("3", false, false, null));
+        ctx.setFuncName(PaymentChannel.CASHIER_FUNC);
+
+        var outcome = (PageOutcome) new HelipayPlugin().handle(ctx);
+
+        assertThat(pageOf(outcome).page()).isEqualTo("wxpay_qrcode");
+        assertThat(pageUrl(outcome)).startsWith("https://pay.example.com/pay/cashier/T1?t=");
+        verify(ctx.getCallback(), never()).lockOrderExt(any());
+    }
+
+    @Test
+    @DisplayName("收银台 ext 为空 + 公众号微信内无 code → 重走 create，返回授权跳转")
+    void cashierBlankExtRebuildsOAuthRedirect() {
+        var ctx = ctx(UA_WECHAT, null, true, cfgRaw("1", true, false, null));
+        ctx.setFuncName(PaymentChannel.CASHIER_FUNC);
+
+        var outcome = (PageOutcome) new HelipayPlugin().handle(ctx);
+
+        assertThat(outcome).isInstanceOf(PageOutcome.Redirect.class);
+        assertThat(URLDecoder.decode(pageUrl(outcome), StandardCharsets.UTF_8))
+                .contains("redirect_uri=https://open.weixin.qq.com/connect/oauth2/authorize")
+                .contains("appid=wxMPAPP1")
+                .contains("state=T1");
+        verify(ctx.getCallback(), never()).lockOrderExt(any());
+    }
+
+    @Test
+    @DisplayName("收银台 ext 为空 + 通道未开启任何方式 → 重走 create，返回中转页")
+    void cashierBlankExtNoModeRendersRelay() {
+        var ctx = ctx(UA_PC, null, false, cfgRaw("", false, false, null));
+        ctx.setFuncName(PaymentChannel.CASHIER_FUNC);
+
+        var outcome = (PageOutcome) new HelipayPlugin().handle(ctx);
+
+        assertThat(pageOf(outcome).page()).isEqualTo("wxpay_qrcode");
+        verify(ctx.getCallback(), never()).lockOrderExt(any());
+    }
+
+    @Test
+    @DisplayName("收银台 OAuth 回跳 code → 重走 create 兑换身份并下单（中转链第二阶段）")
+    void cashierOAuthCallbackContinuesCreate() throws Exception {
+        var ctx = ctx(UA_WECHAT, "code=CODE1", false, cfgRaw("1", true, false, null));
+        ctx.setFuncName(PaymentChannel.CASHIER_FUNC);
+        when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.get(any(), anyString())).thenAnswer(inv -> {
+                var url = inv.getArgument(1).toString();
+                if (url.contains("sns/oauth2/access_token")) {
+                    return new HttpHelper.HttpResponse(200, Map.of(),
+                            "{\"openid\":\"wxOPENID_MP1\"}".getBytes(StandardCharsets.UTF_8), "req", 10, 1);
+                }
+                throw new IllegalStateException("unexpected GET " + url);
+            });
+            stubFormApi(mocked, signedOk("AppPayPublic", Map.of(
+                    "rt5_orderId", "T1",
+                    "rt10_payInfo", "{\"timeStamp\":\"TS1\",\"nonceStr\":\"NS1\","
+                            + "\"package\":\"prepay_id=PP1\",\"signType\":\"MD5\",\"paySign\":\"PS1\"}")));
+
+            assertThat(pageOf((PageOutcome) new HelipayPlugin().handle(ctx)).page())
+                    .isEqualTo("wxpay_jspay");
         }
     }
 
@@ -567,8 +736,12 @@ class HelipayCreateHandlerTest {
     }
 
     private InvokeContext ctx(String ua, String query, boolean oauthWx, byte[] cfgRaw) {
+        return ctx(ua, query, oauthWx, cfgRaw, null);
+    }
+
+    private InvokeContext ctx(String ua, String query, boolean oauthWx, byte[] cfgRaw, String ext) {
         var order = OrderSnapshot.builder().tradeNo("T1").real(100L).type("wxpay")
-                .ipBuyer("127.0.0.1").build();
+                .ipBuyer("127.0.0.1").ext(ext).build();
         var b = InvokeContext.builder()
                 .requestId("r1")
                 .channel(ChannelSnapshot.builder().cfgRaw(cfgRaw).build())

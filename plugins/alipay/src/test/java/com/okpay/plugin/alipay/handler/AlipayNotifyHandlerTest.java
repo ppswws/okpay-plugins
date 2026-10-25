@@ -4,6 +4,7 @@ import com.okpay.plugin.HostCallback;
 import com.okpay.plugin.model.ChannelSnapshot;
 import com.okpay.plugin.model.CompleteBizRequest;
 import com.okpay.plugin.model.InvokeContext;
+import com.okpay.plugin.model.NotifyResponse;
 import com.okpay.plugin.model.OrderSnapshot;
 import com.okpay.plugin.model.RefundSnapshot;
 import com.okpay.plugin.model.RequestSnapshot;
@@ -42,6 +43,14 @@ import java.util.List;
  */
 @DisplayName("AlipayNotifyHandler 支付通知/合单退款通知")
 class AlipayNotifyHandlerTest {
+
+    /** 通知应答体（Ok/Fail 共用可读文案） */
+    private static String bodyOf(NotifyResponse resp) {
+        return switch (resp) {
+            case NotifyResponse.Ok ok -> ok.body();
+            case NotifyResponse.Fail fail -> fail.body();
+        };
+    }
 
     private static final String APP_ID = "2021000000000001";
     private static KeyPair KP;
@@ -124,7 +133,7 @@ class AlipayNotifyHandlerTest {
         var ctx = certNotifyCtx(100L, certSignedForm(params), cb);
 
         var resp = new AlipayNotifyHandler().payNotify(ctx);
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(bodyOf(resp)).isEqualTo("success");
 
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
@@ -147,7 +156,7 @@ class AlipayNotifyHandlerTest {
         var ctx = certNotifyCtx(100L, body, cb);
 
         var resp = new AlipayNotifyHandler().payNotify(ctx);
-        assertThat(resp.getDataText()).isEqualTo("sign_error");
+        assertThat(bodyOf(resp)).isEqualTo("sign_error");
         verify(cb, never()).completeBiz(any());
     }
 
@@ -188,7 +197,7 @@ class AlipayNotifyHandlerTest {
         var ctx = notifyCtx(100L, signedForm(params), cb);
 
         var resp = new AlipayNotifyHandler().payNotify(ctx);
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(bodyOf(resp)).isEqualTo("success");
 
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
@@ -209,7 +218,7 @@ class AlipayNotifyHandlerTest {
         var ctx = notifyCtx(100L, signedForm(params), cb);
 
         var resp = new AlipayNotifyHandler().payNotify(ctx);
-        assertThat(resp.getDataText()).isEqualTo("order_mismatch");
+        assertThat(bodyOf(resp)).isEqualTo("order_mismatch");
         verify(cb, never()).completeBiz(any());
     }
 
@@ -227,11 +236,27 @@ class AlipayNotifyHandlerTest {
         var ctx = notifyCtx(100L, signedForm(params), cb);
 
         var resp = new AlipayNotifyHandler().payNotify(ctx);
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(bodyOf(resp)).isEqualTo("success");
 
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         assertThat(captor.getValue().getBuyer()).isEqualTo("OPENID1");
+    }
+
+    @Test
+    @DisplayName("支付通知 TRADE_CLOSED（未付款超时关闭/支付后全额退款）→ ack，不推进、不写失败（支付订单无失败终态）")
+    void payNotifyTradeClosedAckedWithoutStatusWrite() throws Exception {
+        var cb = mock(HostCallback.class);
+        var params = new LinkedHashMap<String, String>();
+        params.put("app_id", APP_ID);
+        params.put("out_trade_no", "T1");
+        params.put("trade_status", "TRADE_CLOSED");
+        params.put("total_amount", "1.00");
+        params.put("trade_no", "ALI_NO");
+        var ctx = notifyCtx(100L, signedForm(params), cb);
+
+        assertThat(bodyOf(new AlipayNotifyHandler().payNotify(ctx))).isEqualTo("success");
+        verify(cb, never()).completeBiz(any());
     }
 
     // =========================================================================
@@ -274,7 +299,7 @@ class AlipayNotifyHandlerTest {
         var ctx = refundNotifyCtx(refundNotifyParams("S1", "R1_1", "150.00"), cb);
 
         var resp = new AlipayNotifyHandler().refundNotify(ctx);
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(bodyOf(resp)).isEqualTo("success");
 
         var captor = ArgumentCaptor.forClass(UpdateSubOrderRequest.class);
         verify(cb).updateSubOrder(captor.capture());
@@ -291,7 +316,7 @@ class AlipayNotifyHandlerTest {
         var ctx = refundNotifyCtx(refundNotifyParams("S2", "R1_2", "150.00"), cb);
 
         var resp = new AlipayNotifyHandler().refundNotify(ctx);
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(bodyOf(resp)).isEqualTo("success");
 
         verify(cb).updateSubOrder(any());
         var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
@@ -312,7 +337,7 @@ class AlipayNotifyHandlerTest {
         var ctx = refundNotifyCtx(refundNotifyParams("S1", "R1_1", "150.00"), cb);
 
         var resp = new AlipayNotifyHandler().refundNotify(ctx);
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(bodyOf(resp)).isEqualTo("success");
         verify(cb, never()).completeBiz(any());
     }
 
@@ -325,7 +350,7 @@ class AlipayNotifyHandlerTest {
         var ctx = refundNotifyCtx(params, cb);
 
         var resp = new AlipayNotifyHandler().refundNotify(ctx);
-        assertThat(resp.getDataText()).isEqualTo("success");
+        assertThat(bodyOf(resp)).isEqualTo("success");
 
         verify(cb, never()).updateSubOrder(any());
         verify(cb, never()).completeBiz(any());

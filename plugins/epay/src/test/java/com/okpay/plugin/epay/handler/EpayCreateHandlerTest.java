@@ -1,13 +1,15 @@
 package com.okpay.plugin.epay.handler;
 
 import com.okpay.plugin.HostCallback;
+import com.okpay.plugin.epay.util.EpaySignUtil;
 import com.okpay.plugin.model.ChannelSnapshot;
 import com.okpay.plugin.model.ConfigSnapshot;
 import com.okpay.plugin.model.InvokeContext;
 import com.okpay.plugin.model.LockExtResult;
 import com.okpay.plugin.model.OrderSnapshot;
+import com.okpay.plugin.model.PageOutcome;
 import com.okpay.plugin.sdk.HttpHelper;
-import com.okpay.plugin.epay.util.EpaySignUtil;
+import com.okpay.plugin.sdk.ResultUnknownException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
@@ -18,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -71,21 +74,25 @@ class EpayCreateHandlerTest {
         return params;
     }
 
+    private static String redirectUrl(PageOutcome outcome) {
+        assertThat(outcome).isInstanceOf(PageOutcome.Redirect.class);
+        return ((PageOutcome.Redirect) outcome).url();
+    }
+
     // =========================================================================
     // Submit 模式
     // =========================================================================
 
     @Test
-    @DisplayName("Submit 模式：不请求渠道，拼接 submit.php 支付链接 jump 返回（无 device/clientip，签名有效）")
+    @DisplayName("Submit 模式：不请求渠道，拼接 submit.php 支付链接跳转（无 device/clientip，签名有效）")
     void submitModeBuildsPayLinkWithoutChannelRequest() throws Exception {
         var ctx = ctx(cfgRaw("https://gw.test", true));
         when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
 
-        var resp = new EpayCreateHandler().alipay(ctx);
+        var url = redirectUrl(new EpayCreateHandler().alipay(ctx));
 
-        assertThat(resp.getType()).isEqualTo("jump");
-        assertThat(resp.getUrl()).startsWith("https://gw.test/submit.php?");
-        var params = parseForm(resp.getUrl().substring(resp.getUrl().indexOf('?') + 1));
+        assertThat(url).startsWith("https://gw.test/submit.php?");
+        var params = parseForm(url.substring(url.indexOf('?') + 1));
         // Submit 模式不带 device/clientip；业务参数与签名正常携带
         assertThat(params).doesNotContainKey("clientip").doesNotContainKey("device");
         assertThat(params).containsEntry("pid", APPID)
@@ -101,10 +108,8 @@ class EpayCreateHandlerTest {
         var ctx = ctx(cfgRaw("https://gw.test//", true));
         when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
 
-        var resp = new EpayCreateHandler().alipay(ctx);
-
-        assertThat(resp.getType()).isEqualTo("jump");
-        assertThat(resp.getUrl()).startsWith("https://gw.test/submit.php?");
+        assertThat(redirectUrl(new EpayCreateHandler().alipay(ctx)))
+                .startsWith("https://gw.test/submit.php?");
     }
 
     // =========================================================================
@@ -112,8 +117,8 @@ class EpayCreateHandlerTest {
     // =========================================================================
 
     @Test
-    @DisplayName("渠道 HTTP 层失败（502 nginx 错误页）：归类为渠道异常返回 error 页（含状态码），不抛异常")
-    void channelHttpFailureReturnsChannelErrorPage() throws Exception {
+    @DisplayName("渠道 HTTP 层失败（502 nginx 错误页）：结果未知，抛 ResultUnknownException")
+    void channelHttpFailureThrowsResultUnknown() throws Exception {
         var ctx = ctx(cfgRaw("https://gw.test/", false));
         when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
 
@@ -124,18 +129,16 @@ class EpayCreateHandlerTest {
                                     + "<center><h1>502 Bad Gateway</h1></center></body></html>")
                                     .getBytes(StandardCharsets.UTF_8),
                             "req", 10, 1));
-            var resp = new EpayCreateHandler().alipay(ctx);
 
-            // 渠道挂是渠道问题：error 页文案归因渠道，宿主按渠道失败落库，不得报"插件内部错误"
-            assertThat(resp.getType()).isEqualTo("error");
-            assertThat(resp.getMsg())
-                    .isEqualTo("接口通道服务异常，未返回预期响应！HTTP Status Code:502");
+            assertThatThrownBy(() -> new EpayCreateHandler().alipay(ctx))
+                    .isInstanceOf(ResultUnknownException.class)
+                    .hasMessageContaining("502");
         }
     }
 
     @Test
-    @DisplayName("渠道 200 但响应体不是预期 JSON（HTML/CDN 拦截页）：同样归类为渠道异常，不抛异常")
-    void channelUnparseableBodyReturnsChannelErrorPage() throws Exception {
+    @DisplayName("渠道 200 但响应体不是预期 JSON（HTML/CDN 拦截页）：结果未知，抛 ResultUnknownException")
+    void channelUnparseableBodyThrowsResultUnknown() throws Exception {
         var ctx = ctx(cfgRaw("https://gw.test/", false));
         when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
 
@@ -144,16 +147,15 @@ class EpayCreateHandlerTest {
                     new HttpHelper.HttpResponse(200, Map.of(),
                             "<html>cloudflare 拦截页</html>".getBytes(StandardCharsets.UTF_8),
                             "req", 10, 1));
-            var resp = new EpayCreateHandler().alipay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("error");
-            assertThat(resp.getMsg())
-                    .isEqualTo("接口通道服务异常，未返回预期响应！HTTP Status Code:200");
+            assertThatThrownBy(() -> new EpayCreateHandler().alipay(ctx))
+                    .isInstanceOf(ResultUnknownException.class)
+                    .hasMessageContaining("HTTP Status Code:200");
         }
     }
 
     @Test
-    @DisplayName("常规模式：兼容渠道 code=200 同样视为成功，正常解析支付地址返回 jump")
+    @DisplayName("常规模式：兼容渠道 code=200 同样视为成功，正常解析支付地址跳转")
     void postModeTreatsCode200AsSuccess() throws Exception {
         var ctx = ctx(cfgRaw("https://gw.test/", false));
         when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
@@ -164,10 +166,9 @@ class EpayCreateHandlerTest {
                             "{\"code\":\"200\",\"payurl\":\"https://chan/alipay?pay=2\"}"
                                     .getBytes(StandardCharsets.UTF_8),
                             "req", 10, 1));
-            var resp = new EpayCreateHandler().alipay(ctx);
 
-            assertThat(resp.getType()).isEqualTo("jump");
-            assertThat(resp.getUrl()).isEqualTo("https://chan/alipay?pay=2");
+            assertThat(redirectUrl(new EpayCreateHandler().alipay(ctx)))
+                    .isEqualTo("https://chan/alipay?pay=2");
         }
     }
 
@@ -187,15 +188,14 @@ class EpayCreateHandlerTest {
                                 .getBytes(StandardCharsets.UTF_8),
                         "req", 10, 1);
             });
-            var resp = new EpayCreateHandler().alipay(ctx);
+            var url = redirectUrl(new EpayCreateHandler().alipay(ctx));
 
             assertThat(captured[0]).isEqualTo("https://gw.test/mapi.php"); // 无 //mapi.php
             var params = parseForm(captured[1]);
             assertThat(params).containsEntry("clientip", "1.2.3.4").containsEntry("device", "jump");
             assertThat(params).containsEntry("pid", APPID);
             assertThat(EpaySignUtil.verify(params, APPKEY)).isTrue();
-            assertThat(resp.getType()).isEqualTo("jump");
-            assertThat(resp.getUrl()).isEqualTo("https://chan/alipay?pay=1");
+            assertThat(url).isEqualTo("https://chan/alipay?pay=1");
         }
     }
 }

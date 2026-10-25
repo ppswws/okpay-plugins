@@ -7,6 +7,7 @@ import com.okpay.plugin.model.ConfigSnapshot;
 import com.okpay.plugin.model.InvokeContext;
 import com.okpay.plugin.model.LockExtResult;
 import com.okpay.plugin.model.OrderSnapshot;
+import com.okpay.plugin.model.PageOutcome;
 import com.okpay.plugin.model.RequestSnapshot;
 import com.okpay.plugin.model.SaveSubOrdersRequest;
 import com.okpay.plugin.sdk.HttpHelper;
@@ -124,6 +125,16 @@ class AlipayCombineCreateHandlerTest {
         return URLDecoder.decode(suffix, StandardCharsets.UTF_8);
     }
 
+    private static PageOutcome.Page pageOutcome(PageOutcome outcome) {
+        assertThat(outcome).isInstanceOf(PageOutcome.Page.class);
+        return (PageOutcome.Page) outcome;
+    }
+
+    private static String htmlOf(PageOutcome outcome) {
+        assertThat(outcome).isInstanceOf(PageOutcome.Html.class);
+        return ((PageOutcome.Html) outcome).html();
+    }
+
     private static String subNo(int idx) {
         return com.okpay.plugin.sdk.Sdk.subTradeNo(TRADE_NO, idx);
     }
@@ -154,10 +165,9 @@ class AlipayCombineCreateHandlerTest {
                                     "{\"code\":\"10000\",\"msg\":\"Success\",\"pre_order_no\":\"" + PRE_ORDER_NO + "\"}"),
                             "req", 10, 1));
 
-            var resp = new AlipayCreateHandler().alipay(ctx);
+            var html = htmlOf(new AlipayCreateHandler().alipay(ctx));
 
-            assertThat(resp.getType()).isEqualTo("html");
-            assertThat(resp.getDataText()).contains("alipay.trade.wap.merge.pay");
+            assertThat(html).contains("alipay.trade.wap.merge.pay");
             // 两段式第二段为纯 HTML 构建：全流程只有 merge.precreate 一次 HTTP
             assertThat(bodyCaptor.getAllValues()).hasSize(1);
             var saved = ArgumentCaptor.forClass(SaveSubOrdersRequest.class);
@@ -259,10 +269,9 @@ class AlipayCombineCreateHandlerTest {
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             letRealUaChecks(mocked);
 
-            var resp = new AlipayCreateHandler().alipay(ctx);
+            var html = htmlOf(new AlipayCreateHandler().alipay(ctx));
 
-            assertThat(resp.getType()).isEqualTo("html");
-            assertThat(resp.getDataText()).contains("alipay.trade.wap.pay");
+            assertThat(html).contains("alipay.trade.wap.pay");
             mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
             verify(cb, never()).saveSubOrders(any());
         }
@@ -279,11 +288,10 @@ class AlipayCombineCreateHandlerTest {
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             letRealUaChecks(mocked);
 
-            var resp = new AlipayCreateHandler().alipay(ctx);
+            var page = pageOutcome(new AlipayCreateHandler().alipay(ctx));
 
-            assertThat(resp.getPage()).isEqualTo("alipay_h5");
-            var data = HttpHelper.MAPPER.readValue(resp.getDataRaw(), LinkedHashMap.class);
-            var orderStr = orderStrFrom(data.get("url").toString());
+            assertThat(page.page()).isEqualTo("alipay_h5");
+            var orderStr = orderStrFrom(((Map<?, ?>) page.data()).get("url").toString());
             assertThat(orderStr).contains("method=alipay.trade.app.pay");
             var biz = parseBizContent(orderStr);
             assertThat(biz.get("sub_merchant")).isEqualTo(Map.of("merchant_id", "SMID1"));
@@ -309,10 +317,9 @@ class AlipayCombineCreateHandlerTest {
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             letRealUaChecks(mocked);
 
-            var resp = new AlipayCreateHandler().alipay(ctx);
+            var html = htmlOf(new AlipayCreateHandler().alipay(ctx));
 
-            assertThat(resp.getType()).isEqualTo("html");
-            assertThat(resp.getDataText()).contains("alipay.trade.wap.pay");
+            assertThat(html).contains("alipay.trade.wap.pay");
             mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
             verify(cb, never()).saveSubOrders(any());
         }
@@ -327,15 +334,13 @@ class AlipayCombineCreateHandlerTest {
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             letRealUaChecks(mocked);
 
-            var resp = new AlipayCreateHandler().alipay(ctx);
-
-            assertThat(resp.getDataText()).contains("alipay.trade.wap.pay");
+            assertThat(htmlOf(new AlipayCreateHandler().alipay(ctx))).contains("alipay.trade.wap.pay");
             verify(ctx.getCallback(), never()).saveSubOrders(any());
         }
     }
 
     @Test
-    @DisplayName("merge.precreate 被拒 → 错误响应且不落库")
+    @DisplayName("merge.precreate 被拒（渠道可解析的明确业务拒绝）→ 明确拒绝页且不落库")
     void precreateRejectedFails() throws Exception {
         var ctx = ctx(30000, cfgRaw("2", true, "SMID1"), UA_IPHONE);
         var cb = ctx.getCallback();
@@ -350,10 +355,10 @@ class AlipayCombineCreateHandlerTest {
                                             + "\"sub_code\":\"INVALID_PARAMETER\",\"sub_msg\":\"订单信息不存在\"}"),
                             "req", 10, 1));
 
-            // 锁内渠道拒绝：error 载荷只记轨迹不写 ext，lockCreate 还原为 error 页（业务失败不外抛）
-            var resp = new AlipayCreateHandler().alipay(ctx);
-            assertThat(resp.getType()).isEqualTo("error");
-            assertThat(resp.getMsg()).contains("订单信息不存在");
+            // 锁内渠道拒绝：failed 载荷只记轨迹不写 ext，lockCreate 还原为明确拒绝（业务失败不外抛）
+            var outcome = new AlipayCreateHandler().alipay(ctx);
+            assertThat(outcome).isInstanceOf(PageOutcome.Failed.class);
+            assertThat(((PageOutcome.Failed) outcome).failure().message()).contains("订单信息不存在");
             verify(cb, never()).saveSubOrders(any());
         }
     }
@@ -373,10 +378,10 @@ class AlipayCombineCreateHandlerTest {
                                     "{\"code\":\"10000\",\"msg\":\"Success\"}"),
                             "req", 10, 1));
 
-            // 无 pre_order_no 无法进入第二段（wap/app.merge.pay 依赖它）：失败且不落库
-            var resp = new AlipayCreateHandler().alipay(ctx);
-            assertThat(resp.getType()).isEqualTo("error");
-            assertThat(resp.getMsg()).contains("pre_order_no");
+            // 无 pre_order_no 无法进入第二段（wap/app.merge.pay 依赖它）：渠道已受理但拿不到预期数据 → 明确拒绝且不落库
+            var outcome = new AlipayCreateHandler().alipay(ctx);
+            assertThat(outcome).isInstanceOf(PageOutcome.Failed.class);
+            assertThat(((PageOutcome.Failed) outcome).failure().message()).contains("pre_order_no");
             verify(cb, never()).saveSubOrders(any());
         }
     }
@@ -401,12 +406,10 @@ class AlipayCombineCreateHandlerTest {
                                     "{\"code\":\"10000\",\"msg\":\"Success\",\"pre_order_no\":\"" + PRE_ORDER_NO + "\"}"),
                             "req", 10, 1));
 
-            var resp = new AlipayCreateHandler().alipay(ctx);
+            var page = pageOutcome(new AlipayCreateHandler().alipay(ctx));
 
-            assertThat(resp.getType()).isEqualTo("page");
-            assertThat(resp.getPage()).isEqualTo("alipay_h5");
-            var data = HttpHelper.MAPPER.readValue(resp.getDataRaw(), LinkedHashMap.class);
-            var orderStr = orderStrFrom(data.get("url").toString());
+            assertThat(page.page()).isEqualTo("alipay_h5");
+            var orderStr = orderStrFrom(((Map<?, ?>) page.data()).get("url").toString());
             assertThat(orderStr).contains("method=alipay.trade.app.merge.pay");
             // 第二段只凭 pre_order_no 唤起：biz_content 无 order_details（明细在 precreate 已提交）
             var biz = parseBizContent(orderStr);
@@ -427,15 +430,15 @@ class AlipayCombineCreateHandlerTest {
         var ctx = ctx(30000, cfgRaw("5", true, "SMID1"), UA_PC);
         var cb = ctx.getCallback();
         when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder()
-                .extData(Map.of("type", "page", "page", "alipay_h5", "url", "alipays://cached")).build());
+                .extData(Map.of("kind", "page", "page", "alipay_h5", "url", "alipays://cached")).build());
 
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             letRealUaChecks(mocked);
 
-            var resp = new AlipayCreateHandler().alipay(ctx);
+            var page = pageOutcome(new AlipayCreateHandler().alipay(ctx));
 
-            assertThat(resp.getPage()).isEqualTo("alipay_h5");
-            assertThat(resp.getUrl()).isEqualTo("alipays://cached");
+            assertThat(page.page()).isEqualTo("alipay_h5");
+            assertThat(page.url()).isEqualTo("alipays://cached");
             mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
             verify(cb, never()).saveSubOrders(any());
         }
@@ -451,11 +454,11 @@ class AlipayCombineCreateHandlerTest {
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             letRealUaChecks(mocked);
 
-            var resp = new AlipayCreateHandler().alipay(ctx);
+            var page = pageOutcome(new AlipayCreateHandler().alipay(ctx));
 
-            assertThat(resp.getPage()).isEqualTo("alipay_h5");
-            var data = HttpHelper.MAPPER.readValue(resp.getDataRaw(), LinkedHashMap.class);
-            assertThat(orderStrFrom(data.get("url").toString())).contains("method=alipay.trade.app.pay");
+            assertThat(page.page()).isEqualTo("alipay_h5");
+            assertThat(orderStrFrom(((Map<?, ?>) page.data()).get("url").toString()))
+                    .contains("method=alipay.trade.app.pay");
             verify(cb, never()).saveSubOrders(any());
             verify(cb, never()).lockOrderExt(any());
         }

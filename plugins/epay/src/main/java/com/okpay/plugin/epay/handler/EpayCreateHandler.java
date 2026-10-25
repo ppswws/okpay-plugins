@@ -16,23 +16,15 @@ import java.util.*;
  */
 public class EpayCreateHandler {
 
-    public com.okpay.plugin.model.BizResult submit(InvokeContext ctx) {
-        return Sdk.createResult(ctx, Map.of(
-            "alipay", this::alipay,
-            "wxpay",  this::wxpay,
-            "bank",   this::bank
-        ));
-    }
-
-    public PageResponse alipay(InvokeContext ctx) { return handleCreate(ctx, AlipayMapper.INSTANCE); }
-    public PageResponse wxpay(InvokeContext ctx)  { return handleCreate(ctx, WxpayMapper.INSTANCE); }
-    public PageResponse bank(InvokeContext ctx)   { return handleCreate(ctx, BankMapper.INSTANCE); }
+    public PageOutcome alipay(InvokeContext ctx) { return handleCreate(ctx, AlipayMapper.INSTANCE); }
+    public PageOutcome wxpay(InvokeContext ctx)  { return handleCreate(ctx, WxpayMapper.INSTANCE); }
+    public PageOutcome bank(InvokeContext ctx)   { return handleCreate(ctx, BankMapper.INSTANCE); }
 
     // =========================================================================
     // 核心下单流程
     // =========================================================================
 
-    private PageResponse handleCreate(InvokeContext ctx, PayMethodMapper mapper) {
+    private PageOutcome handleCreate(InvokeContext ctx, PayMethodMapper mapper) {
         var cfg = EpayConfig.from(ctx);
         return Sdk.lockCreate(ctx, () -> {
             var order = ctx.getOrder();
@@ -40,28 +32,29 @@ public class EpayCreateHandler {
             if (cfg.isSubmitMode()) {
                 // Submit 模式：不请求渠道，拼接带签名参数的支付链接直接跳转；无 HTTP 请求，请求轨迹记为 0
                 var payUrl = cfg.getAppurl() + "/submit.php?" + encodeForm(params);
-                return Sdk.FetchResult.of(Responses.respJump(payUrl),
+                return Sdk.FetchResult.of(Pages.redirect(payUrl),
                         Sdk.RequestStats.builder().reqCount(0).reqMs(0).build());
             }
             var reqBody = encodeForm(params);
             try {
                 var resp = HttpHelper.post(ctx, cfg.getAppurl() + "/mapi.php", reqBody,
                         "application/x-www-form-urlencoded");
-                // 非成功响应（5xx/CDN 拦截页/HTML/业务失败）统一归因渠道；渠道未给 msg 时用统一文案
                 var respMap = parseJsonMap(resp.bodyAsString());
+                // 5xx/CDN 拦截/HTML/无法解析：结果未知，不能构造明确失败
+                if (resp.statusCode() >= 500 || respMap.isEmpty() || respMap.get("code") == null)
+                    throw new ResultUnknownException(channelFailure(resp.statusCode()));
                 if (!EpayRespUtil.isSuccess(respMap)) {
                     var msg = respMap.get("msg");
                     var errMsg = (msg == null || msg.isBlank())
                             ? channelFailure(resp.statusCode()) : msg;
-                    return Sdk.FetchResult.of(Responses.respError(errMsg), resp);
+                    // 渠道有响应且可解析、明确业务拒绝 → S_FAIL
+                    return Sdk.FetchResult.of(Pages.fail(errMsg), resp);
                 }
                 return Sdk.FetchResult.of(
                         mapper.map(resolveMethod(respMap), resolveUrl(respMap)), resp);
             } catch (IOException e) {
-                // 传输层失败（超时/连接失败）：无 HTTP 响应，归因渠道统一文案
-                throw new Sdk.BizFailException(channelFailure(), null, e);
-            } catch (Exception e) {
-                throw e;
+                // 传输层失败（超时/连接失败）：结果未知 → S_WAIT
+                throw new ResultUnknownException(channelFailure(), e);
             }
         });
     }
@@ -75,9 +68,9 @@ public class EpayCreateHandler {
         params.put("pid", cfg.getAppid());
         params.put("type", order.getType());
         params.put("out_trade_no", order.getTradeNo());
-        params.put("notify_url", cfg.getNotifyDomain() + "/pay/notify/" + order.getTradeNo());
+        params.put("notify_url", PaymentPaths.notify(cfg.getNotifyDomain(), order.getTradeNo()));
         // 渠道同步回跳指向宿主支付结果页，不透传商户地址
-        params.put("return_url", cfg.getSiteDomain() + "/pay/result/" + order.getTradeNo());
+        params.put("return_url", PaymentPaths.result(cfg.getSiteDomain(), order.getTradeNo()));
         params.put("name", cfg.getGoodsName());
         params.put("money", toYuan(order.getReal()));
         if (!cfg.isSubmitMode()) {
@@ -109,34 +102,34 @@ public class EpayCreateHandler {
 
     @FunctionalInterface
     private interface PayMethodMapper {
-        PageResponse map(String method, String url);
+        PageOutcome map(String method, String url);
     }
 
     private enum AlipayMapper implements PayMethodMapper {
         INSTANCE;
-        public PageResponse map(String method, String url) { return switch (method) {
-            case "jump"   -> Responses.respJump(url);
-            case "qrcode" -> Responses.respPageURL("alipay_qrcode", url);
-            default       -> Responses.respError("渠道未返回可用支付地址");
+        public PageOutcome map(String method, String url) { return switch (method) {
+            case "jump"   -> Pages.redirect(url);
+            case "qrcode" -> Pages.page("alipay_qrcode", url);
+            default       -> Pages.fail("渠道未返回可用支付地址");
         };}
     }
 
     private enum WxpayMapper implements PayMethodMapper {
         INSTANCE;
-        public PageResponse map(String method, String url) { return switch (method) {
-            case "jump"   -> Responses.respJump(url);
-            case "scheme" -> Responses.respPageURL("wxpay_h5", url);
-            case "qrcode" -> Responses.respPageURL("wxpay_qrcode", url);
-            default       -> Responses.respError("渠道未返回可用支付地址");
+        public PageOutcome map(String method, String url) { return switch (method) {
+            case "jump"   -> Pages.redirect(url);
+            case "scheme" -> Pages.page("wxpay_h5", url);
+            case "qrcode" -> Pages.page("wxpay_qrcode", url);
+            default       -> Pages.fail("渠道未返回可用支付地址");
         };}
     }
 
     private enum BankMapper implements PayMethodMapper {
         INSTANCE;
-        public PageResponse map(String method, String url) { return switch (method) {
-            case "jump"   -> Responses.respJump(url);
-            case "qrcode" -> Responses.respPageURL("bank_qrcode", url);
-            default       -> Responses.respError("渠道未返回可用支付地址");
+        public PageOutcome map(String method, String url) { return switch (method) {
+            case "jump"   -> Pages.redirect(url);
+            case "qrcode" -> Pages.page("bank_qrcode", url);
+            default       -> Pages.fail("渠道未返回可用支付地址");
         };}
     }
 }
