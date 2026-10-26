@@ -195,6 +195,10 @@ return Sdk.lockCreate(ctx, () -> {
 - 不要把本地/配置/OAuth 失败包装成 `Pages.fail`/`FailureException`（那是 S_FAIL）；用预期异常走 S_WAIT。
 - 不要根据 HTTP 状态判断业务成功；先解析报文并验签（如渠道有验签），按业务码分类。
 - 不要在 catch 里吞掉渠道结果后另造页面；渠道成功数据必须原样进入 `FetchResult.of`。
+- 渠道返回业务错误/缺支付数据时，不得包装成成功页面；必须按业务码返回 `Pages.fail`（S_FAIL）或抛预期异常（S_WAIT）。
+- 应返回中转页的流程必须返回 `Page/Html/Json`；返回 `null`/异常宿主会归 `S_WAIT`，返回 `Redirect` 会被宿主当作支付入口。
+- `lockCreate` 的返回值必须原样返回；成功后不要在外层再改写成 `Failed`/异常/另一页面。
+- `Redirect` URL 必须 http(s) 且 ≤1024；HTML/JSON 数据必须走 `Html`/`Json`/`Page`，不得塞进 URL。
 
 本地页面（二维码中转页、OAuth 跳转、小程序 scheme 等，**未请求支付渠道**）可以直接返回 `Page/Redirect`，ext 保持空；收银台重入时会重走 create。若本地页面是确定性产物且希望缓存（如部分渠道的本地 HTML），也可以放进 `lockCreate`，但**绝不能**把渠道成功数据放在 `lockCreate` 外面返回。
 
@@ -208,6 +212,7 @@ return Sdk.lockCreate(ctx, () -> {
 - [ ] 订单查单/回调：只有明确成功 `S_OK`；其余全部 `S_WAIT`，不返回 `S_FAIL`。
 - [ ] 退款/付款：只有渠道业务明确失败才 `S_FAIL`；查单“不存在”按渠道文档语义决定，否则 `S_WAIT`；sumapay 下单非 `00000` 一律 `S_FAIL`，退款/付款 `00001` 仍 `S_WAIT`。
 - [ ] 先解析响应再分类；HTTP 状态只在无法解析/二进制空响应时就地使用；不使用 `HttpResponse.isSuccess`（已删除）。
+- [ ] `lockCreate` 返回值直接透出，不二次改写；`Redirect` URL 为 http(s) 且 ≤1024。
 - [ ] JSAPI 参数 JSON 能解析即视为成功，不额外校验字段完整性。
 - [ ] 不按 message 文本判断结果；只用 `BizResult.state` / `PageOutcome` 类型。
 
