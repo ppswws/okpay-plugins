@@ -68,11 +68,8 @@ public final class SumapayApi {
             Thread.currentThread().interrupt();
             throw new ResultUnknownException(channelFailure(), e);
         }
-        // 渠道 HTTP 层失败（502/5xx，body 是 nginx 错误页非 JSON）：结果未知
-        if (!resp.isSuccess())
-            throw unknown(channelFailure(resp.statusCode()), resp);
+        // 先解析、后分类：HTTP 状态不作为业务成败判据；无法解析才是结果未知
         var respMap = PaymentUtils.parseJsonMap(decode(resp));
-        // 预期 JSON 完全解析不出（CDN 拦截页/HTML 垃圾/空 body）→ 结果未知
         if (respMap.isEmpty())
             throw unknown(channelFailure(resp.statusCode()), resp);
         if (!SumapaySignUtil.verify(fengfuPublicKey,

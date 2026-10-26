@@ -195,8 +195,8 @@ public class AlipayCreateHandler {
      *   <li>渠道有响应且可解析、业务成功 → 返回响应（由调用方映射支付页；缺预期支付数据由调用方
      *       返回 {@code Pages.fail}，请求轨迹随 lockOrderExt 正常落库）</li>
      *   <li>渠道有响应且可解析、业务拒绝 → {@link FailureException}（建单明确拒绝）</li>
-     *   <li>HTTP 非 2xx/超时/网络不可达（客户端网关漏斗 {@link ResultUnknownException}）、响应不可解析、
-     *       同步验签失败 → {@link ResultUnknownException}（宿主 S_WAIT）</li>
+     *   <li>超时/网络不可达、响应不可解析、同步验签失败 → {@link ResultUnknownException}（宿主 S_WAIT）；
+     *       HTTP 状态不预先过滤，可解析的 4xx/5xx 业务报文同样按业务码分类</li>
      * </ul>
      */
     private static AlipayOpenApiClient.ApiResponse call(InvokeContext ctx, String method,
@@ -206,7 +206,7 @@ public class AlipayCreateHandler {
         try {
             resp = cfg.client().execute(ctx, method, biz, extras);
         } catch (ResultUnknownException e) {
-            // 客户端网关漏斗：HTTP 非 2xx（502/CDN 拦截）与传输层失败（超时/连接失败）均为渠道不可用，结果未知
+            // 传输层失败（超时/连接失败）或响应不可解析：渠道不可用，结果未知
             log.debug("支付宝下单渠道不可用, method={}, error={}", method, PluginLog.summary(e));
             throw e;
         } catch (InterruptedException e) {

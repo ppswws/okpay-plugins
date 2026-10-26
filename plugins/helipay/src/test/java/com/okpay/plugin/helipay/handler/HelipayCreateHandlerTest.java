@@ -11,6 +11,7 @@ import com.okpay.plugin.model.LockExtResult;
 import com.okpay.plugin.model.OrderSnapshot;
 import com.okpay.plugin.model.PageOutcome;
 import com.okpay.plugin.model.RequestSnapshot;
+import com.okpay.plugin.sdk.ExpectedFailureException;
 import com.okpay.plugin.sdk.HttpHelper;
 import com.okpay.plugin.sdk.Pages;
 import com.okpay.plugin.sdk.PageCache;
@@ -188,11 +189,12 @@ class HelipayCreateHandlerTest {
     }
 
     @Test
-    @DisplayName("支付宝未开启任何方式 → error 页")
+    @DisplayName("支付宝未开启任何方式 → 预期失败（S_WAIT），不构造明确失败")
     void alipayNoModeError() {
-        var resp = new HelipayCreateHandler().alipay(ctx(UA_PC, null, false, cfgRaw("", false, false, null)));
-        assertThat(resp).isInstanceOf(PageOutcome.Failed.class);
-        assertThat(failMessage(resp)).isEqualTo("当前通道未开启支付宝支付方式");
+        assertThatThrownBy(() ->
+                new HelipayCreateHandler().alipay(ctx(UA_PC, null, false, cfgRaw("", false, false, null))))
+                .isInstanceOf(ExpectedFailureException.class)
+                .hasMessage("当前通道未开启支付宝支付方式");
     }
 
     // =========================================================================
@@ -494,11 +496,12 @@ class HelipayCreateHandlerTest {
     }
 
     @Test
-    @DisplayName("云闪付未开启 → error 页")
+    @DisplayName("云闪付未开启 → 预期失败（S_WAIT），不构造明确失败")
     void bankNoModeError() {
-        var resp = new HelipayCreateHandler().bank(ctx(UA_PC, null, false, cfgRaw("4", false, false, null)));
-        assertThat(resp).isInstanceOf(PageOutcome.Failed.class);
-        assertThat(failMessage(resp)).isEqualTo("当前通道未开启云闪付支付方式");
+        assertThatThrownBy(() ->
+                new HelipayCreateHandler().bank(ctx(UA_PC, null, false, cfgRaw("4", false, false, null))))
+                .isInstanceOf(ExpectedFailureException.class)
+                .hasMessage("当前通道未开启云闪付支付方式");
     }
 
     // =========================================================================
@@ -520,6 +523,29 @@ class HelipayCreateHandlerTest {
             assertThatThrownBy(() -> new HelipayCreateHandler().alipay(ctx))
                     .isInstanceOf(ResultUnknownException.class)
                     .hasMessageContaining("HTTP Status Code:502");
+        }
+    }
+
+    @Test
+    @DisplayName("HTTP 400 但响应可解析且验签通过 → 按业务码判失败（不按 HTTP 状态过滤）")
+    void http400ParseableBizRejectionFails() throws Exception {
+        var ctx = ctx(UA_PC, null, false, cfgRaw("4", false, false, null));
+        when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            var m = new LinkedHashMap<String, String>();
+            m.put("rt1_bizType", "AppPay");
+            m.put("rt2_retCode", "10080061");
+            m.put("rt3_retMsg", "交易渠道为空");
+            m.put("sign", HelipaySignUtil.signResponse(m, KEY));
+            stubFormApi(mocked, new HttpHelper.HttpResponse(400, Map.of(),
+                    HttpHelper.MAPPER.writeValueAsBytes(m), "req", 10, 1));
+
+            var outcome = new HelipayCreateHandler().alipay(ctx);
+
+            assertThat(outcome).isInstanceOf(PageOutcome.Failed.class);
+            assertThat(((PageOutcome.Failed) outcome).failure().message())
+                    .isEqualTo("[10080061]交易渠道为空");
         }
     }
 

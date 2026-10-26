@@ -88,16 +88,30 @@ class SumapayCreateHandlerTest {
     }
 
     @Test
-    @DisplayName("支付宝H5：参数错误码 2003 → 结果未定（ExpectedFailureException）")
+    @DisplayName("支付宝H5：业务错误码 2003 → 明确失败页（下单非 00000 一律 S_FAIL）")
     void alipayH5ChannelRejected() throws Exception {
         var ctx = ctx("alipay", "1", null, null);
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubApi(mocked, signedResp(ALIPAY_H5_VERIFY, Map.of(
                     "result", "2003", "errorMsg", "参数错误", "payUrl", "")));
 
-            assertThatThrownBy(() -> createAlipay(ctx))
-                    .isInstanceOf(ExpectedFailureException.class)
-                    .hasMessage("[2003]参数错误");
+            var outcome = createAlipay(ctx);
+            assertThat(outcome).isInstanceOf(PageOutcome.Failed.class);
+            assertThat(((PageOutcome.Failed) outcome).failure().message()).isEqualTo("[2003]参数错误");
+        }
+    }
+
+    @Test
+    @DisplayName("HTTP 400 但响应签名可验、result 非 00000 → 明确失败（不按 HTTP 状态过滤）")
+    void http400ParseableBizFailure() throws Exception {
+        var ctx = ctx("alipay", "1", null, null);
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            stubApi(mocked, signedResp(400, ALIPAY_H5_VERIFY, Map.of(
+                    "result", "2003", "errorMsg", "参数错误", "payUrl", "")));
+
+            var outcome = createAlipay(ctx);
+            assertThat(outcome).isInstanceOf(PageOutcome.Failed.class);
+            assertThat(((PageOutcome.Failed) outcome).failure().message()).isEqualTo("[2003]参数错误");
         }
     }
 
@@ -535,6 +549,11 @@ class SumapayCreateHandlerTest {
     /** 按验签字段表签名渠道响应（商户私钥签名，插件用配置公钥验） */
     private static HttpHelper.HttpResponse signedResp(List<String> verifyKeys, Map<String, String> fields)
             throws Exception {
+        return signedResp(200, verifyKeys, fields);
+    }
+
+    private static HttpHelper.HttpResponse signedResp(int status, List<String> verifyKeys,
+                                                      Map<String, String> fields) throws Exception {
         var m = new LinkedHashMap<String, String>();
         m.put("requestId", "T1");
         m.put("result", "00000");
@@ -542,7 +561,7 @@ class SumapayCreateHandlerTest {
         m.putAll(fields);
         m.put("signature", SumapaySignUtil.sign(TestKeys.PRIVATE_KEY,
                 SumapaySignUtil.concat(m, verifyKeys)));
-        return new HttpHelper.HttpResponse(200, Map.of(),
+        return new HttpHelper.HttpResponse(status, Map.of(),
                 HttpHelper.MAPPER.writeValueAsBytes(m), "req", 10, 1);
     }
 }

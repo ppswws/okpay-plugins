@@ -309,6 +309,50 @@ class WxpayCreateHandlerTest {
     }
 
     @Test
+    @DisplayName("微信 400 业务错误（JSON code）→ Pages.fail（S_FAIL，不再一律 S_WAIT）")
+    void businessError4xxIsFailure() throws Exception {
+        var ctx = ctx(UA_PC, null, false, null, cfgRaw("1", true, false, false));
+        var cb = ctx.getCallback();
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any(), any())).thenAnswer(inv ->
+                    new HttpHelper.HttpResponse(400, Map.of(),
+                            "{\"code\":\"ORDER_CLOSED\",\"message\":\"订单已关闭\"}"
+                                    .getBytes(StandardCharsets.UTF_8),
+                            "req", 10, 1));
+
+            var resp = new WxpayCreateHandler().wxpay(ctx);
+
+            assertThat(resp).isInstanceOf(PageOutcome.Failed.class);
+            assertThat(((PageOutcome.Failed) resp).failure().message())
+                    .isEqualTo("[ORDER_CLOSED]订单已关闭");
+        }
+    }
+
+    @Test
+    @DisplayName("微信 500 SYSTEM_ERROR → ResultUnknownException（S_WAIT，可重试）")
+    void systemError5xxIsResultUnknown() throws Exception {
+        var ctx = ctx(UA_PC, null, false, null, cfgRaw("1", true, false, false));
+        var cb = ctx.getCallback();
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any(), any())).thenAnswer(inv ->
+                    new HttpHelper.HttpResponse(500, Map.of(),
+                            "{\"code\":\"SYSTEM_ERROR\",\"message\":\"系统异常\"}"
+                                    .getBytes(StandardCharsets.UTF_8),
+                            "req", 10, 1));
+
+            assertThatThrownBy(() -> new WxpayCreateHandler().wxpay(ctx))
+                    .isInstanceOf(ResultUnknownException.class)
+                    .hasMessageContaining("SYSTEM_ERROR");
+        }
+    }
+
+    @Test
     @DisplayName("PC + Native(1) → 微信下单 → 扫码页 wxpay_qrcode（code_url 进页面 URL）")
     void pcNativeRendersQrcodePage() throws Exception {
         var ctx = ctx(UA_PC, null, false, null, cfgRaw("1", true, false, false));

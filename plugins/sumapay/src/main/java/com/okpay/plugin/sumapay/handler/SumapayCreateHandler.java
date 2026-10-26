@@ -233,18 +233,17 @@ public class SumapayCreateHandler {
     }
 
     /**
-     * result 分类：00000 成功；明确业务失败码 → 失败页；系统异常/参数/配置/未知码 → 结果未定。
-     * 拒绝码缺失/为空说明响应不完整，同样结果未定。
+     * 下单 result 分类：00000 成功；其余（含 00001 受理中、未知码、空码）一律明确失败。
+     * 建单只有拿到支付数据才算成功；00000/00001 的“受理中”语义仅退款需要，下单不适用。
      */
     private static void requireSuccess(Map<String, String> m) {
         var result = m.getOrDefault("result", "");
         if ("00000".equals(result)) return;
-        if (result.isBlank()) throw new ExpectedFailureException("渠道响应缺少业务结果码");
         var msg = m.getOrDefault("errorMsg", "");
-        // 仅明确业务失败码落 Failed；系统异常/参数/配置/未知码结果未定
-        if (SumapayErrors.explicitFailure(result))
-            throw new FailureException("[" + result + "]" + (msg.isBlank() ? "返回数据解析失败" : msg));
-        throw new ExpectedFailureException("[" + result + "]" + (msg.isBlank() ? "返回数据解析失败" : msg));
+        var detail = msg.isBlank()
+                ? (result.isBlank() ? "渠道响应缺少业务结果码" : "返回数据解析失败")
+                : msg;
+        throw new FailureException("[" + result + "]" + detail);
     }
 
     /** payUrl 可能为带 scheme 查询参数的过渡页，取 scheme 为真实拉起地址 */

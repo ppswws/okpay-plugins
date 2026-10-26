@@ -163,10 +163,7 @@ public class JoinpayCreateHandler {
         try {
             var resp = HttpHelper.post(ctx, "https://trade.joinpay.com/tradeRt/uniPay", reqBody,
                     "application/x-www-form-urlencoded");
-            // 渠道 HTTP 层失败（502/5xx，body 是 nginx 错误页非 JSON）与无法解析的响应：
-            // 渠道是否已建单未知，结果未定（S_WAIT）
-            if (!resp.isSuccess())
-                throw new ResultUnknownException(channelFailure(resp.statusCode()));
+            // 先解析、后分类：HTTP 状态不作为业务成败判据；无法解析才是结果未定（S_WAIT）
             var respMap = JoinpayUtil.parseJsonNum(resp.bodyAsString());
             if (respMap.isEmpty())
                 throw new ResultUnknownException(channelFailure(resp.statusCode()));

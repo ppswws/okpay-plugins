@@ -173,7 +173,7 @@ class SumapayApiTest {
                     TestKeys.PRIVATE_KEY, TestKeys.PUBLIC_KEY, SIGN_KEYS, "signature",
                     VERIFY_KEYS, "signature");
 
-            assertThat(resp.isSuccess()).isTrue();
+            assertThat(resp.statusCode()).isEqualTo(200);
         }
         assertThat(contentTypeCaptor.getValue()).isEqualTo("application/x-www-form-urlencoded;charset=GBK");
         var form = new LinkedHashMap<String, String>();

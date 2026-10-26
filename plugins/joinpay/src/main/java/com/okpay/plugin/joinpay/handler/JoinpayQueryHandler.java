@@ -66,8 +66,8 @@ public class JoinpayQueryHandler extends AbstractBizHandler {
         try {
             var resp = HttpHelper.post(ctx, ORDER_QUERY_URL, body, "application/x-www-form-urlencoded");
             var m = JoinpayUtil.parseJsonNum(resp.bodyAsString());
-            if (!resp.isSuccess() || m.isEmpty()
-                    || !JoinpaySignUtil.verify(m, ORDER_QUERY_RESP_FIELDS, cfg.getAppkey()))
+            // 先解析、后分类：空/坏 JSON 或验签不过才是查询失败；HTTP 状态不预筛
+            if (m.isEmpty() || !JoinpaySignUtil.verify(m, ORDER_QUERY_RESP_FIELDS, cfg.getAppkey()))
                 return Responses.wait("QUERY_ERROR", "订单查询暂时失败", resp);
             // 支付订单查单不使用 S_FAIL：未支付/不存在/渠道异常一律结果未定
             var state = "100".equals(m.getOrDefault("ra_Status", "")) ? BizState.S_OK : BizState.S_WAIT;
@@ -99,8 +99,8 @@ public class JoinpayQueryHandler extends AbstractBizHandler {
         try {
             var resp = HttpHelper.post(ctx, REFUND_QUERY_URL, body, "application/x-www-form-urlencoded");
             var m = JoinpayUtil.parseJsonNum(resp.bodyAsString());
-            if (!resp.isSuccess() || m.isEmpty()
-                    || !JoinpaySignUtil.verify(m, REFUND_QUERY_RESP_FIELDS, cfg.getAppkey()))
+            // 先解析、后分类：空/坏 JSON 或验签不过才是查询失败；HTTP 状态不预筛
+            if (m.isEmpty() || !JoinpaySignUtil.verify(m, REFUND_QUERY_RESP_FIELDS, cfg.getAppkey()))
                 return Responses.wait("QUERY_ERROR", "退款查询暂时失败", resp);
             var status = m.getOrDefault("ra_Status", "");
             // 文档退款状态：100 成功 / 101 失败 / 102 处理中
@@ -133,7 +133,8 @@ public class JoinpayQueryHandler extends AbstractBizHandler {
                     HttpHelper.MAPPER.writeValueAsString(params), "application/json");
             var m = JoinpayUtil.parseJsonNumRaw(resp.bodyAsString());
             var statusCode = String.valueOf(m.getOrDefault("statusCode", ""));
-            if (!resp.isSuccess() || !"2001".equals(statusCode))
+            // 先解析、后分类：业务码非 2001 才是查询失败；HTTP 状态不预筛
+            if (!"2001".equals(statusCode))
                 return Responses.wait("QUERY_ERROR", "打款查询暂时失败", resp);
             var dataRaw = flatten(m.get("data"));
             if (dataRaw.isEmpty() || !JoinpaySignUtil.verify(dataRaw, TRANSFER_QUERY_RESP_FIELDS, cfg.getAppkey()))

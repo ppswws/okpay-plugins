@@ -179,6 +179,26 @@ class WxpayCombineCreateHandlerTest {
     // =========================================================================
 
     @Test
+    @DisplayName("合单 2xx 但缺 code_url → 明确失败且不落子单（不产生孤儿行）")
+    void combineMissingPayDataDoesNotSaveSubOrders() throws Exception {
+        var ctx = ctx(30000, cfgRaw("1", true, null));
+        var cb = ctx.getCallback();
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            stubPlatformCertDownload(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any(), any()))
+                    .thenAnswer(inv -> signedOk("{}"));
+
+            var resp = new WxpayCreateHandler().wxpay(ctx);
+
+            assertThat(resp).isInstanceOf(PageOutcome.Failed.class);
+            verify(cb, never()).saveSubOrders(any());
+        }
+    }
+
+    @Test
     @DisplayName("达阈值 Native：combine 报文 + 锁内 saveSubOrders（子单号与报文一致）")
     void nativeCombineSplitsAndSaves() throws Exception {
         // real=30000 分（300 元）≥ minmoney=100 元；均分 3 单各 10000 分（≤ submoney=200 元）

@@ -70,9 +70,7 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
         try {
             var reqBody = PaymentUtils.encodeForm(params);
             var resp = HttpHelper.post(ctx, REFUND_URL, reqBody, "application/x-www-form-urlencoded");
-            // 渠道 HTTP 层失败 / 响应不可解析 / 验签不过：状态未知，保持处理中交还轮询
-            if (!resp.isSuccess())
-                return Responses.wait("REFUND_ERROR", channelFailure(resp.statusCode()), resp);
+            // 先解析、后分类：响应不可解析 / 验签不过才是状态未知；HTTP 状态不预筛业务成败
             var m = JoinpayUtil.parseJsonNum(resp.bodyAsString());
             if (m.isEmpty())
                 return Responses.wait("REFUND_ERROR", channelFailure(resp.statusCode()), resp);
@@ -128,8 +126,7 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
         try {
             var resp = HttpHelper.post(ctx, TRANSFER_URL,
                     HttpHelper.MAPPER.writeValueAsString(params), "application/json");
-            if (!resp.isSuccess())
-                return Responses.wait("XFER_ERROR", channelFailure(resp.statusCode()), resp);
+            // 先解析、后分类：HTTP 状态不预筛业务成败；空/坏 JSON 由异常路径归结果未定
             var m = JoinpayUtil.parseJsonNumRaw(resp.bodyAsString());
             var code = String.valueOf(m.getOrDefault("statusCode", ""));
             var msg = String.valueOf(m.getOrDefault("message", ""));

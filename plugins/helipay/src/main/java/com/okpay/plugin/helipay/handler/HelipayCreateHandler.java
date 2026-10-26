@@ -93,23 +93,24 @@ public class HelipayCreateHandler {
 
     /**
      * 不发渠道请求的本地页，按通道配置 + UA 单点产出：
-     * 未开启方式 → 失败页；方式 1 且微信内无 code → 公众号授权跳转；
+     * 未开启方式/缺少公众号配置 → 预期失败（S_WAIT）；方式 1 且微信内无 code → 公众号授权跳转；
      * 方式 1/2/3 → wxpay_qrcode 中转页（t 时间戳，重进刷新订单态）。需要 OAuth 兑换或渠道下单的分支不发本地页。
      */
     PageOutcome localOutcome(InvokeContext ctx, HelipayConfig cfg, String payType) {
         var modes = cfg.modeSet();
         var ua = ua(ctx);
         return switch (payType) {
-            case "alipay" -> !modes.contains("1") && !modes.contains("2") && !modes.contains("3") && !modes.contains("4")
-                    ? Pages.fail("当前通道未开启支付宝支付方式")
-                    : qrcodeRelay(ctx, cfg, payType);
+            case "alipay" -> {
+                if (!modes.contains("1") && !modes.contains("2") && !modes.contains("3") && !modes.contains("4"))
+                    throw new ExpectedFailureException("当前通道未开启支付宝支付方式");
+                yield qrcodeRelay(ctx, cfg, payType);
+            }
             case "wxpay" -> {
                 if (modes.contains("3") || modes.contains("4") || !enabledWxModes(modes)) {
                     yield qrcodeRelay(ctx, cfg, payType);
                 }
-                if (modes.contains("1") && (cfg.getMp() == null || cfg.getMp().getAppid() == null)) {
-                    yield Pages.fail("缺少公众号配置");
-                }
+                if (modes.contains("1") && (cfg.getMp() == null || cfg.getMp().getAppid() == null))
+                    throw new ExpectedFailureException("缺少公众号配置");
                 if (modes.contains("1") && HttpHelper.isWeChat(ua) && queryParam(ctx, "code").isBlank()) {
                     var mp = cfg.getMp();
                     var retUrl = buildPayUrl(ctx, cfg, timestampQuery());
@@ -119,7 +120,11 @@ public class HelipayCreateHandler {
                 }
                 yield qrcodeRelay(ctx, cfg, payType);
             }
-            case "bank" -> modes.contains("1") ? qrcodeRelay(ctx, cfg, payType) : Pages.fail("当前通道未开启云闪付支付方式");
+            case "bank" -> {
+                if (!modes.contains("1"))
+                    throw new ExpectedFailureException("当前通道未开启云闪付支付方式");
+                yield qrcodeRelay(ctx, cfg, payType);
+            }
             default -> throw new ExpectedFailureException("未知支付方式[" + payType + "]");
         };
     }
@@ -166,11 +171,15 @@ public class HelipayCreateHandler {
                         "real=" + toYuan(ctx.getOrder().getReal()) + "&url="
                                 + URLEncoder.encode(buildPayUrl(ctx, cfg, Map.of()), StandardCharsets.UTF_8));
                 return Pages.page("wxpay_h5", scheme);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ResultUnknownException("获取小程序 scheme 被中断", e);
             } catch (Exception e) {
                 if (!PluginLog.isExpected(e)) {
                     log.error("获取小程序 scheme 失败", e);
                 }
-                return Pages.fail("小程序跳转失败");
+                // 未请求支付渠道的本地/OAuth 失败属结果未知（S_WAIT），不得构造明确失败
+                throw new ResultUnknownException("小程序跳转失败", e);
             }
         }
         // OAuth 兑换在锁外执行；兑换、风控（落库 buyer + 黑名单）、失败/拦截终止响应均由 SDK 处理
@@ -429,11 +438,10 @@ public class HelipayCreateHandler {
                 "application/json;charset=UTF-8",
                 Map.of("Referer", "https://h5pay.helipay.com/", "Origin", "https://h5pay.helipay.com",
                         "Accept", "application/json, text/plain, */*"));
-        if (!resp.isSuccess()) throw new IOException("qbase 请求失败[" + resp.statusCode() + "]");
-
+        // 先解析、后分类：qbase 以 base_resp.ret 表示业务结果；无法解析才由上层回退原始支付链接
         var root = HttpHelper.MAPPER.readTree(resp.bodyAsString());
         if (root.path("base_resp").path("ret").asInt(-1) != 0)
-            throw new IOException("jsoperatewxdata 请求失败");
+            throw new IOException("jsoperatewxdata 请求失败[" + resp.statusCode() + "]");
         var node2 = HttpHelper.MAPPER.readTree(root.path("data").asString(""));
         var node3 = HttpHelper.MAPPER.readTree(node2.path("data").asString(""));
         var openlink = node3.path("openlink").asString("").trim();

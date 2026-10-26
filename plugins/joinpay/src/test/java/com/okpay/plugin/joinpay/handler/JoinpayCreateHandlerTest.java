@@ -184,6 +184,23 @@ class JoinpayCreateHandlerTest {
     }
 
     @Test
+    @DisplayName("HTTP 400 但响应可解析且验签通过 → 按业务码判明确失败（不按 HTTP 状态过滤）")
+    void http400ParseableBizRejectionStillFails() throws Exception {
+        var ctx = ctx(null, null, false, cfgRaw("1"));
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv ->
+                    signedPayResp(400, "10080061", "交易渠道为空,交易商户无可用通道", ""));
+
+            var outcome = new JoinpayCreateHandler().alipay(ctx);
+
+            assertThat(outcome).isInstanceOf(PageOutcome.Failed.class);
+            assertThat(((PageOutcome.Failed) outcome).failure().message())
+                    .isEqualTo("[10080061]交易渠道为空,交易商户无可用通道");
+        }
+    }
+
+    @Test
     @DisplayName("下单成功但渠道未返回支付地址（rc_Result 空）→ 明确失败，不吐空页面")
     void successWithoutPayDataFailsExplicitly() throws Exception {
         var ctx = ctx(null, null, false, cfgRaw("1"));
@@ -379,6 +396,11 @@ class JoinpayCreateHandlerTest {
 
     private static HttpHelper.HttpResponse signedPayResp(String raCode, String rbCodeMsg,
                                                          String rcResult) throws Exception {
+        return signedPayResp(200, raCode, rbCodeMsg, rcResult);
+    }
+
+    private static HttpHelper.HttpResponse signedPayResp(int status, String raCode, String rbCodeMsg,
+                                                         String rcResult) throws Exception {
         var m = new LinkedHashMap<String, String>();
         m.put("r0_Version", "2.6");
         m.put("r2_OrderNo", "T1");
@@ -386,7 +408,7 @@ class JoinpayCreateHandlerTest {
         m.put("rb_CodeMsg", rbCodeMsg);
         m.put("rc_Result", rcResult);
         m.put("hmac", JoinpaySignUtil.sign(m, PAY_RESP_VERIFY, "JPKEY1"));
-        return new HttpHelper.HttpResponse(200, Map.of(),
+        return new HttpHelper.HttpResponse(status, Map.of(),
                 HttpHelper.MAPPER.writeValueAsBytes(m), "req", 10, 1);
     }
 

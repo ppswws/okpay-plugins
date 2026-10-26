@@ -355,6 +355,29 @@ class AlipayCreateHandlerTest {
     }
 
     @Test
+    @DisplayName("HTTP 400 但响应可解析且签名通过 → Pages.fail（不按 HTTP 状态过滤）")
+    void http400ParseableBizRejectionFails() throws Exception {
+        var cb = mock(HostCallback.class);
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+        var ctx = ctx(100L, "4", UA_ALIPAY, null, true, "2088123456789012", cb);
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv ->
+                    new HttpHelper.HttpResponse(400, Map.of(),
+                            signedResponse("alipay_trade_create_response",
+                                    "{\"code\":\"40004\",\"msg\":\"Business Failed\","
+                                            + "\"sub_code\":\"ACQ.TRADE_HAS_CLOSE\",\"sub_msg\":\"交易已关闭\"}"),
+                            "req", 10, 1));
+
+            var resp = new AlipayCreateHandler().alipay(ctx);
+
+            assertThat(resp).isInstanceOf(PageOutcome.Failed.class);
+            assertThat(((PageOutcome.Failed) resp).failure().message()).isEqualTo("交易已关闭");
+        }
+    }
+
+    @Test
     @DisplayName("JSPAY：buyer 非 2088 → buyer_open_id")
     void jsPayWithOpenIdBuyer() throws Exception {
         var cb = mock(HostCallback.class);

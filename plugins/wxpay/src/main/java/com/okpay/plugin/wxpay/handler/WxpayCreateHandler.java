@@ -228,28 +228,31 @@ public class WxpayCreateHandler {
             case JSAPI -> "/v3/combine-transactions/jsapi";
         };
         var resp = cfg.client().post(path, HttpHelper.MAPPER.valueToTree(body), ctx);
-        // 渠道成功后才落库（fetch 内）：确定性子单号 + 幂等 upsert，重复下单不产生孤儿行
         var items = new ArrayList<SaveSubOrdersRequest.SubOrderItem>(plan.size());
         for (int i = 0; i < plan.size(); i++) {
             items.add(SaveSubOrdersRequest.SubOrderItem.builder()
                     .subTradeNo(Sdk.subTradeNo(order.getTradeNo(), i + 1))
                     .money(plan.get(i)).build());
         }
-        Sdk.saveSubOrders(ctx, order.getTradeNo(), items);
+        // 拿到可支付数据后才落库：2xx 但缺 code_url/prepay_id 属明确失败，不产生孤儿单
         if (kind == Kind.NATIVE) {
             var codeUrl = resp.body().path("code_url").asString(null);
             if (codeUrl == null || codeUrl.isBlank())
                 return Sdk.FetchResult.of(Pages.fail("合单下单未返回 code_url"), resp);
+            Sdk.saveSubOrders(ctx, order.getTradeNo(), items);
             return Sdk.FetchResult.of(Pages.page("wxpay_qrcode", codeUrl), resp);
         }
         if (kind == Kind.H5) {
             var url = resp.body().path("h5_url").asString(null);
             if (url == null || url.isBlank())
                 return Sdk.FetchResult.of(Pages.fail("合单 H5 未返回 h5_url"), resp);
+            Sdk.saveSubOrders(ctx, order.getTradeNo(), items);
             url += "&redirect_url=" + urlEncode(resultPageUrl(cfg, ctx));
             return Sdk.FetchResult.of(Pages.redirect(url), resp);
         }
-        return appJsapiResult(kind, cfg, resp, appId);
+        var result = appJsapiResult(kind, cfg, resp, appId);
+        if (!PageCache.isFailed(result.payload())) Sdk.saveSubOrders(ctx, order.getTradeNo(), items);
+        return result;
     }
 
     /** APP/JSAPI 调起参数（单笔/合单共用；合单 APP 调起键同单笔） */
@@ -384,10 +387,19 @@ public class WxpayCreateHandler {
     // lockCreate
     // =========================================================================
 
+    /** 微信错误码中属系统/签名/权限/频率/验签，重试或修配置才有意义：结果未定（S_WAIT） */
+    private static final Set<String> WAIT_CODES = Set.of(
+            "SYSTEM_ERROR", "SYSTEMERROR", "SERVICE_UNAVAILABLE", "FREQUENCY_LIMITED",
+            "RATELIMIT_EXCEEDED", "SIGN_ERROR", "NOAUTH", "OPENID_MISMATCH", "RULELIMIT",
+            "VERIFY", "NOTIFY_DECRYPT");
+
     /**
-     * 渠道客户端异常归类：传输层失败与渠道 HTTP 失败均为结果未定（S_WAIT）——下单是否已受理
-     * 无法从错误响应判定；验签/解密失败（httpStatus=0）同样未知。渠道明确拒绝只来自可解析的
-     * 业务响应（由各 execute 映射为 Pages.fail）。
+     * 渠道客户端异常归类（依据 docs/llms文档/微信）：
+     * <ul>
+     *   <li>4xx 业务拒绝（PARAM_ERROR/ORDER_CLOSED/OUT_TRADE_NO_USED 等）→ {@link FailureException}（S_FAIL）</li>
+     *   <li>签名/权限/频率/系统/网关/验签失败 → {@link ResultUnknownException}（S_WAIT）</li>
+     * </ul>
+     * 微信 v3 的非 2xx 业务错误带 JSON code/message，客户端已解析进异常；不按 HTTP 状态一刀切。
      */
     private PageOutcome lockCreate(InvokeContext ctx, Mode mode) {
         var cfg = WxpayConfig.from(ctx);
@@ -395,9 +407,11 @@ public class WxpayCreateHandler {
             try {
                 return mode.execute(ctx, cfg, ctx.getOrder());
             } catch (WechatPayException e) {
+                if (explicitBusinessFailure(e))
+                    throw new FailureException(wechatErrMsg(e), e, e);
                 throw new ResultUnknownException(e.httpStatus() > 0
-                        ? channelFailure(e.httpStatus()) + "[" + e.getMessage() + "]"
-                        : "微信响应校验失败[" + e.getMessage() + "]", e, e);
+                        ? channelFailure(e.httpStatus()) + "[" + wechatErrMsg(e) + "]"
+                        : "微信响应校验失败[" + wechatErrMsg(e) + "]", e, e);
             } catch (IOException e) {
                 throw new ResultUnknownException(channelFailure(), e);
             } catch (InterruptedException e) {
@@ -405,6 +419,19 @@ public class WxpayCreateHandler {
                 throw new ResultUnknownException(channelFailure(), e);
             }
         });
+    }
+
+    private static boolean explicitBusinessFailure(WechatPayException e) {
+        var code = e.code();
+        // 只按解析出的业务码分类；无 code（非 JSON/非业务报文）归结果未定，不看 HTTP 状态
+        if (code == null || code.isBlank()) return false;
+        return !WAIT_CODES.contains(code);
+    }
+
+    private static String wechatErrMsg(WechatPayException e) {
+        var code = e.code();
+        var msg = e.getMessage();
+        return code == null || code.isBlank() || code.equals(msg) ? msg : "[" + code + "]" + msg;
     }
 
     // =========================================================================

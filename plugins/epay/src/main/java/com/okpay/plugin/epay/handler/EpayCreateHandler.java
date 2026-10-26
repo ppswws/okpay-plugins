@@ -40,8 +40,8 @@ public class EpayCreateHandler {
                 var resp = HttpHelper.post(ctx, cfg.getAppurl() + "/mapi.php", reqBody,
                         "application/x-www-form-urlencoded");
                 var respMap = parseJsonMap(resp.bodyAsString());
-                // 5xx/CDN 拦截/HTML/无法解析：结果未知，不能构造明确失败
-                if (resp.statusCode() >= 500 || respMap.isEmpty() || respMap.get("code") == null)
+                // 先解析、后分类：HTTP 状态不作为业务成败判据；无法解析/无业务码才是结果未知
+                if (respMap.isEmpty() || respMap.get("code") == null)
                     throw new ResultUnknownException(channelFailure(resp.statusCode()));
                 if (!EpayRespUtil.isSuccess(respMap)) {
                     var msg = respMap.get("msg");

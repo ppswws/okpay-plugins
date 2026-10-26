@@ -36,6 +36,8 @@ okpay-plugins/
 3. 实现 SDK 暴露的扩展点接口，类名必须带 `Plugin` 后缀（PF4J 扩展发现约定）。
 4. `./build.sh <插件名>` 编译，产物为可被核心加载的插件 jar（manifest 含 `Plugin-Id`/`Plugin-Version`）。
 
+开发准则见 [`plugins/README.md`](plugins/README.md)：pay_url/ext 不变量、S_FAIL/S_WAIT 边界、`lockCreate` 用法与自检清单。
+
 ## 运行要求
 
 - JDK 21

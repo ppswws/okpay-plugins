@@ -137,6 +137,25 @@ class EpayCreateHandlerTest {
     }
 
     @Test
+    @DisplayName("HTTP 500 但响应可解析且有业务码 → 按业务码判失败（不按 HTTP 状态过滤）")
+    void http500ParseableBizRejectionFails() throws Exception {
+        var ctx = ctx(cfgRaw("https://gw.test/", false));
+        when(ctx.getCallback().lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv ->
+                    new HttpHelper.HttpResponse(500, Map.of(),
+                            "{\"code\":2,\"msg\":\"渠道维护\"}".getBytes(StandardCharsets.UTF_8),
+                            "req", 10, 1));
+
+            var outcome = new EpayCreateHandler().alipay(ctx);
+
+            assertThat(outcome).isInstanceOf(PageOutcome.Failed.class);
+            assertThat(((PageOutcome.Failed) outcome).failure().message()).isEqualTo("渠道维护");
+        }
+    }
+
+    @Test
     @DisplayName("渠道 200 但响应体不是预期 JSON（HTML/CDN 拦截页）：结果未知，抛 ResultUnknownException")
     void channelUnparseableBodyThrowsResultUnknown() throws Exception {
         var ctx = ctx(cfgRaw("https://gw.test/", false));

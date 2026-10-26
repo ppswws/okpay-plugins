@@ -14,10 +14,11 @@ import java.util.Map;
 
 /**
  * 合利宝接口调用封装：追加 signatureType=MD5 + sign，表单 POST 提交，
- * 统一校验 HTTP 层 / 响应解析 / 响应验签。
+ * 统一校验响应解析 / 响应验签。
  *
- * <p>失败分类：传输层异常（超时/连接失败）、HTTP 非 2xx、响应体解析不出 JSON、响应验签失败
- * → 结果未知，统一抛 {@link ResultUnknownException}。</p>
+ * <p>失败分类：传输层异常（超时/连接失败）、响应体解析不出 JSON、响应验签失败
+ * → 结果未知，统一抛 {@link ResultUnknownException}；HTTP 状态不预先过滤，
+ * 可解析的 4xx/5xx 业务报文由调用方按业务码处理。</p>
  *
  * <p>业务码 rt2_retCode 的判定语义随接口不同（下单/退款/查单/余额），由调用方各自处理。</p>
  */
@@ -49,13 +50,8 @@ public final class HelipayApi {
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             throw new ResultUnknownException(channelFailure() + "[" + e.getClass().getSimpleName() + "]", e);
         }
-        // 渠道 HTTP 层失败（502/5xx，body 是 nginx 错误页非 JSON）：结果未知
-        if (!resp.isSuccess())
-            throw new ResultUnknownException(
-                channelFailure(resp.statusCode()) + "[" + safeBody(resp) + "]",
-                new IllegalStateException("HTTP " + resp.statusCode() + " 响应不可用"));
+        // 先解析、后分类：HTTP 状态不作为业务成败判据；无法解析才是结果未知
         var respMap = PaymentUtils.parseJsonMap(resp.bodyAsString());
-        // 预期 JSON 完全解析不出（CDN 拦截页/HTML 垃圾/空 body）→ 无法判断结果
         if (respMap.isEmpty())
             throw new ResultUnknownException(
                 channelFailure(resp.statusCode()) + "[" + safeBody(resp) + "]",

@@ -64,6 +64,18 @@ class JoinpayBizResultTest {
     }
 
     @Test
+    @DisplayName("退款提交 HTTP 400 但响应可解析验签通过 → 按 ra_Status=101 判 S_FAIL（不按 HTTP 状态）")
+    void refundSubmitHttp400ParseableFail() throws Exception {
+        var m = formResp("101", "20090001", "支付成功记录不存在");
+        m.put("hmac", JoinpaySignUtil.sign(m, REFUND_RESP, KEY));
+
+        var r = submit(BizType.T_REF, resp(400, HttpHelper.MAPPER.writeValueAsString(m)));
+
+        assertThat(r.getState()).isEqualTo(BizState.S_FAIL);
+        assertThat(r.getMsg()).isEqualTo("支付成功记录不存在");
+    }
+
+    @Test
     @DisplayName("退款提交 ra_Status=102 → S_WAIT（处理中）")
     void refundSubmitInProgressWaits() throws Exception {
         assertThat(submit(BizType.T_REF, signed(formResp("102", "100", ""))).getState())
@@ -195,6 +207,22 @@ class JoinpayBizResultTest {
         assertThat(r.getState()).isEqualTo(BizState.S_OK);
         assertThat(r.getApiNo()).isEqualTo("TRX1");
         assertThat(r.getBuyer()).isEqualTo("OPENID1");
+    }
+
+    @Test
+    @DisplayName("订单查单 HTTP 400 但响应可解析验签通过 → 按 ra_Status=100 判 S_OK（不按 HTTP 状态）")
+    void orderQueryHttp400ParseableOk() throws Exception {
+        var m = new LinkedHashMap<String, String>();
+        m.put("r0_Version", "2.6");
+        m.put("r5_TrxNo", "TRX400");
+        m.put("ra_Status", "100");
+        m.put("hmac", JoinpaySignUtil.sign(m, ORDER_QUERY_RESP, KEY));
+
+        var r = query(BizType.T_PAY, resp(400, HttpHelper.MAPPER.writeValueAsString(m)),
+                ctx(b -> b.order(OrderSnapshot.builder().tradeNo("T1").real(100L).build())));
+
+        assertThat(r.getState()).isEqualTo(BizState.S_OK);
+        assertThat(r.getApiNo()).isEqualTo("TRX400");
     }
 
     @Test
