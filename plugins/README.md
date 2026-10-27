@@ -27,7 +27,7 @@
 | 本地中转页，尚未请求渠道（JSPay/JSAPI 需先拿 openid/user_id） | 否 | 空 | 宿主 `/pay/cashier/{tradeNo}` | `Page/Html/Json` |
 | 用户在目标环境进入中转页后才请求渠道 | 是（收银台重走 create，内部 `lockCreate`） | 页面载荷 | 已有本地 pay_url | 页面 |
 | OAuth 跳转（只拿身份，不请求支付） | 否 | 空 | OAuth URL | `Redirect` 或页面 |
-| 渠道有响应且可解析、业务拒绝/缺支付数据 | 是 | 空（失败只写轨迹） | 可能已有本地 pay_url | `S_FAIL`（`Pages.fail`） |
+| 渠道有响应且可解析、业务码非成功（明确业务拒绝/失败） | 是 | 空（失败只写轨迹） | 可能已有本地 pay_url | `S_FAIL`（`Pages.fail`） |
 | 渠道超时/网络/不可解析/同步验签失败/配置/OAuth 失败 | 尝试过但无可用数据 | 空 | 可能已有本地 pay_url | `S_WAIT`（抛预期异常） |
 
 ### 收银台重入（SDK 固定，不由插件实现）
@@ -56,18 +56,97 @@ ext 为空 → create(ctx)                  // 渠道尚未请求，按当前浏
 
 **这是中转支付页的主链路，不是兜底分支。** 任何“收银台只重建本地页、不继续建单”的实现都会让 OAuth 回跳停在半路（线上表现：`插件返回空结果` / `渠道处理暂时不可用`，`buyer_id` 已落库但 `ext` 为空、无渠道报文）。
 
-## 3. 什么时候用哪个状态
+## 3. 术语与判定层级（必读）
+
+> 为了避免把“HTTP 成功”“解析成功”当成“业务成功”，四层必须分开判断。
+
+### 3.1 四个层级
+
+| 层级 | 定义 | 说明 |
+|---|---|---|
+| 请求成功 | 我方已向渠道发出最终请求，并收到 HTTP 应答（无超时/连接失败/中断） | 只说明请求到达渠道且有应答，不代表业务受理/成功 |
+| 响应成功 | HTTP 状态码 2xx | 只说明渠道网关正常返回；4xx/5xx 也可能带可解析业务报文，不能仅凭 HTTP 判业务失败 |
+| 解析成功 | 响应体能解析为渠道业务报文，且验签通过 | 只说明报文可读、可信，可以进入业务分类 |
+| 业务成功态 | 业务码/状态等于渠道文档定义的成功码/成功状态 | 只有这一层才是 `S_OK` |
+
+**请求成功 + 响应成功 + 解析成功 = 拿到了“可分类的业务报文”，仍然不是成功态。**
+必须再比对业务成功码/状态，才是真正成功。
+
+### 3.2 判定顺序
+
+1. 最终渠道请求之前的准备失败（配置/OAuth/openid/本地参数）→ `S_WAIT`（尚未请求渠道）。
+2. 请求发出但传输失败/超时/中断 → `S_WAIT`（是否受理未知）。
+3. 有响应但不可解析/验签失败 → `S_WAIT`（报文不可信）。
+4. 可解析、业务码/状态明确非成功 → `S_FAIL`（支付订单的查单/回调除外，见 3.3）。
+5. 可解析、业务码/状态=文档成功态 → `S_OK`。
+   - 建单：直接信任支付数据，不再逐字段校验 `rc_Result`/`code_url`/`qr_code`/`prepay_id`/`pay_info`。
+   - 查单/通知：按成功状态推进；成功态缺关键状态字段属于渠道违约，不能当成功推进。
+6. 业务码缺失/无法识别时，按各渠道建单表处理，但绝不能当作成功态。
+
+### 3.3 真正成功态（按订单类型）
+
+#### 支付订单
+
+| 阶段 | 成功态 | 非成功态 |
+|---|---|---|
+| 建单 | 渠道建单业务成功码（见 3.4） | 业务码非成功 → `S_FAIL`；请求前准备/传输/不可解析/验签失败 → `S_WAIT` |
+| 支付结果（查单/回调） | 渠道支付成功状态（见 3.4） | 支付订单查单/回调不使用 `S_FAIL`；未支付/不存在/关闭/处理中/未知 → `S_WAIT` |
+
+#### 退款订单
+
+| 结果 | 状态 |
+|---|---|
+| 成功 | 渠道退款成功状态（见 3.4） |
+| 失败 | 渠道文档明确失败状态（见 3.4） |
+| 其他 | 处理中/未知/非明确失败 → `S_WAIT` |
+
+#### 付款订单
+
+| 结果 | 状态 |
+|---|---|
+| 成功 | 渠道付款成功状态（见 3.4） |
+| 失败 | 渠道文档明确失败状态（见 3.4） |
+| 其他 | 处理中/未知/非明确失败 → `S_WAIT` |
+
+### 3.4 各渠道成功态速查
+
+| 渠道 | 建单成功态 | 支付结果成功态 | 退款成功/失败 | 付款成功/失败 |
+|---|---|---|---|---|
+| joinpay | `ra_Code=100` | 通知 `r6_Status=100`；查单 `ra_Status=100` | 成功 `ra_Status=100`；失败 `101`；其他 `S_WAIT` | 成功 `status=205`；失败 `204/208/214`；其他 `S_WAIT` |
+| alipay | `code=10000` | `trade_status=TRADE_SUCCESS/TRADE_FINISHED` | 成功 `refund_status=REFUND_SUCCESS`；文档无明确退款失败通知状态 → 非成功 `S_WAIT` | 成功 `status=SUCCESS`；失败 `FAIL/REFUND`；其他 `S_WAIT` |
+| helipay | `rt2_retCode=0000` | 通知 `rt4_status=SUCCESS`；查单 `rt7_orderStatus=SUCCESS` | 成功 `rt5_status/rt8_orderStatus=SUCCESS`；失败 `FAIL/CLOSE`；其他 `S_WAIT` | 成功 `rt7_orderStatus=SUCCESS`；失败 `FAIL/REFUND`；其他 `S_WAIT` |
+| sumapay | `result=00000` | 通知/查单 `status=2`；`status=3`/其他 `S_WAIT` | 成功 `refundResult=0`；失败 `1`；其他 `S_WAIT` | 当前无付款提交/查单实现（以能力声明为准） |
+| epay | `code=1/200` | 查单 `code=1/200` | 以插件能力声明为准 | 以插件能力声明为准 |
+| wxpay | HTTP 2xx + 可解析验签（v3 无业务码） | `trade_state=SUCCESS`；`REFUND`=交易成功后已退款，支付交易本身成功；其他 `S_WAIT` | 成功 `refund_status=SUCCESS`；失败 `CLOSED`；`PROCESSING/ABNORMAL` `S_WAIT` | 当前无付款提交/查单实现（以能力声明为准） |
+
+> 表中只列当前实现已接入的状态；未列出的状态一律不推进：支付订单查单/回调 `S_WAIT`，退款/付款 `S_WAIT`（只有明确失败才 `S_FAIL`）。
+
+### 3.5 常见误解（AI 容易犯）
+
+1. **把 HTTP 200 / 解析成功当成功态**：错。它们只说明拿到了可读报文，业务码/状态才是成功态判据。
+2. **把“请求成功且响应成功且解析成功”当 `S_OK`**：错。还必须业务码/状态=文档成功码。
+3. **成功态下再逐字段核验支付数据**：错。建单业务成功码后，直接信任 `rc_Result`/`code_url`/`qr_code`/`prepay_id`/`pay_info` 可用；不要为“成功但缺支付数据”新增 `S_FAIL`/`S_WAIT` 分支。
+4. **把业务码非成功当“响应成功”继续**：错。例如 joinpay `ra_Code=101` 是业务非成功 → `S_FAIL`，不是 `S_OK`，也不是 `S_WAIT`。
+5. **把请求前准备失败当 `S_FAIL`**：错。配置/OAuth/openid/本地参数失败尚未请求渠道 → `S_WAIT`。
+6. **把支付订单查单/回调的非成功当 `S_FAIL`**：错。支付订单没有失败终态；非成功一律 `S_WAIT`。
+7. **把退款/付款的“处理中/未知”当 `S_FAIL`**：错。只有渠道文档明确失败才 `S_FAIL`，其余 `S_WAIT`。
+8. **通知 success 应答过早**：成功态通知缺关键状态/金额/单号时，不得 ack 成功；应拒绝让渠道重试（具体字段以各渠道成功态契约和现有实现为准）。
+
+> 本节是判定口径。若现有实现仍把“成功态后的支付数据缺失”当作业务分支，应按本节收敛；是否修改另开专项，不在本文档任务内改代码。
+
+## 4. 什么时候用哪个状态
 
 ### S_OK
 
 - 只有渠道明确成功：支付成功、退款成功、付款成功。
 - 订单查单/回调：只有明确成功才返回 `S_OK`。
+- “成功”的判定见 §3：HTTP 200 / 解析成功不等于成功态，必须业务码/状态=文档成功码。
 
 ### S_FAIL
 
 只允许以下场景：
 
-1. **建单/`lockCreate` 内**：渠道有响应且可正常解析，但拿不到预期的支付数据/链接，或渠道明确业务拒绝。
+1. **建单/`lockCreate` 内**：渠道有响应且可正常解析，业务码明确非成功（明确业务拒绝/失败）。成功态下支付数据按渠道成功态信任，不作为本分支。
 2. **退款/付款提交/查单/回调**：渠道业务上明确“退款失败/付款失败”；查单“订单不存在”只有在渠道文档明确其语义为失败时才可映射 `S_FAIL`，否则 `S_WAIT`。
 3. **订单创建**：`PageOutcome.Failed`（建单阶段等价 `S_FAIL`）。建单失败看 ext：ext 为空 → `-2`；ext 非空则保持 `0` 并按已有入口返回。create 失败时 pay_url 尚未写入；成功建单必然有 pay_url（本地中转页也有），不能用 pay_url 反推渠道是否请求过。
 
@@ -77,12 +156,14 @@ ext 为空 → create(ctx)                  // 渠道尚未请求，按当前浏
 
 | 渠道 | S_FAIL | S_WAIT（同一次响应） |
 |---|---|---|
-| joinpay | `ra_Code != 100`；成功但缺 `rc_Result`/`rd_Pic`/JSAPI 参数 | 空/坏 JSON、验签失败、超时/网络 |
-| alipay | 可解析且 `!ok()`；成功但缺二维码/交易号/调起参数 | 空/坏 JSON、验签失败、超时/网络 |
-| epay | 可解析且业务码非成功；成功但缺支付地址 | 空/坏 JSON、无业务码、超时/网络 |
-| helipay | `rt2_retCode != 0000`；成功但缺支付地址/调起参数 | 空/坏 JSON、验签失败、超时/网络 |
-| sumapay | 下单非 `00000`（含 `00001`/未知/空码）；成功但缺 `payUrl`/`pay_info` | 空/坏 JSON、验签失败、超时/网络 |
-| wxpay | 解析出的业务码（如 `PARAM_ERROR`/`ORDER_CLOSED`/`OUT_TRADE_NO_USED`）；2xx 但缺 `code_url`/`h5_url`/`prepay_id` | `SYSTEM_ERROR`/`SYSTEMERROR`/`SERVICE_UNAVAILABLE`/`FREQUENCY_LIMITED`/`RATELIMIT_EXCEEDED`/`SIGN_ERROR`/`NOAUTH`/`OPENID_MISMATCH`/`RULELIMIT`/无 code/验签失败 |
+| joinpay | `ra_Code != 100`（明确业务码） | 空/坏 JSON、验签失败、超时/网络 |
+| alipay | 可解析且 `!ok()`（明确业务码） | 空/坏 JSON、验签失败、超时/网络 |
+| epay | 可解析且业务码非成功 | 空/坏 JSON、无业务码、超时/网络 |
+| helipay | `rt2_retCode != 0000` | 空/坏 JSON、验签失败、超时/网络 |
+| sumapay | 下单非 `00000`（含 `00001`/未知/空码） | 空/坏 JSON、验签失败、超时/网络 |
+| wxpay | 解析出的业务码（如 `PARAM_ERROR`/`ORDER_CLOSED`/`OUT_TRADE_NO_USED`） | `SYSTEM_ERROR`/`SYSTEMERROR`/`SERVICE_UNAVAILABLE`/`FREQUENCY_LIMITED`/`RATELIMIT_EXCEEDED`/`SIGN_ERROR`/`NOAUTH`/`OPENID_MISMATCH`/`RULELIMIT`/无 code/验签失败 |
+
+- 成功态下直接信任支付数据，不逐字段校验；上表 `S_FAIL` 只由“业务码非成功”触发，“成功但缺支付数据”不作为业务分支。
 
 - JSAPI 参数 JSON 能解析即视为拿到预期数据，不校验字段完整性（按现有口径）。
 - sumapay 退款/付款的 `00001` 仍按受理中 `S_WAIT`；只有下单不适用该语义。
@@ -116,7 +197,7 @@ ext 为空 → create(ctx)                  // 渠道尚未请求，按当前浏
 
 本地/配置/OAuth 失败**不得**构造 `Pages.fail`/`FailureException`；必须走 S_WAIT。
 
-## 4. 宿主如何处理
+## 5. 宿主如何处理
 
 ### 建单（create）
 
@@ -164,7 +245,7 @@ ext 为空 → create(ctx)                  // 渠道尚未请求，按当前浏
 - 建单 `S_WAIT` 的 result 在 `/pay/result` 等待视图的「说明」处展示。
 - 商户 API（`/api/**`）始终返回标准 `ApiResponse` 信封（`code/message/timestamp`），与页面渲染是两套协议。
 
-## 5. 如何正确使用 lockCreate
+## 6. 如何正确使用 lockCreate
 
 **所有“可能请求渠道并产出支付数据”的 create 路径都必须走 `Sdk.lockCreate`；不要把渠道成功页直接返回。**
 
@@ -202,7 +283,7 @@ return Sdk.lockCreate(ctx, () -> {
 
 本地页面（二维码中转页、OAuth 跳转、小程序 scheme 等，**未请求支付渠道**）可以直接返回 `Page/Redirect`，ext 保持空；收银台重入时会重走 create。若本地页面是确定性产物且希望缓存（如部分渠道的本地 HTML），也可以放进 `lockCreate`，但**绝不能**把渠道成功数据放在 `lockCreate` 外面返回。
 
-## 6. 插件实现自检
+## 7. 插件实现自检
 
 - [ ] 渠道成功数据只在 `Sdk.lockCreate` 内返回；不手写 ext/pay_url；不直接调用 `lockOrderExt`。
 - [ ] failed 载荷用 `Pages.fail`（S_FAIL），并在 `lockCreate` 内返回；不要绕过 lockCreate。
@@ -216,7 +297,7 @@ return Sdk.lockCreate(ctx, () -> {
 - [ ] JSAPI 参数 JSON 能解析即视为成功，不额外校验字段完整性。
 - [ ] 不按 message 文本判断结果；只用 `BizResult.state` / `PageOutcome` 类型。
 
-## 7. 通道接口文档
+## 8. 通道接口文档
 
 各插件目录下 `api.txt` 为对应渠道的接口文档抄录，随插件源码一起维护。
 
