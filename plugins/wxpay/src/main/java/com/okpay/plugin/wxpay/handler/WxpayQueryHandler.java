@@ -150,7 +150,7 @@ public class WxpayQueryHandler extends AbstractBizHandler {
 
             var status = result.body().path("status").asString("");
             if ("SUCCESS".equals(status)) {
-                return Responses.ok(result.body().path("transaction_id").asString(null), result);
+                return Responses.ok(result.body().path("refund_id").asString(null), result);
             }
             // CLOSED=退款关闭（官方定义即退款失败）；ABNORMAL 官方定义为非终态，可走异常退款，
             // 必须保持 S_WAIT 等人工处理，不能提前回滚/判死

@@ -364,7 +364,7 @@ class WxpayCombineQueryHandlerTest {
             stubGet(mocked, Map.of());
             var bodyCaptor = ArgumentCaptor.forClass(String.class);
             mocked.when(() -> HttpHelper.post(any(), any(), bodyCaptor.capture(), any(), any()))
-                    .thenAnswer(inv -> signedOk("{\"status\":\"SUCCESS\",\"transaction_id\":\"TX\"}"));
+                    .thenAnswer(inv -> signedOk("{\"status\":\"SUCCESS\",\"refund_id\":\"RF\",\"transaction_id\":\"TX\"}"));
 
             var result = new WxpayQueryHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
@@ -388,14 +388,14 @@ class WxpayCombineQueryHandlerTest {
 
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubGet(mocked, Map.of("/v3/refund/domestic/refunds",
-                    "{\"status\":\"SUCCESS\",\"transaction_id\":\"TXREF9\"}"));
+                    "{\"status\":\"SUCCESS\",\"refund_id\":\"RF9\",\"transaction_id\":\"TXREF9\"}"));
             var urlCaptor = ArgumentCaptor.forClass(String.class);
 
             var result = new WxpayQueryHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
 
             assertThat(result.getState()).isEqualTo(BizState.S_OK);
-            assertThat(result.getApiNo()).isEqualTo("TXREF9");
+            assertThat(result.getApiNo()).isEqualTo("RF9");
             mocked.verify(() -> HttpHelper.get(any(), urlCaptor.capture(), any()), org.mockito.Mockito.atLeastOnce());
             assertThat(urlCaptor.getAllValues())
                     .anyMatch(u -> u.contains("/v3/refund/domestic/refunds/" + REFUND_NO));

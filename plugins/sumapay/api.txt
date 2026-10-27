@@ -1,0 +1,459 @@
+丰付支付（sumapay）API 摘要（LLM 专用，最后核对 2026-10-28）
+字段序以 src/main/java/.../handler/ 与 util/ 下代码为准；接口变更时先改本文件对应段，再同步代码字段表并跑 sumapay 测试。
+
+====================================================================
+元数据（供 AI 会话快速定位；本块与代码不一致时以代码为准）
+====================================================================
+
+【接口清单与实现位置】
+- 创建订单（POST form，GBK）：https://www.sumapay.com/wechatTransitGateway/merchant.do
+  → handler/SumapayCreateHandler.java
+  支付宝：biztype 1=IOZ2010 支付宝H5；2=IOZ1016 聚合扫码
+  微信：biztype 1=IOZ1017 微信H5；2=IOZ2011 微信公众号 JSAPI；3=IOZ1016 聚合扫码
+- 微信公众号下单（POST form，GBK）：https://www.sumapay.com/aggregatePayMobile/merchantService.do
+  → SumapayCreateHandler.createWxJsapi（IOZ2011）
+- 订单查询（POST form）：https://api.sumapay.com/main/SearchOrderAction_merSingleQuery
+  → handler/SumapayQueryHandler.java（T_PAY；渠道无退款查询）
+- 退款（POST form）：https://api.sumapay.com/main/Refund_do
+  → handler/SumapaySubmitHandler.java（T_REF）
+- 退款前置-二级户余额/转入（POST form）：https://api.sumapay.com/fundSharing/merchant.do
+  → handler/SumapaySubmitHandler.java（IFSU0043 / IFSU0040）
+- 代付提交（POST form）：https://api.sumapay.com/main/singleTransfer_toTransfer
+  → handler/SumapaySubmitHandler.java（T_XFER）
+- 代付查询（POST form）：https://api.sumapay.com/main/singleTransfer_singleTransferQuery
+  → handler/SumapayQueryHandler.java（T_XFER）
+- 商户账户余额（POST form）：https://api.sumapay.com/main/MerchantAccountQueryAction_merchantAccountQuery
+  → handler/SumapayQueryHandler.java（T_BAL）
+- 异步通知：handler/SumapayNotifyHandler.java
+  支付通知 / 退款通知 / 付款至二级户通知（payMerchantNotify）/ 打款通知（transferNotify）
+
+【签名与传输（实现口径）】
+- 算法：RSA-SHA256（SHA256withRSA），Base64 输出；请求用商户私钥，响应/通知用丰付公钥。
+- 待签串：按下方各接口的签名字段顺序，只拼接【字段值】，无分隔符；值为 null/空白跳过。
+- 编码：请求体 GBK 表单并百分号编码；签名原文按 UTF-8 字节签名。
+  同步响应先按默认/Content-Type 解码，出现 U+FFFD 时按 GBK 重解原始字节；
+  异步通知体按 GBK 表单解析。
+- 请求签名字段名：创建/查询/资金接口 = signature；退款 Refund_do = mersignature。
+- 响应验签字段名：创建/查询/资金接口 = signature；Refund_do = resultSignature；
+  退款通知 = resultSignature；付款至二级户通知 = signature。
+- 密钥支持 PEM 或裸 Base64；私钥 PKCS8/PKCS1、公钥 X509/PKCS1 均可。
+- 文档还写 hmac-md5/商用密码方案；本插件固定 RSA-SHA256，不使用 MD5。
+
+【创建订单固定请求参数】
+| 字段 | 取值 | 签名 |
+|---|---|---|
+| requestId | 平台订单号 tradeNo | 是 |
+| requestStartTime | 当前时间 yyyyMMddHHmmss（Asia/Shanghai） | 否 |
+| merchantCode | 通道配置 appid | 是 |
+| totalBizType | BIZ01104（固定） | 是 |
+| totalPrice | 订单 real 金额（元，两位小数） | 是 |
+| goodsDesc | 配置商品名 | 是 |
+| passThrough | ""（空串，空值不参与拼接） | 仅扫码/JSAPI 表包含 |
+| userType | "2"（二级商户/企业） | 是 |
+| userIdIdentity | 通道配置 appuserid | 是 |
+| terminalIp | 114.139.221.228（固定） | 否 |
+| productId | CQSJWS（固定，不参与签名） | 否 |
+| productName | 元宝充值（固定，不参与签名） | 否 |
+| fund | 订单 real 金额（元，固定单产品） | 否（产品参数） |
+| merAcct | CSSH（固定，不参与签名） | 否 |
+| bizType | BIZ01104（固定，不参与签名） | 否 |
+| productNumber | "1"（固定，不参与签名） | 否 |
+
+terminalIp 固定是刻意业务策略：渠道拒绝海外 IP，避免 VPN 用户无法支付；不要改成真实客户端 IP。
+
+【创建订单模式优先级】同一支付方式勾选多个 biztype 时按代码顺序取第一个：
+支付宝 1(IOZ2010 H5) → 2(IOZ1016 扫码)；微信 1(IOZ1017 H5) → 2(IOZ2011 公众号) → 3(IOZ1016 扫码)。
+
+【创建订单模式差异】
+| 模式 | requestType | 额外字段 | 响应关键字段 |
+|---|---|---|---|
+| 支付宝H5 | IOZ2010 | noticeUrl, backUrl, subMerchantId=appmchid | payUrl, errorMsg |
+| 微信H5 | IOZ1017 | envFlag="3", noticeUrl, backUrl, subMerchantId=appmchid | payUrl, mpAppId, mpPath, errorMsg |
+| 聚合扫码 | IOZ1016 | noticeUrl, 按支付方式填 wechatSubMerchantId 或 alipaySubMerchantId=appmchid | codeUrl, codeImgString（图优先，缺图用 codeUrl）, errorMsg |
+| 微信公众号 | IOZ2011 | noticeUrl, subAppId=公众号appid, subOpenId, subMerchantId=appmchid | pay_info, passThrough, errorMsg |
+
+【创建订单签名/响应验签字段序（实现）】
+- IOZ2010 请求：requestType, requestId, merchantCode, totalBizType, totalPrice, goodsDesc,
+  noticeUrl, backUrl, userType, userIdIdentity, subMerchantId
+  响应：requestId, result, payUrl, errorMsg
+- IOZ1017 请求：requestType, requestId, merchantCode, totalBizType, totalPrice, goodsDesc,
+  envFlag, noticeUrl, backUrl, userType, userIdIdentity, subMerchantId
+  响应：requestId, result, payUrl, mpAppId, mpPath, errorMsg
+- IOZ1016 请求：requestType, requestId, merchantCode, totalBizType, totalPrice, goodsDesc,
+  noticeUrl, passThrough, userType, userIdIdentity, wechatSubMerchantId, alipaySubMerchantId
+  响应：requestId, result, codeUrl, codeImgString, errorMsg
+- IOZ2011 请求：requestType, requestId, totalBizType, merchantCode, totalPrice, subAppId,
+  subOpenId, passThrough, goodsDesc, noticeUrl, userType, userIdIdentity, subMerchantId
+  响应：requestId, result, passThrough, pay_info
+- 所有创建响应均含 requestId, result, errorMsg, signature；成功 result=00000。
+- 创建结果：result=00000 成功；其余（含 00001/空）一律失败（建单只认 00000）。
+- 金额单位：totalPrice（创建订单总额）、fund（产品定价/退款金额）、tradeSum（查询）、
+  sum（IFSU0040）均为元、两位小数；宿主内部金额为分。
+
+【订单查询 SearchOrderAction_merSingleQuery】
+- 请求字段：requestType=SearchOrderAction_merSingleQuery、requestId="S"+tradeNo、
+  requestStartTime、merchantCode=appid、originalRequestId=tradeNo、signature。
+- 请求签名只含：requestId, merchantCode, originalRequestId（requestType/requestStartTime 不签）。
+- 响应：requestId, result, merchantCode, originalRequestId, tradeId, tradeSum, status,
+  requestTime, endTime, channelSn, errorCode, signature。
+- 响应验签字段序：requestId, result, merchantCode, originalRequestId, tradeId, tradeSum,
+  status, requestTime。
+- status：2=支付成功（apiNo=tradeId）；3=渠道失败/未知（S_WAIT）；其他=处理中（S_WAIT）。
+  result≠00000 → S_WAIT。支付订单查单不使用 S_FAIL。
+
+【退款 Refund_do（无退款查询接口）】
+- requestId 固定为退款单号；originalRequestId=原订单号。
+- 请求字段：requestId=退款单号、originalRequestId=原订单号、tradeProcess=appid、
+  fund=退款金额（元）、noticeUrl=退款通知地址、reason="协商退款"（固定）、refundMothed="1"、
+  remark=退款单号、mersignature。
+- 请求签名只含：requestId, originalRequestId, tradeProcess, fund, noticeUrl, remark
+  （refundMothed 不签）。
+- 响应：requestId, result, remark, resultSignature。
+- 响应验签：requestId + result + remark。
+- result 语义：
+  - 00000/00001：受理成功/处理中 → S_WAIT；最终结果看退款通知（渠道无退款查询）。
+  - SumapayErrors.explicitFailure(result)：明确失败 → S_FAIL。
+  - 空码或未知码：S_WAIT，交通知/人工。
+  - 200300162：明确失败，文案“账号余额不足[200300162]”。
+- 退款路径：当日订单直接 Refund_do；往日订单（tradeNo 第 2-9 位 != 今天）先走二级户：
+  1. IFSU0043 查二级户余额（requestId="Q"+退款单号）；
+     余额 < 退款额 → IFSU0040 付款至二级户（requestId="F"+退款单号，金额=退款额）。
+  2. IFSU0040 accepted（00000/00001/...）→ S_WAIT（重复转入风险，必须人工核对）；
+     explicitFailure → S_FAIL；其余 → S_WAIT。
+  3. 余额已足够则跳过转入（重试不会重复付款）。
+- 交易撤销 IFSU0045 已下线，不再接入；往日退款改用“先付款至二级户”。
+- IFSU0043 请求：requestType, requestId, merchantCode, userIdIdentity, signature；
+  响应：requestId, result, userIdIdentity, availSum, signature。
+  请求签名：requestType+requestId+merchantCode+userIdIdentity；
+  响应验签：requestId+result+userIdIdentity+availSum。
+  result≠00000：explicitFailure → S_FAIL；其余（含受理/未知）→ S_WAIT。
+  （该接口尚未在现有对接资料中定位到，字段与签名按实现整理；改签名前向渠道索取正式文档。）
+- IFSU0040 请求：requestType, requestId, merchantCode, userIdIdentity, sum, reason,
+  noticeUrl, signature；响应：requestId, result, merchantCode, userIdIdentity, signature。
+  请求签名：requestType+requestId+merchantCode+userIdIdentity+sum+reason+noticeUrl；
+  响应验签：requestId+result+merchantCode+userIdIdentity。
+  通用接口规范已收录该接口（2.4），字段/签名与实现一致。
+- 付款至二级户通知地址：{notifyDomain}/pay/paymerchantnotify/{refundNo}
+
+【异步通知（GBK 表单；ack 返回 success，失败返回非 success 触发重试）】
+- 支付通知字段：requestId, payId, fiscalDate, description, totalPrice, tradeAmount,
+  tradeFee, status, bankCode, channelSn, openId, alipayUserId, resultSignature。
+  验签字段序：requestId + payId + fiscalDate + description + totalPrice + tradeAmount + tradeFee。
+  status 必须为 "2"；requestId 必须等于订单号；totalPrice 存在时才校验金额；
+  apiNo=channelSn；buyer：bankCode=wechatpay 取 openId，否则取 alipayUserId。
+- 退款通知字段：requestId, originalRequestId, refundResult, refundTime, resultSignature。
+  验签字段序：requestId + originalRequestId + refundResult + refundTime。
+  requestId=商户退款请求流水号（本地退款单号）；originalRequestId=原支付订单号，不是渠道退款单号。
+  文档未提供渠道退款单号；实现取 originalRequestId 作为 apiNo（原订单号，非上游退款流水）。
+  requestId 非空时必须等于退款单号；refundResult：0=成功，1=失败，其他=S_WAIT；
+  失败终态也 ack success（业务结果已落库，不是通知失败）。
+- 付款至二级户通知字段：requestId, merchantCode, result, signature。
+  验签字段序：requestId + merchantCode + result（与 IFSU0040 noticeUrl 描述一致）。
+  该通知可能复用退款回调地址，故退款通知采用双路径验签：
+  先按报文是否含 result 选优先字段表，失败再试另一套（判别只决定顺序，不决定成败）。
+  付款至二级户通知只 ack，不推进业务状态。
+- 打款通知字段：requestId, result, sum, bankAccount, name, requestTime, dealTime,
+  noticeType, failReason, signature。
+  验签字段序：requestId + result + sum。
+  requestId 必须等于打款单号；sum 必须等于打款金额；result=00000 成功；
+  explicitFailure → S_FAIL；其余（含受理/未知）→ S_WAIT。
+  apiNo=requestId（渠道无上游流水号）；失败终态也 ack success。
+- 通知失败应返回非 success（如 sign_error/fail/amount_mismatch/complete_error）；
+  成功返回文本 success。
+
+【代付提交（T_XFER，singleTransfer_toTransfer）】
+- 当前插件实现仅对私；对公链路保留文档但未接入（accountType=public 显式 PARAM_ERROR）。
+- 通用字段：requestId=打款单号；merchantCode=appid；sum=打款金额（元）；
+  noticeUrl=打款通知地址；reason="代付"；transferPayType="1"（自动实时）；
+  refundNoticeUrl 不上送。
+- transferType：0=付款到预存账户，1=付款到个人银行账户（对私），2=付款到企业银行账户（对公）。
+- 对私（插件已实现）：
+  - accountName=cardName，bankAccount=cardNo 必填；
+  - bankCode、unionBankNum(cnapsNo)、openBankName(branchName)、开户省/市均为选填（插件当前不上送）。
+- 对公（仅文档保留，插件未接入）：
+  - accountName、bankAccount 必填；
+  - unionBankNum（联行号）、openBankName（开户网点）、openBankProvince、openBankCity、bankCode 必填；
+  - transToMerCode/transToMerName 仅 transferType=0 时使用。
+- 请求签名：requestId+merchantCode+transferType+transToMerCode+transToMerName+sum+
+  unionBankNum+openBankName+openBankProvince+openBankCity+accountName+bankCode+
+  bankAccount+reason+noticeUrl+refundNoticeUrl+transferPayType（空值跳过）。
+- 响应：requestId, result, sum, signature；验签 requestId+result+sum。
+- result：00000/00001 受理中 → S_WAIT；explicitFailure → S_FAIL；未知/空 → S_WAIT。
+
+【代付查询（T_XFER，singleTransfer_singleTransferQuery）】
+- requestId="S"+打款单号；merchantCode=appid；originalRequestId=打款单号；signature。
+- 请求签名：requestId+merchantCode+originalRequestId。
+- 响应：requestId, result, status, dealRemark, signature；
+  验签 requestId+result+status+dealRemark。
+- status：2=成功；3/4/5/7/10=失败；0/1/6/9/其他=处理中；result≠00000=查询失败(S_WAIT)。
+- 渠道应答没有上游流水号；S_OK 的 apiNo 沿用已有值，否则用平台打款单号占位。
+
+【商户账户余额（T_BAL，MerchantAccountQueryAction_merchantAccountQuery）】
+- 请求：requestId（B+UUID）, merchantCode=appid, signature；签名 requestId+merchantCode。
+- 响应：result, merchantCode, merchantName, balance, withdrawAbleBalance, frozenBalance,
+  prepaidAccountBalance, unsettledBalance, riskReserveAccountBalance, signature；
+  验签顺序即上述字段（不含 requestId）。
+- result≠00000 → S_FAIL；成功时余额取 withdrawAbleBalance（可提现/出款余额），为空 → S_FAIL。
+
+【未实现/不适用】
+- 退款查询：渠道无此接口，插件未注册 T_REF query。
+- 交易撤销 IFSU0045：已下线，不实现。
+- 二级商户异步通知 / 二级商户状态通知：通用接口规范中的进件/风险通知，本插件未接入。
+- 对公代付：文档保留在“代付提交”一节，插件当前未接入；银行编码表见文末。
+
+【result 码分类（实现口径，完整码表见渠道文档附录）】
+- 受理/处理中（S_WAIT）：00000, 00001, 200300304, 200300305, 200300437,
+  200300438, 310100198
+- 明确业务失败（S_FAIL）：110100002, 200300031, 200300051, 200300162, 200300163,
+  200300330, 200300363, 200300377, 200300387, 200300390, 200300439, 310100102,
+  310100104, 310100106, 310100204, 310100217, 310100218, 310100220, 310100227,
+  310100229, 310100221, 310100223, 310100224, 310100225, 310100226, 310100230,
+  400000002, 400000008, 600100001, 600100003, 600100006
+- 注意：退款接口的 00000/00001 只是“受理成功”，不是退款成功；创建订单的 00001 是失败。
+
+【已知坑/实现约束】
+1. 渠道文档的签名说明可能存在乱码；各接口字段序以代码中的 List 常量与签名工具为准。
+2. 本插件使用 RSA-SHA256；渠道文档列出的 hmac-md5/国密不是当前实现，不要混用。
+3. 请求 GBK、签名 UTF-8 是刻意分离；改编码会导致验签失败或中文乱码。
+4. 创建成功只认 result=00000；不要把 00001 当受理成功放行。
+5. 退款无查单接口，最终结果只能靠退款通知；查单能力仅 T_PAY。
+6. 非当日退款依赖 IFSU0043/IFSU0040，且转入受理中不能自动重试（可能重复付款）。
+7. 查询请求的 requestType/requestStartTime 不参与签名；退款 refundMothed 也不参与签名。
+8. 支付通知 totalPrice 可能缺失，金额校验必须条件化；退款通知与付款至二级户通知共用回调时依赖双路径验签。
+9. 创建订单的产品参数（productId/productName/fund/merAcct/bizType/productNumber）不参与签名，
+   当前按固定值下发；改产品参数不影响签名。
+10. IOZ2010/1017/1016/2011 来自企账宝 2.0 规范；旧版支付宝/微信独立文档中的 IOZ2003/1004/1003
+    是旧版创建接口，本插件未接入。
+
+【银行编码表（对公代付 bankCode 参考；插件实现仅对私，当前未内置下拉）】
+qdb=青岛银行
+qhb=青海银行
+qlb=齐鲁银行
+qsb=齐商银行
+qzb=泉州银行
+rzb=日照银行
+sdcu=山东农信联
+shrb=上海农商行
+sqcb=商丘商业银行
+srb=上饶银行
+sxb=绍兴银行
+szftyzb=深圳福田银座
+szrb=深圳农商行
+szb=苏州银行
+tacb=泰安商业银行
+tjrb=天津农村银行
+tjb=天津银行
+tzb=台州银行
+wfb=潍坊银行
+whcb=威海商业银行
+wjrb=吴江农商行
+wlmqcb=乌鲁木齐商业银行
+wzb=温州银行
+xmb=厦门银行
+xtb=邢台银行
+ykb=营口银行
+yncu=云南农信联
+ytb=烟台银行
+zgcb=自贡商业银行
+zhhrb=珠海华润银行
+zjgrb=张家港农商行
+zjkcb=张家口商业银行
+zjjnyzb=浙江景宁银座
+zjmtcb=浙江民泰银行
+zjsmyzb=浙江三门银座
+zjcu=浙江农信联
+zjtlcb=浙江泰隆银行
+zjczcb=浙江稠州银行
+zsb=浙商银行
+zzb=郑州银行
+cqrcb=重庆农村商业银行
+ccb=中国建设银行
+cib=兴业银行
+cmsb=中国民生银行
+hxb=华夏银行
+rcb=北京农商行
+abc=中国农业银行
+boc=中国银行
+ceb=中国光大银行
+cmb=招商银行
+nongxinyin=农信银中心
+icbc=中国工商银行
+spdb=浦发银行
+comm=交通银行
+nbcb=宁波银行
+cncb=中信银行
+nxs=农村信用合作社
+shb=上海银行
+cqb=重庆银行
+cgb=广发银行
+pab=平安银行
+psbc=中国邮政储蓄
+cbhb=渤海银行
+njcb=南京银行
+egb=恒丰银行
+bjb=北京银行
+xwbank=新网银行
+xab=新安银行
+qlrcb=农信银青隆村镇银行
+jinrb=济南农商行
+hkub=海口联合农村商业银行
+wxrb=无锡农商行
+nmgcu=内蒙古自治区农村信用联合社
+hrxjb=湖南银行
+gzeb=贵州银行
+fcsyb=丰城顺银村镇银行
+sxecu=山西省农村信用社联合社
+whzbyh=武汉众邦银行
+myb=网商银行
+cgnb=四川天府银行
+bhrcb=天津滨海农信银
+jnrb=江南农商行
+jyrb=江阴农商行
+ddb=丹东银行
+fsb=抚顺银行
+lnrb=辽宁农信联
+sjb=盛京银行
+whrb=武汉农商行
+tjbhrb=天津滨海农商行
+jhb=金华银行
+hnrb=湖南农信联
+zyb=中原银行
+sccu=四川农信联
+gzcu=贵州农信联
+sxcu=陕西农信联
+xianb=西安银行
+hengsb=衡水银行
+ynhtb=云南红塔银行
+jxcu=江西农信联
+jjb=九江银行
+gscu=甘肃农信联
+qhcu=青海农信联
+xjcu=新疆农信联
+gsb=甘肃银行
+hljcu=黑龙江省农村信用社联合社
+gdcu=广东省农村信用社联合社
+hebcu=河北省农村信用社联合社
+hnyyrcb=湖南岳阳农村商业银行
+jxbank=江西银行
+xib=厦门国际银行
+bocd=成都银行
+eqqnsyh=鄂托克前旗农村商业银行
+ahcu=安徽农信联
+ascb=鞍山商业银行
+bjsyyzb=北京顺义银座
+bsb=包商银行
+cab=长安银行
+cdb=承德银行
+cqqjyzb=重庆黔江银座
+cqybyzb=重庆渝北银座
+csb=长沙银行
+czb=沧州银行
+dgb=东莞银行
+dgrb=东莞农商行
+dlb=大连银行
+dycb=东营商业银行
+dzb=德州银行
+ordb=鄂尔多斯银行
+kmcb=富滇银行
+fjhxb=福建海峡银行
+fjcu=福建农信联
+fssdrb=佛山顺德农商行
+fxb=阜新银行
+gdhxb=广东华兴银行
+gdnyb=广东南粤银行
+glb=桂林银行
+gxbbwb=广西北部湾银行
+gxzzcu=广西农信联
+gycb=贵阳商业银行
+gzb=广州银行
+gzrb=广州农商行
+jxgzb=赣州银行
+hbb=河北银行
+hbcu=湖北农信联
+hdcb=邯郸商业银行
+harbb=哈尔滨银行
+hkb=汉口银行
+hldb=葫芦岛银行
+hncu=海南农信联
+hsb=徽商银行
+hzb=杭州银行
+huzb=湖州银行
+jlb=吉林银行
+jlcu=吉林农信联
+jnb=济宁银行
+jscsrb=江苏常熟农商行
+jscu=江苏农信联
+jsb=江苏银行
+sxjsb=晋商银行
+jxgzyzb=江西赣州银座
+jxb=嘉兴银行
+jzb=锦州银行
+klb=昆仑银行
+ksrb=昆山农商行
+lfb=廊坊银行
+ljb=龙江银行
+lsb=莱商银行
+lycb=临商银行
+lzb=兰州银行
+gxlzb=柳州银行
+mycb=绵阳商业银行
+nbyzrb=鄞州农行
+nmgb=内蒙古银行
+nxhhrb=宁夏黄河农商行
+nxb=宁夏银行
+hencu=河南省农村信用社联合社
+hnnxrb=宁乡农商银行
+zbbsxrb=淄博博山农商行
+hbhb=湖北银行
+lygdfrcb=连云港东方农村商业银行
+psbcub=中邮邮惠万家银行
+aibank=中信百信银行
+webank=前海微众银行
+kcb=天津金城银行
+shhrb=上海华瑞银行
+wzmsb=温州民商银行
+fb=重庆富民银行
+oneb=福建华通银行
+suningb=江苏苏宁银行
+bob=威海蓝海银行
+newupb=辽宁振兴银行
+yilion=吉林亿联银行
+kshb=梅州客商银行
+zhgcb=北京中关村银行
+csxb=湖南三湘银行
+ymb=江西裕民银行
+wxsb=无锡锡商银行
+ccqtgb=重庆三峡银行
+gwb=长城华西银行
+zzhb=枣庄银行
+ybccb=宜宾市商业银行
+yaccb=雅安市商业银行
+xjb=新疆银行
+hhb=新疆汇和银行
+xzb=西藏银行
+whb=乌海银行
+tlb=铁岭银行
+bots=唐山银行
+snccb=遂宁银行
+scb=四川银行
+szsccb=石嘴山银行
+shxb=山西银行
+qjccb=曲靖市商业银行
+qhdb=秦皇岛银行
+pjb=盘锦银行
+nbtscb=宁波通商银行
+ndhb=宁波东海银行
+msb=蒙商银行
+lzccb=泸州银行
+lshb=辽沈银行
+lsccb=乐山市商业银行
+xjkccb=库尔勒银行
+cjccb=江苏长江商业银行
+hnb=海南银行
+hmccb=哈密市商业银行
+dzccb=达州银行
+cycb=朝阳银行
+bxb=本溪银行
+bdb=保定银行
+qtnxs=其他农商行/农信社
+wzyh=外资银行

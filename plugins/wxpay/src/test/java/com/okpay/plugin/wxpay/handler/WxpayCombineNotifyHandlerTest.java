@@ -347,8 +347,8 @@ class WxpayCombineNotifyHandlerTest {
     @DisplayName("合单退款通知：out_refund_no 带序号 → 累计对应子单；全退完才推进主退款单")
     void refundNotifyAccumulatesAndCompletes() throws Exception {
         var ctx = notifyCtx("{\"out_refund_no\":\"" + REFUND_NO + "_2\","
-                + "\"refund_status\":\"SUCCESS\",\"transaction_id\":\"TXREF2\","
-                + "\"amount\":{\"refund\":10000}}", true);
+                + "\"refund_status\":\"SUCCESS\",\"refund_id\":\"RF2\","
+                + "\"transaction_id\":\"TXREF2\",\"amount\":{\"refund\":10000}}", true);
         var cb = ctx.getCallback();
         // 第一次读：全部未退；第二次读（推进检查）：第 2 笔已累计 10000，其余仍 0 → 不全退，不推进
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0)).thenReturn(subs(10000, 0));
@@ -373,8 +373,8 @@ class WxpayCombineNotifyHandlerTest {
     @DisplayName("全部子单退完 → 推进主退款单 S_OK")
     void refundNotifyCompletesWhenAllRefunded() throws Exception {
         var ctx = notifyCtx("{\"out_refund_no\":\"" + REFUND_NO + "_3\","
-                + "\"refund_status\":\"SUCCESS\",\"transaction_id\":\"TXREF3\","
-                + "\"amount\":{\"refund\":10000}}", true);
+                + "\"refund_status\":\"SUCCESS\",\"refund_id\":\"RF3\","
+                + "\"transaction_id\":\"TXREF3\",\"amount\":{\"refund\":10000}}", true);
         var cb = ctx.getCallback();
         // 第一次读：2/3 已退；after 读：全退（本次通知累计第 3 笔后满额）
         var twoRefunded = List.of(sub(1, 10000, 10000), sub(2, 10000, 10000), sub(3, 10000, 0));
@@ -393,7 +393,7 @@ class WxpayCombineNotifyHandlerTest {
             assertThat(d.getBizType()).isEqualTo(BizType.T_REF);
             assertThat(d.getState()).isEqualTo(BizState.S_OK);
             assertThat(d.getBizNo()).isEqualTo(REFUND_NO);
-            assertThat(d.getApiNo()).isEqualTo("TXREF3");
+            assertThat(d.getApiNo()).isEqualTo("RF3");
         }
     }
 
@@ -401,8 +401,8 @@ class WxpayCombineNotifyHandlerTest {
     @DisplayName("通知重发（子单已累计到额）→ 超退累计被拒捕获，仍按已满状态推进，不重复完成")
     void duplicateRefundNotifyIdempotent() throws Exception {
         var ctx = notifyCtx("{\"out_refund_no\":\"" + REFUND_NO + "_1\","
-                + "\"refund_status\":\"SUCCESS\",\"transaction_id\":\"TXREF1\","
-                + "\"amount\":{\"refund\":10000}}", true);
+                + "\"refund_status\":\"SUCCESS\",\"refund_id\":\"RF1\","
+                + "\"transaction_id\":\"TXREF1\",\"amount\":{\"refund\":10000}}", true);
         var cb = ctx.getCallback();
         // 已全退：重发时 updateSubOrder 超退抛 IllegalStateException → 捕获幂等
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 10000));
@@ -418,6 +418,7 @@ class WxpayCombineNotifyHandlerTest {
             verify(cb).completeBiz(done.capture());
             assertThat(done.getValue().getBizNo()).isEqualTo(REFUND_NO);
             assertThat(done.getValue().getState()).isEqualTo(BizState.S_OK);
+            assertThat(done.getValue().getApiNo()).isEqualTo("RF1");
         }
     }
 
@@ -425,7 +426,7 @@ class WxpayCombineNotifyHandlerTest {
     @DisplayName("退款通知金额缺失 → 不累计不推进（防误走已付分支，靠查单续退兜底）")
     void refundNotifyMissingAmountSkips() throws Exception {
         var ctx = notifyCtx("{\"out_refund_no\":\"" + REFUND_NO + "_1\","
-                + "\"refund_status\":\"SUCCESS\",\"transaction_id\":\"TXREF1\"}", true);
+                + "\"refund_status\":\"SUCCESS\",\"refund_id\":\"RF1\",\"transaction_id\":\"TXREF1\"}", true);
         var cb = ctx.getCallback();
         when(cb.getSubOrders(any())).thenReturn(subs(10000, 0));
 
@@ -466,7 +467,8 @@ class WxpayCombineNotifyHandlerTest {
     @DisplayName("refund_status 非 SUCCESS（单笔）：REFUNDCLOSE 非渠道退款状态 → S_WAIT（只有 CLOSED 判失败）")
     void refundNotifyFailStatusSingleRefund() throws Exception {
         var ctx = notifyCtx("{\"out_refund_no\":\"" + REFUND_NO + "\","
-                + "\"refund_status\":\"REFUNDCLOSE\",\"amount\":{\"refund\":10000}}", true);
+                + "\"refund_status\":\"REFUNDCLOSE\",\"refund_id\":\"RF-SINGLE\","
+                + "\"amount\":{\"refund\":10000}}", true);
         var cb = ctx.getCallback();
         when(cb.getSubOrders(any())).thenReturn(List.of());
 
@@ -484,6 +486,7 @@ class WxpayCombineNotifyHandlerTest {
             assertThat(d.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(d.getBizNo()).isEqualTo(REFUND_NO);
             assertThat(d.getCode()).isEqualTo("REFUNDCLOSE");
+            assertThat(d.getApiNo()).isEqualTo("RF-SINGLE");
             verify(cb, never()).updateSubOrder(any());
         }
     }

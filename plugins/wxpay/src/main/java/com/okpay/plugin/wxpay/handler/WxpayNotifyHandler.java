@@ -116,7 +116,7 @@ public class WxpayNotifyHandler {
                 if (subs.isEmpty()) {
                     try {
                         completeRefundByStatus(ctx, refund.getRefundNo(), refundStatus,
-                                result.path("transaction_id").asString(null));
+                                result.path("refund_id").asString(null));
                     } catch (Exception e) {
                         return ackFail("notify_error");
                     }
@@ -130,7 +130,7 @@ public class WxpayNotifyHandler {
                 // 单笔退款通知
                 try {
                     Sdk.completeRefundOk(ctx, refund.getRefundNo(),
-                            result.path("transaction_id").asString(null));
+                            result.path("refund_id").asString(null));
                 } catch (Exception e) {
                     return ackFail("notify_error");
                 }
@@ -163,7 +163,7 @@ public class WxpayNotifyHandler {
                 var after = Sdk.getSubOrders(ctx, tradeNo);
                 if (after.stream().allMatch(s -> s.getRefundMoney() >= s.getMoney())) {
                     Sdk.completeRefundOk(ctx, refund.getRefundNo(),
-                            result.path("transaction_id").asString(null));
+                            result.path("refund_id").asString(null));
                 }
             } catch (Exception e) {
                 // 宿主回调失败已由宿主记录，回 FAIL 让通道重试。

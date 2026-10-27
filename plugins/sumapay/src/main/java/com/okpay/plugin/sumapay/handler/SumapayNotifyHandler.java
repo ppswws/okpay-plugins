@@ -28,6 +28,8 @@ public class SumapayNotifyHandler {
             "requestId", "originalRequestId", "refundResult", "refundTime");
     private static final List<String> PAY_MERCHANT_NOTIFY_FIELDS = List.of(
             "requestId", "merchantCode", "result");
+    private static final List<String> TRANSFER_NOTIFY_FIELDS = List.of(
+            "requestId", "result", "sum");
 
     // =========================================================================
     // 支付通知
@@ -79,11 +81,12 @@ public class SumapayNotifyHandler {
         if (requestId != null && !requestId.isBlank() && !refund.getRefundNo().equals(requestId))
             return Notify.fail("refund_mismatch");
         var refundResult = params.get("refundResult");
+        var apiNo = params.get("originalRequestId");
         try {
             switch (refundResult == null ? "" : refundResult) {
-                case "0" -> Sdk.completeRefundOk(ctx, refund.getRefundNo(), requestId, null);
+                case "0" -> Sdk.completeRefundOk(ctx, refund.getRefundNo(), apiNo, null);
                 case "1" -> Sdk.completeRefundFail(ctx, refund.getRefundNo(), refundResult, null);
-                default -> Sdk.completeRefundWait(ctx, refund.getRefundNo(), requestId, refundResult, null);
+                default -> Sdk.completeRefundWait(ctx, refund.getRefundNo(), apiNo, refundResult, null);
             }
         } catch (Exception e) {
             return Notify.fail("complete_error");
@@ -102,6 +105,42 @@ public class SumapayNotifyHandler {
                 params.get("signature")))
             return Notify.fail("sign_error");
         // 仅确认签收，不推进任何业务状态（转入结果由后续退款查单/重试兜底）
+        return Notify.ok("success");
+    }
+
+    // =========================================================================
+    // 打款通知
+    // =========================================================================
+
+    public NotifyResponse transferNotify(InvokeContext ctx) {
+        var transfer = ctx.getTransfer();
+        var cfg = SumapayConfig.fromPayout(ctx);
+        var params = parseNotifyForm(ctx);
+        if (!SumapaySignUtil.verify(cfg.getAppkey(),
+                SumapaySignUtil.concat(params, TRANSFER_NOTIFY_FIELDS), params.get("signature")))
+            return Notify.fail("sign_error");
+        var requestId = params.get("requestId");
+        if (requestId != null && !requestId.isBlank() && !transfer.getTradeNo().equals(requestId))
+            return Notify.fail("transfer_mismatch");
+        var sum = params.get("sum");
+        if (sum == null || sum.isBlank()) return Notify.fail("amount_mismatch");
+        try {
+            if (transfer.getAmount() != toCents(sum)) return Notify.fail("amount_mismatch");
+        } catch (ExpectedFailureException e) {
+            return Notify.fail("amount_mismatch");
+        }
+        var result = params.getOrDefault("result", "");
+        var msg = params.get("failReason");
+        try {
+            if ("00000".equals(result))
+                Sdk.completeTransferOk(ctx, transfer.getTradeNo(), requestId, msg);
+            else if (SumapayErrors.explicitFailure(result))
+                Sdk.completeTransferFail(ctx, transfer.getTradeNo(), result, msg);
+            else
+                Sdk.completeTransferWait(ctx, transfer.getTradeNo(), requestId, result, msg);
+        } catch (Exception e) {
+            return Notify.fail("complete_error");
+        }
         return Notify.ok("success");
     }
 

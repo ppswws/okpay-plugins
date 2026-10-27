@@ -18,4 +18,9 @@ public final class EpayRespUtil {
         var code = resp.get("code");
         return "1".equals(code) || "200".equals(code);
     }
+
+    /** 查询成功且已支付：code 仅代表查询成功，status=1 才是支付成功。 */
+    public static boolean isPaid(Map<String, String> resp) {
+        return isSuccess(resp) && "1".equals(resp.get("status"));
+    }
 }

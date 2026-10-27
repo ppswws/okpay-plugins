@@ -34,6 +34,13 @@ public final class SumapayApi {
     public static final String FUND_SHARING_URL = "https://api.sumapay.com/fundSharing/merchant.do";
     /** 订单查询接口（SearchOrderAction_merSingleQuery） */
     public static final String QUERY_URL = "https://api.sumapay.com/main/SearchOrderAction_merSingleQuery";
+    /** 代付提交接口（singleTransfer_toTransfer） */
+    public static final String PAYOUT_URL = "https://api.sumapay.com/main/singleTransfer_toTransfer";
+    /** 代付查询接口（singleTransfer_singleTransferQuery） */
+    public static final String PAYOUT_QUERY_URL = "https://api.sumapay.com/main/singleTransfer_singleTransferQuery";
+    /** 商户账户查询接口（MerchantAccountQueryAction_merchantAccountQuery） */
+    public static final String MERCHANT_ACCOUNT_QUERY_URL =
+            "https://api.sumapay.com/main/MerchantAccountQueryAction_merchantAccountQuery";
 
     private static final Charset GBK = Charset.forName("GBK");
     private static final String GBK_CONTENT_TYPE = "application/x-www-form-urlencoded;charset=GBK";

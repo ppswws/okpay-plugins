@@ -32,7 +32,7 @@ public class EpayNotifyHandler {
 
         // 服务器二次确认（复用 QueryHandler）
         var qr = EpayQueryHandler.queryRaw(ctx, order.getTradeNo()).body();
-        if (!EpayRespUtil.isSuccess(qr))
+        if (!EpayRespUtil.isPaid(qr))
             return Notify.fail("query_unpaid");
 
         try {

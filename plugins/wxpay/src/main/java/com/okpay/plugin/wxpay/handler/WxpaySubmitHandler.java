@@ -59,7 +59,7 @@ public class WxpaySubmitHandler extends AbstractBizHandler {
                     HttpHelper.MAPPER.valueToTree(body), ctx);
             var status = result.body().path("status").asString("");
             if ("SUCCESS".equals(status)) {
-                return Responses.ok(result.body().path("transaction_id").asString(null), result);
+                return Responses.ok(result.body().path("refund_id").asString(null), result);
             }
             // CLOSED 是唯一文档明确的失败终态；ABNORMAL 为非终态（可走异常退款），不能判死
             if ("CLOSED".equals(status))
@@ -104,7 +104,7 @@ public class WxpaySubmitHandler extends AbstractBizHandler {
             var result = cfg.client().post("/v3/refund/domestic/refunds",
                     HttpHelper.MAPPER.valueToTree(body), ctx);
             var status = result.body().path("status").asString("");
-            if ("SUCCESS".equals(status)) return Responses.ok(result.body().path("transaction_id").asString(null), result);
+            if ("SUCCESS".equals(status)) return Responses.ok(result.body().path("refund_id").asString(null), result);
             if ("CLOSED".equals(status))
                 return Responses.fail(status, "退款已关闭", result);
             if ("ABNORMAL".equals(status))

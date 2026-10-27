@@ -23,7 +23,11 @@ public class SumapayPlugin extends AbstractPaymentChannel {
         onNotify("notify", notifyHandler::notify);
         onNotify("refundnotify", notifyHandler::refundNotify);
         onNotify("paymerchantnotify", notifyHandler::payMerchantNotify);
+        onNotify("transfernotify", notifyHandler::transferNotify);
         onSubmit(BizType.T_REF, submitHandler::handle);
+        onSubmit(BizType.T_XFER, submitHandler::handle);
         onQuery(BizType.T_PAY, queryHandler::handle);
+        onQuery(BizType.T_XFER, queryHandler::handle);
+        onQuery(BizType.T_BAL, queryHandler::handle);
     }
 }

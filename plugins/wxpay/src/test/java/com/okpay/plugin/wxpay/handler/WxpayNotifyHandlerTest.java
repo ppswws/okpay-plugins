@@ -234,7 +234,7 @@ class WxpayNotifyHandlerTest {
     @DisplayName("退款通知 CLOSED（退款关闭，官方定义即退款失败）→ 退款单 S_FAIL")
     void refundClosedFails() throws Exception {
         var ctx = refundCtx("{\"out_refund_no\":\"" + REFUND_NO + "\",\"refund_status\":\"CLOSED\","
-                + "\"transaction_id\":\"TXREF1\"}");
+                + "\"refund_id\":\"RF-CLOSED\",\"transaction_id\":\"TXREF1\"}");
         when(ctx.getCallback().getSubOrders(any())).thenReturn(List.of());
 
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -253,7 +253,8 @@ class WxpayNotifyHandlerTest {
     @Test
     @DisplayName("退款通知 ABNORMAL（官方定义非终态，可走异常退款）→ 退款单 S_WAIT")
     void refundAbnormalWaits() throws Exception {
-        var ctx = refundCtx("{\"out_refund_no\":\"" + REFUND_NO + "\",\"refund_status\":\"ABNORMAL\"}");
+        var ctx = refundCtx("{\"out_refund_no\":\"" + REFUND_NO + "\",\"refund_status\":\"ABNORMAL\","
+                + "\"refund_id\":\"RF-ABNORMAL\"}");
         when(ctx.getCallback().getSubOrders(any())).thenReturn(List.of());
 
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -265,13 +266,15 @@ class WxpayNotifyHandlerTest {
             var d = capturedComplete(ctx).getValue();
             assertThat(d.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(d.getCode()).isEqualTo("ABNORMAL");
+            assertThat(d.getApiNo()).isEqualTo("RF-ABNORMAL");
         }
     }
 
     @Test
     @DisplayName("退款通知 PROCESSING（非终态）→ 退款单 S_WAIT，不判失败")
     void refundProcessingWaits() throws Exception {
-        var ctx = refundCtx("{\"out_refund_no\":\"" + REFUND_NO + "\",\"refund_status\":\"PROCESSING\"}");
+        var ctx = refundCtx("{\"out_refund_no\":\"" + REFUND_NO + "\",\"refund_status\":\"PROCESSING\","
+                + "\"refund_id\":\"RF-PROCESSING\"}");
         when(ctx.getCallback().getSubOrders(any())).thenReturn(List.of());
 
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -283,14 +286,15 @@ class WxpayNotifyHandlerTest {
             var d = capturedComplete(ctx).getValue();
             assertThat(d.getState()).isEqualTo(BizState.S_WAIT);
             assertThat(d.getCode()).isEqualTo("PROCESSING");
+            assertThat(d.getApiNo()).isEqualTo("RF-PROCESSING");
         }
     }
 
     @Test
-    @DisplayName("退款通知 SUCCESS → 退款单 S_OK（apiNo=transaction_id）")
+    @DisplayName("退款通知 SUCCESS → 退款单 S_OK（apiNo=refund_id）")
     void refundSuccessCompletes() throws Exception {
         var ctx = refundCtx("{\"out_refund_no\":\"" + REFUND_NO + "\",\"refund_status\":\"SUCCESS\","
-                + "\"transaction_id\":\"TXREF9\"}");
+                + "\"refund_id\":\"RF9\",\"transaction_id\":\"TXREF9\"}");
         when(ctx.getCallback().getSubOrders(any())).thenReturn(List.of());
 
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
@@ -300,7 +304,7 @@ class WxpayNotifyHandlerTest {
 
             var d = capturedComplete(ctx).getValue();
             assertThat(d.getState()).isEqualTo(BizState.S_OK);
-            assertThat(d.getApiNo()).isEqualTo("TXREF9");
+            assertThat(d.getApiNo()).isEqualTo("RF9");
         }
     }
 

@@ -45,9 +45,73 @@ public class SumapaySubmitHandler extends AbstractBizHandler {
             "requestId", "originalRequestId", "tradeProcess", "fund", "noticeUrl", "remark");
     private static final List<String> REFUND_RESP_FIELDS = List.of(
             "requestId", "result", "remark");
+    private static final List<String> PAYOUT_REQ_FIELDS = List.of(
+            "requestId", "merchantCode", "transferType", "transToMerCode", "transToMerName",
+            "sum", "unionBankNum", "openBankName", "openBankProvince", "openBankCity",
+            "accountName", "bankCode", "bankAccount", "reason", "noticeUrl",
+            "refundNoticeUrl", "transferPayType");
+    private static final List<String> PAYOUT_RESP_FIELDS = List.of(
+            "requestId", "result", "sum");
 
     public SumapaySubmitHandler() {
         on(BizType.T_REF, (ctx, req) -> refund(ctx));
+        on(BizType.T_XFER, (ctx, req) -> transfer(ctx));
+    }
+
+    // =========================================================================
+    // 打款（singleTransfer_toTransfer）
+    // =========================================================================
+
+    private BizResult transfer(InvokeContext ctx) {
+        var transfer = ctx.getTransfer();
+        var cfg = SumapayConfig.fromPayout(ctx);
+        if (blank(transfer.getCardNo()) || blank(transfer.getCardName()))
+            return waitParam("缺少收款账户或户名");
+        // 仅接入对私打款；对公链路渠道侧未验证通过，显式拒绝
+        var accountType = transfer.getAccountType();
+        if (!blank(accountType)) {
+            try {
+                if (PaymentUtils.isPublicAccount(accountType))
+                    return waitParam("丰付代付仅支持对私账户");
+            } catch (ExpectedFailureException e) {
+                return waitParam(e.getMessage());
+            }
+        }
+        var params = new LinkedHashMap<String, String>();
+        params.put("requestId", transfer.getTradeNo());
+        params.put("merchantCode", cfg.getAppid());
+        params.put("transferType", "1");
+        params.put("sum", toYuan(transfer.getAmount()));
+        params.put("accountName", transfer.getCardName());
+        params.put("bankAccount", transfer.getCardNo());
+        params.put("reason", "代付");
+        params.put("noticeUrl", PaymentPaths.transferNotify(cfg.getNotifyDomain(), transfer.getTradeNo()));
+        params.put("transferPayType", "1");
+        try {
+            var resp = SumapayApi.post(ctx, SumapayApi.PAYOUT_URL, params,
+                    cfg.getAppsecret(), cfg.getAppkey(),
+                    PAYOUT_REQ_FIELDS, "signature", PAYOUT_RESP_FIELDS, "signature");
+            var m = PaymentUtils.parseJsonMap(SumapayApi.decode(resp));
+            var result = m.getOrDefault("result", "");
+            if (SumapayErrors.accepted(result))
+                return Responses.wait(result, "打款请求已受理，正在处理", resp);
+            if (result.isBlank())
+                return Responses.wait("XFER_ERROR", "打款返回解析失败", resp);
+            if (SumapayErrors.explicitFailure(result))
+                return Responses.fail(result, "打款失败[" + result + "]", resp);
+            return Responses.wait(result, "打款结果未知[" + result + "]", resp);
+        } catch (Exception e) {
+            log.debug("丰付打款提交状态未知, exception={}", e.getClass().getSimpleName());
+            return Responses.wait("XFER_ERROR", e.getMessage());
+        }
+    }
+
+    private static BizResult waitParam(String msg) {
+        return Responses.wait("PARAM_ERROR", msg);
+    }
+
+    private static boolean blank(String value) {
+        return value == null || value.isBlank();
     }
 
     private BizResult refund(InvokeContext ctx) {

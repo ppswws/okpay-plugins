@@ -161,6 +161,39 @@ class WxpayCombineSubmitHandlerTest {
     }
 
     // =========================================================================
+    // 单笔退款提交
+    // =========================================================================
+
+    @Test
+    @DisplayName("单笔退款 SUCCESS → apiNo=refund_id（不是支付 transaction_id）")
+    void singleRefundUsesRefundId() throws Exception {
+        var refund = RefundSnapshot.builder()
+                .refundNo(REFUND_NO).tradeNo(TRADE_NO).amount(10000).build();
+        var ctx = InvokeContext.builder()
+                .requestId("r1")
+                .channel(ChannelSnapshot.builder().cfgRaw(cfgRawOrNull()).build())
+                .order(OrderSnapshot.builder().tradeNo(TRADE_NO).real(30000).apiTradeNo("TX1").combine(false).build())
+                .refund(refund)
+                .callback(mock(HostCallback.class))
+                .config(ConfigSnapshot.builder().siteDomain("https://pay.example.com")
+                        .notifyDomain("https://pay.example.com").build())
+                .build();
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            stubPlatformCertDownload(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any(), any()))
+                    .thenAnswer(inv -> signedOk(
+                            "{\"status\":\"SUCCESS\",\"refund_id\":\"RF9\",\"transaction_id\":\"TX9\"}"));
+
+            var result = new WxpaySubmitHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
+
+            assertThat(result.getState()).isEqualTo(BizState.S_OK);
+            assertThat(result.getApiNo()).isEqualTo("RF9");
+        }
+    }
+
+    // =========================================================================
     // 合单退款提交
     // =========================================================================
 
@@ -174,19 +207,20 @@ class WxpayCombineSubmitHandlerTest {
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
             stubPlatformCertDownload(mocked);
             var bodyCaptor = ArgumentCaptor.forClass(String.class);
+            var rf = new String[]{"RF1", "RF2", "RF3"};
             var tx = new String[]{"TXREF1", "TXREF2", "TXREF3"};
             mocked.when(() -> HttpHelper.post(any(), any(), bodyCaptor.capture(), any(), any()))
                     .thenAnswer(inv -> {
                         int idx = bodyCaptor.getAllValues().size() - 1;
-                        return signedOk("{\"status\":\"SUCCESS\",\"transaction_id\":\""
-                                + tx[idx] + "\"}");
+                        return signedOk("{\"status\":\"SUCCESS\",\"refund_id\":\"" + rf[idx]
+                                + "\",\"transaction_id\":\"" + tx[idx] + "\"}");
                     });
 
             var result = new WxpaySubmitHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
 
             assertThat(result.getState()).isEqualTo(BizState.S_OK);
-            assertThat(result.getApiNo()).isEqualTo("TXREF3");
+            assertThat(result.getApiNo()).isEqualTo("RF3");
             // 报文：子单 out_trade_no、out_refund_no=退款单_序号、refund/total=子单金额
             var bodies = bodyCaptor.getAllValues();
             assertThat(bodies).hasSize(3);
@@ -221,7 +255,7 @@ class WxpayCombineSubmitHandlerTest {
             stubPlatformCertDownload(mocked);
             var bodyCaptor = ArgumentCaptor.forClass(String.class);
             mocked.when(() -> HttpHelper.post(any(), any(), bodyCaptor.capture(), any(), any()))
-                    .thenAnswer(inv -> signedOk("{\"status\":\"SUCCESS\",\"transaction_id\":\"TX\"}"));
+                    .thenAnswer(inv -> signedOk("{\"status\":\"SUCCESS\",\"refund_id\":\"RF\",\"transaction_id\":\"TX\"}"));
 
             var result = new WxpaySubmitHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
@@ -246,7 +280,7 @@ class WxpayCombineSubmitHandlerTest {
             stubPlatformCertDownload(mocked);
             var bodyCaptor = ArgumentCaptor.forClass(String.class);
             mocked.when(() -> HttpHelper.post(any(), any(), bodyCaptor.capture(), any(), any()))
-                    .thenAnswer(inv -> signedOk("{\"status\":\"SUCCESS\",\"transaction_id\":\"TX\"}"));
+                    .thenAnswer(inv -> signedOk("{\"status\":\"SUCCESS\",\"refund_id\":\"RF\",\"transaction_id\":\"TX\"}"));
 
             var result = new WxpaySubmitHandler().handle(ctx,
                     BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
@@ -297,7 +331,7 @@ class WxpayCombineSubmitHandlerTest {
                     .thenAnswer(inv -> {
                         int idx = bodyCaptor.getAllValues().size() - 1;
                         if (idx == 1) return signedOk("{\"status\":\"CLOSED\"}");
-                        return signedOk("{\"status\":\"SUCCESS\",\"transaction_id\":\"TX\"}");
+                        return signedOk("{\"status\":\"SUCCESS\",\"refund_id\":\"RF\",\"transaction_id\":\"TX\"}");
                     });
 
             var result = new WxpaySubmitHandler().handle(ctx,

@@ -39,6 +39,8 @@ class SumapayNotifyHandlerTest {
             "requestId", "originalRequestId", "refundResult", "refundTime");
     private static final List<String> PAY_MERCHANT_NOTIFY_FIELDS = List.of(
             "requestId", "merchantCode", "result");
+    private static final List<String> TRANSFER_NOTIFY_FIELDS = List.of(
+            "requestId", "result", "sum");
 
     // =========================================================================
     // 支付通知
@@ -157,6 +159,7 @@ class SumapayNotifyHandlerTest {
         var captor = ArgumentCaptor.forClass(com.okpay.plugin.model.CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         assertThat(captor.getValue().getState()).isEqualTo(com.okpay.plugin.enums.BizState.S_OK);
+        assertThat(captor.getValue().getApiNo()).isEqualTo("T1");
     }
 
     @Test
@@ -187,6 +190,7 @@ class SumapayNotifyHandlerTest {
         var captor = ArgumentCaptor.forClass(com.okpay.plugin.model.CompleteBizRequest.class);
         verify(cb).completeBiz(captor.capture());
         assertThat(captor.getValue().getState()).isEqualTo(com.okpay.plugin.enums.BizState.S_WAIT);
+        assertThat(captor.getValue().getApiNo()).isEqualTo("T1");
     }
 
     @Test
@@ -256,8 +260,73 @@ class SumapayNotifyHandlerTest {
     }
 
     // =========================================================================
+    // 打款通知
+    // =========================================================================
+
+    @Test
+    @DisplayName("打款通知 result=00000 + 金额一致 → 打款成功（apiNo=requestId）")
+    void transferNotifyOk() throws Exception {
+        var ctx = transferNotifyCtx(transferForm(Map.of(
+                "requestId", "T1", "result", "00000", "sum", "1.00")));
+
+        var resp = new SumapayNotifyHandler().transferNotify(ctx);
+
+        assertThat(resp).isEqualTo(Notify.ok("success"));
+        var d = capturedComplete(ctx).getValue();
+        assertThat(d.getBizType()).isEqualTo(com.okpay.plugin.enums.BizType.T_XFER);
+        assertThat(d.getState()).isEqualTo(com.okpay.plugin.enums.BizState.S_OK);
+        assertThat(d.getApiNo()).isEqualTo("T1");
+    }
+
+    @Test
+    @DisplayName("打款通知金额不符 → amount_mismatch")
+    void transferNotifyAmountMismatch() throws Exception {
+        var ctx = transferNotifyCtx(transferForm(Map.of(
+                "requestId", "T1", "result", "00000", "sum", "2.00")));
+
+        var resp = new SumapayNotifyHandler().transferNotify(ctx);
+
+        assertThat(resp).isEqualTo(Notify.fail("amount_mismatch"));
+        verify(ctx.getCallback(), never()).completeBiz(any());
+    }
+
+    @Test
+    @DisplayName("打款通知明确失败码 → S_FAIL；处理中码 → S_WAIT")
+    void transferNotifyStatusMapping() throws Exception {
+        var fail = transferNotifyCtx(transferForm(Map.of(
+                "requestId", "T1", "result", "200300162", "sum", "1.00")));
+        new SumapayNotifyHandler().transferNotify(fail);
+        assertThat(capturedComplete(fail).getValue().getState())
+                .isEqualTo(com.okpay.plugin.enums.BizState.S_FAIL);
+
+        var wait = transferNotifyCtx(transferForm(Map.of(
+                "requestId", "T1", "result", "00001", "sum", "1.00")));
+        new SumapayNotifyHandler().transferNotify(wait);
+        assertThat(capturedComplete(wait).getValue().getState())
+                .isEqualTo(com.okpay.plugin.enums.BizState.S_WAIT);
+    }
+
+    @Test
+    @DisplayName("打款通知验签失败 → sign_error")
+    void transferNotifySignError() throws Exception {
+        var ctx = transferNotifyCtx(gbkForm(Map.of(
+                "requestId", "T1", "result", "00000", "sum", "1.00")));
+
+        var resp = new SumapayNotifyHandler().transferNotify(ctx);
+
+        assertThat(resp).isEqualTo(Notify.fail("sign_error"));
+        verify(ctx.getCallback(), never()).completeBiz(any());
+    }
+
+    // =========================================================================
     // 内部
     // =========================================================================
+
+    private static ArgumentCaptor<CompleteBizRequest> capturedComplete(InvokeContext ctx) {
+        var captor = ArgumentCaptor.forClass(CompleteBizRequest.class);
+        verify(ctx.getCallback()).completeBiz(captor.capture());
+        return captor;
+    }
 
     private InvokeContext notifyCtx(byte[] body) {
         return InvokeContext.builder()
@@ -276,6 +345,18 @@ class SumapayNotifyHandlerTest {
                 .requestId("r1")
                 .channel(ChannelSnapshot.builder().cfgRaw(cfgRaw()).build())
                 .refund(RefundSnapshot.builder().refundNo("R1").tradeNo("T1").amount(100L).build())
+                .callback(mock(HostCallback.class))
+                .config(ConfigSnapshot.builder().siteDomain("https://pay.example.com")
+                        .notifyDomain("https://pay.example.com").build())
+                .request(RequestSnapshot.builder().body(body).build())
+                .build();
+    }
+
+    private InvokeContext transferNotifyCtx(byte[] body) {
+        return InvokeContext.builder()
+                .requestId("r1")
+                .channel(ChannelSnapshot.builder().cfgRaw(cfgRaw()).build())
+                .transfer(TransferSnapshot.builder().tradeNo("T1").amount(100L).build())
                 .callback(mock(HostCallback.class))
                 .config(ConfigSnapshot.builder().siteDomain("https://pay.example.com")
                         .notifyDomain("https://pay.example.com").build())
@@ -306,6 +387,11 @@ class SumapayNotifyHandlerTest {
     /** 退款通知表单（GBK 编码 + resultSignature 签名） */
     private static byte[] refundForm(Map<String, String> fields) throws Exception {
         return gbkForm(signedFields(fields, REFUND_NOTIFY_FIELDS, "resultSignature"));
+    }
+
+    /** 打款通知表单（GBK 编码 + signature 签名） */
+    private static byte[] transferForm(Map<String, String> fields) throws Exception {
+        return gbkForm(signedFields(fields, TRANSFER_NOTIFY_FIELDS, "signature"));
     }
 
     private static Map<String, String> signedFields(Map<String, String> fields,

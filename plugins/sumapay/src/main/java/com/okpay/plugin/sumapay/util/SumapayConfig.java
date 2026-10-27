@@ -35,6 +35,13 @@ public class SumapayConfig implements ChannelConfig {
                         || cfg.appkey == null || cfg.appsecret == null);
     }
 
+    /** 代付/余额通道只依赖商户号与 RSA 密钥对。 */
+    public static SumapayConfig fromPayout(InvokeContext ctx) {
+        return ChannelConfigSupport.from(ctx, SumapayConfig.class,
+                "通道配置不完整（缺少 appid/appkey/appsecret）",
+                cfg -> cfg.appid == null || cfg.appkey == null || cfg.appsecret == null);
+    }
+
     public Set<String> modeSet() {
         return ChannelConfigSupport.modeSet(biztype, Set.of("1"));
     }

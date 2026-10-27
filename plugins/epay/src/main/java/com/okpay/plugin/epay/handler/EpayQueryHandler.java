@@ -25,10 +25,11 @@ public class EpayQueryHandler extends AbstractBizHandler {
         var qr = queryRaw(ctx, order.getTradeNo());
         var m = qr.body();
         // 支付订单查单不使用 S_FAIL：未支付/不存在/渠道异常一律结果未定
-        var state = EpayRespUtil.isSuccess(m) ? BizState.S_OK : BizState.S_WAIT;
+        var paid = EpayRespUtil.isPaid(m);
+        var state = paid ? BizState.S_OK : BizState.S_WAIT;
         return Responses.result(state)
-                .apiNo(m.get("api_trade_no")).code(m.get("code"))
-                .msg(state == BizState.S_OK ? m.get("msg") : m.getOrDefault("msg", "").trim())
+                .apiNo(m.get("trade_no")).code(m.get("code"))
+                .msg(paid ? m.get("msg") : m.getOrDefault("msg", "").trim())
                 .buyer(m.get("buyer")).traced(qr.resp()).build();
     }
 

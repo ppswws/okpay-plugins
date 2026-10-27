@@ -21,15 +21,17 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 
 /**
- * EpayQueryHandler 查单 —— 成功码兼容（code=1/200）。
+ * EpayQueryHandler 查单 —— code 只代表查询成功，status=1 才是支付成功。
  */
 @DisplayName("EpayQueryHandler 查单")
 class EpayQueryHandlerTest {
 
     @Test
-    @DisplayName("code=200 → S_OK（兼容渠道）")
-    void code200WithoutStatusIsOk() throws Exception {
-        var result = queryWithBody("{\"code\":\"200\",\"api_trade_no\":\"EP202610210001\"}");
+    @DisplayName("code=200 + status=1 → S_OK（兼容渠道），apiNo 取 trade_no")
+    void code200PaidIsOk() throws Exception {
+        var result = queryWithBody("""
+                {"code":"200","status":"1","trade_no":"EP202610210001","api_trade_no":null}
+                """);
 
         assertThat(result.getState()).isEqualTo(BizState.S_OK);
         assertThat(result.getApiNo()).isEqualTo("EP202610210001");
@@ -37,12 +39,34 @@ class EpayQueryHandlerTest {
     }
 
     @Test
-    @DisplayName("code=1 → S_OK（标准易支付）")
-    void codeOneIsOk() throws Exception {
-        var result = queryWithBody("{\"code\":\"1\",\"api_trade_no\":\"EP202610210002\"}");
+    @DisplayName("code=1 + status=1 → S_OK（标准易支付），api_trade_no 不作为 apiNo")
+    void codeOnePaidUsesTradeNo() throws Exception {
+        var result = queryWithBody("""
+                {"code":"1","status":"1","trade_no":"EP-TRADE","api_trade_no":"THIRD-PARTY"}
+                """);
 
         assertThat(result.getState()).isEqualTo(BizState.S_OK);
-        assertThat(result.getApiNo()).isEqualTo("EP202610210002");
+        assertThat(result.getApiNo()).isEqualTo("EP-TRADE");
+    }
+
+    @Test
+    @DisplayName("code=1 + status=0 → S_WAIT（查询成功但未支付）")
+    void unpaidIsWait() throws Exception {
+        var result = queryWithBody("""
+                {"code":"1","status":"0","trade_no":"EP-UNPAID","msg":"succ"}
+                """);
+
+        assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
+    }
+
+    @Test
+    @DisplayName("status 缺失 → S_WAIT（不得按支付成功处理）")
+    void missingStatusIsWait() throws Exception {
+        var result = queryWithBody("""
+                {"code":"1","trade_no":"EP-NO-STATUS"}
+                """);
+
+        assertThat(result.getState()).isEqualTo(BizState.S_WAIT);
     }
 
     @Test
