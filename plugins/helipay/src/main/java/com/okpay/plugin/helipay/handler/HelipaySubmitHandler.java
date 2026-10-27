@@ -79,8 +79,8 @@ public class HelipaySubmitHandler extends AbstractBizHandler {
         params.put("P3_customerNumber", cfg.getAppid());
         params.put("P4_amount", toYuan(transfer.getAmount()));
         params.put("P5_bankCode", transfer.getBankCode());
-        params.put("P6_bankAccountNo", transfer.getCardNo() != null ? transfer.getCardNo() : "");
-        params.put("P7_bankAccountName", transfer.getCardName() != null ? transfer.getCardName() : "");
+        params.put("P6_bankAccountNo", transfer.getCardNo());
+        params.put("P7_bankAccountName", transfer.getCardName());
         // 对公/对私决定业务类型：B2B 对公（联行号必填）、B2C 对私（联行号可选携带）。
         // 未知账户类型是本地参数错误 → S_WAIT（不静默默认对私）
         final boolean isPublic;
@@ -89,11 +89,11 @@ public class HelipaySubmitHandler extends AbstractBizHandler {
         } catch (ExpectedFailureException e) {
             return waitParam(e.getMessage());
         }
-        var cnapsNo = transfer.getCnapsNo() != null ? transfer.getCnapsNo() : "";
-        if (isPublic && cnapsNo.isBlank())
+        var cnapsNo = transfer.getCnapsNo();
+        if (isPublic && (cnapsNo == null || cnapsNo.isBlank()))
             return waitParam("对公打款须填写联行号");
         params.put("P8_biz", isPublic ? "B2B" : "B2C");
-        if (!cnapsNo.isBlank())
+        if (cnapsNo != null && !cnapsNo.isBlank())
             params.put("P9_bankUnionCode", cnapsNo);
         params.put("P10_feeType", "PAYER");
         params.put("P11_urgency", "true");

@@ -75,11 +75,9 @@ public class AlipayQueryHandler extends AbstractBizHandler {
         try {
             // 合单退款查单续退：主单有子单 → 复用 refundCombine 逐单续退
             var refund = ctx.getRefund();
-            var tradeNo = refund != null ? refund.getTradeNo() : "";
-            if (tradeNo != null && !tradeNo.isBlank()) {
-                var subs = Sdk.getSubOrders(ctx, tradeNo);
-                if (!subs.isEmpty()) return Sdk.refundCombine(ctx, refund, subs, AlipaySubmitHandler::submitSubRefund);
-            }
+            var tradeNo = refund.getTradeNo();
+            var subs = Sdk.getSubOrders(ctx, tradeNo);
+            if (!subs.isEmpty()) return Sdk.refundCombine(ctx, refund, subs, AlipaySubmitHandler::submitSubRefund);
 
             var cfg = AlipayConfig.from(ctx);
             var biz = new LinkedHashMap<String, Object>();

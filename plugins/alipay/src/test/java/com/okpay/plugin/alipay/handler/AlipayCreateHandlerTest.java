@@ -73,7 +73,8 @@ class AlipayCreateHandlerTest {
         cfgMap.put("appsecret", pem("PRIVATE KEY", KP.getPrivate().getEncoded()));
         cfgMap.put("appkey", pem("PUBLIC KEY", KP.getPublic().getEncoded()));
         if (biztype != null) cfgMap.put("biztype", biztype);
-        var order = OrderSnapshot.builder().tradeNo("T1").real(real).type("alipay").build();
+        var order = OrderSnapshot.builder().tradeNo("T1").real(real).type("alipay")
+                .ip("1.2.3.4").build();
         if (buyer != null) order.setBuyer(buyer);
         var b = InvokeContext.builder()
                 .requestId("r1")

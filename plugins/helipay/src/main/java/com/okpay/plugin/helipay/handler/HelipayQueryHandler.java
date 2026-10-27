@@ -37,9 +37,9 @@ public class HelipayQueryHandler extends AbstractBizHandler {
         var order = ctx.getOrder();
         var params = new LinkedHashMap<String, String>();
         params.put("P1_bizType", "AppPayQuery");
-        params.put("P2_orderId", order != null ? order.getTradeNo() : "");
+        params.put("P2_orderId", order.getTradeNo());
         params.put("P3_customerNumber", cfg.getAppid());
-        if (order != null && notBlank(order.getApiTradeNo()))
+        if (notBlank(order.getApiTradeNo()))
             params.put("P4_serialNumber", order.getApiTradeNo());
         try {
             var resp = HelipayApi.post(ctx, HelipayApi.API_URL, params, cfg.getAppkey());
@@ -69,9 +69,9 @@ public class HelipayQueryHandler extends AbstractBizHandler {
         var refund = ctx.getRefund();
         var params = new LinkedHashMap<String, String>();
         params.put("P1_bizType", "AppPayRefundQuery");
-        params.put("P2_refundOrderId", refund != null ? refund.getRefundNo() : "");
+        params.put("P2_refundOrderId", refund.getRefundNo());
         params.put("P3_customerNumber", cfg.getAppid());
-        if (refund != null && notBlank(refund.getApiRefundNo()))
+        if (notBlank(refund.getApiRefundNo()))
             params.put("P4_serialNumber", refund.getApiRefundNo());
         try {
             var resp = HelipayApi.post(ctx, HelipayApi.API_URL, params, cfg.getAppkey());
@@ -103,7 +103,7 @@ public class HelipayQueryHandler extends AbstractBizHandler {
         var transfer = ctx.getTransfer();
         var params = new LinkedHashMap<String, String>();
         params.put("P1_bizType", "TransferQuery");
-        params.put("P2_orderId", transfer != null ? transfer.getTradeNo() : "");
+        params.put("P2_orderId", transfer.getTradeNo());
         params.put("P3_customerNumber", cfg.getAppid());
         try {
             var resp = HelipayApi.post(ctx, HelipayApi.API_URL, params, cfg.getAppkey());

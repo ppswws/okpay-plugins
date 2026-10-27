@@ -93,7 +93,7 @@ public class JoinpayQueryHandler extends AbstractBizHandler {
         var refund = ctx.getRefund();
         var params = new LinkedHashMap<String, String>();
         params.put("p0_Version","2.3"); params.put("p1_MerchantNo",cfg.getAppid());
-        params.put("p2_RefundOrderNo", refund != null ? refund.getRefundNo() : "");
+        params.put("p2_RefundOrderNo", refund.getRefundNo());
         var body = PaymentUtils.encodeForm(params)
                 + "&hmac=" + JoinpaySignUtil.sign(params, REFUND_QUERY_REQ_FIELDS, cfg.getAppkey());
         try {
@@ -126,7 +126,7 @@ public class JoinpayQueryHandler extends AbstractBizHandler {
         var transfer = ctx.getTransfer();
         var params = new LinkedHashMap<String, String>();
         params.put("userNo", cfg.getAppid());
-        params.put("merchantOrderNo", transfer != null ? transfer.getTradeNo() : "");
+        params.put("merchantOrderNo", transfer.getTradeNo());
         params.put("hmac", JoinpaySignUtil.sign(params, TRANSFER_QUERY_REQ_FIELDS, cfg.getAppkey()));
         try {
             var resp = HttpHelper.post(ctx, TRANSFER_QUERY_URL,

@@ -125,11 +125,9 @@ public class AlipayCreateHandler {
     }
 
     /** 客户端 IP 风控字段：business_params={"mc_create_trade_ip":ip}（business_params 是 biz_content 内的 JSON 串）；
-     *  全 pay 方法（含合单子单）都带；IP 缺失（如本地/测试）不注入。 */
+     *  取订单买家 IP（浏览器优先，商户提交兜底），全 pay 方法（含合单子单）都带。 */
     private static void putClientIpBusinessParams(InvokeContext ctx, Map<String, Object> biz) {
-        var ip = ctx.getRequest() != null ? ctx.getRequest().getIp() : null;
-        if (ip != null && !ip.isBlank())
-            biz.put("business_params", "{\"mc_create_trade_ip\":\"" + ip + "\"}");
+        biz.put("business_params", "{\"mc_create_trade_ip\":\"" + ctx.getOrder().getIp() + "\"}");
     }
 
     /** 电脑网站支付 → 返回 HTML 表单 */

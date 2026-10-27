@@ -75,7 +75,7 @@ public class EpayCreateHandler {
         params.put("money", toYuan(order.getReal()));
         if (!cfg.isSubmitMode()) {
             // mapi 模式需 device/clientip；submit 模式走 GET 收银台自行判断来源，不传
-            params.put("clientip", order.getIpBuyer() != null ? order.getIpBuyer() : "");
+            params.put("clientip", order.getIp());
             params.put("device", "jump");
         }
         params.put("param", order.getParam() != null ? order.getParam() : "");

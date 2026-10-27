@@ -767,7 +767,7 @@ class HelipayCreateHandlerTest {
 
     private InvokeContext ctx(String ua, String query, boolean oauthWx, byte[] cfgRaw, String ext) {
         var order = OrderSnapshot.builder().tradeNo("T1").real(100L).type("wxpay")
-                .ipBuyer("127.0.0.1").ext(ext).build();
+                .ip("127.0.0.1").ext(ext).build();
         var b = InvokeContext.builder()
                 .requestId("r1")
                 .channel(ChannelSnapshot.builder().cfgRaw(cfgRaw).build())

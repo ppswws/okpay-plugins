@@ -104,7 +104,8 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
         // 账户类型仅 private/public，其他值由 PaymentUtils 显式拒绝（预期失败）；对公→204、对私→201
         var accountType = PaymentUtils.isPublicAccount(transfer.getAccountType()) ? "204" : "201";
         // 对公代付必须提供联行号（receiverBankChannelNo）
-        if ("204".equals(accountType) && (transfer.getCnapsNo() == null || transfer.getCnapsNo().isBlank()))
+        var cnapsNo = transfer.getCnapsNo();
+        if ("204".equals(accountType) && (cnapsNo == null || cnapsNo.isBlank()))
             throw new ExpectedFailureException("对公打款必须提供联行号");
         var params = new LinkedHashMap<String, String>();
         params.put("userNo", cfg.getAppid());
@@ -112,10 +113,11 @@ public class JoinpaySubmitHandler extends AbstractBizHandler {
         params.put("productCode", "BANK_PAY_DAILY_ORDER");
         params.put("requestTime", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
         params.put("merchantOrderNo", transfer.getTradeNo());
-        params.put("receiverAccountNoEnc", transfer.getCardNo() != null ? transfer.getCardNo() : "");
-        params.put("receiverNameEnc", transfer.getCardName() != null ? transfer.getCardName() : "");
+        params.put("receiverAccountNoEnc", transfer.getCardNo());
+        params.put("receiverNameEnc", transfer.getCardName());
         params.put("receiverAccountType", accountType);
-        params.put("receiverBankChannelNo", transfer.getCnapsNo() != null ? transfer.getCnapsNo() : "");
+        // 联行号对私可选：文档请求示例以空串表示（签名会跳过空值）
+        params.put("receiverBankChannelNo", cnapsNo == null ? "" : cnapsNo);
         params.put("paidAmount", toYuan(transfer.getAmount()));
         params.put("currency", "201");
         params.put("isChecked", "202");

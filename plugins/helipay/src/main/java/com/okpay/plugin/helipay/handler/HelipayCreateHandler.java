@@ -267,7 +267,7 @@ public class HelipayCreateHandler {
         params.put("P11_appType", mapAppPayType(payType));
         params.put("P12_notifyUrl", notifyUrl(ctx, cfg));
         params.put("P13_successToUrl", buildPayUrl(ctx, cfg, Map.of()));
-        params.put("P14_orderIp", order.getIpBuyer());
+        params.put("P14_orderIp", order.getIp());
         params.put("P15_goodsName", cfg.getGoodsName());
         params.put("P16_goodsDetail", "");
         params.put("P17_limitCreditPay", "");
@@ -296,7 +296,7 @@ public class HelipayCreateHandler {
         params.put("P3_customerNumber", cfg.getAppid());
         params.put("P4_orderAmount", toYuan(order.getReal()));
         params.put("P5_currency", "CNY");
-        params.put("P6_orderIp", order.getIpBuyer());
+        params.put("P6_orderIp", order.getIp());
         params.put("P7_notifyUrl", notifyUrl(ctx, cfg));
         params.put("P8_appPayType", mapAppPayType(payType));
         params.put("P9_payType", "WAP");
@@ -328,7 +328,7 @@ public class HelipayCreateHandler {
         params.put("P8_appType", mapAppPayType(payType));
         params.put("P9_notifyUrl", notifyUrl(ctx, cfg));
         params.put("P10_successToUrl", buildPayUrl(ctx, cfg, Map.of()));
-        params.put("P11_orderIp", order.getIpBuyer());
+        params.put("P11_orderIp", order.getIp());
         params.put("P12_goodsName", cfg.getGoodsName());
         params.put("P13_goodsDetail", "");
         params.put("P14_desc", "");

@@ -147,7 +147,7 @@ class WxpayCreateHandlerTest {
 
     private InvokeContext ctx(String ua, String query, boolean oauthWx, String buyer,
                               byte[] cfgRaw) {
-        var order = OrderSnapshot.builder().tradeNo("T1").real(100L).type("wxpay").build();
+        var order = OrderSnapshot.builder().tradeNo("T1").real(100L).type("wxpay").ip("1.2.3.4").build();
         if (buyer != null) order.setBuyer(buyer);
         var b = InvokeContext.builder()
                 .requestId("r1")

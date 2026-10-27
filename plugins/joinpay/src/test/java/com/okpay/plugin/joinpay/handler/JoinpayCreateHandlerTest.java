@@ -431,7 +431,8 @@ class JoinpayCreateHandlerTest {
 
     private InvokeContext ctx(String ua, String query, boolean oauthWx, byte[] cfgRaw) {
         // 渠道请求（UA/query）只出现在 wxpay 链路：订单支付方式必须同为 wxpay
-        var order = OrderSnapshot.builder().tradeNo("T1").real(100L).type("wxpay").build();
+        var order = OrderSnapshot.builder().tradeNo("T1").real(100L).type("wxpay")
+                .ip("1.2.3.4").build();
         var b = InvokeContext.builder()
                 .requestId("r1")
                 .channel(ChannelSnapshot.builder().cfgRaw(cfgRaw).build())

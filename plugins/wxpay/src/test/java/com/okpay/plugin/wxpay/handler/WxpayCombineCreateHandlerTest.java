@@ -112,7 +112,7 @@ class WxpayCombineCreateHandlerTest {
         return InvokeContext.builder()
                 .requestId("r1")
                 .channel(ChannelSnapshot.builder().cfgRaw(cfgRaw).build())
-                .order(OrderSnapshot.builder().tradeNo(TRADE_NO).real(real).build())
+                .order(OrderSnapshot.builder().tradeNo(TRADE_NO).real(real).ip("1.2.3.4").build())
                 .callback(mock(HostCallback.class))
                 .request(req.build())
                 .config(ConfigSnapshot.builder().siteDomain("https://pay.example.com")

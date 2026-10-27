@@ -153,14 +153,14 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
             if ("bank".equals(transfer.getType())) {
                 biz.put("product_code", "TRANS_BANKCARD_NO_PWD");
                 payee.put("identity_type", "BANKCARD_ACCOUNT");
-                payee.put("identity", transfer.getCardNo() != null ? transfer.getCardNo() : "");
+                payee.put("identity", transfer.getCardNo());
                 payee.put("bankcard_ext_info", Map.of("account_type", bankAccountType));
                 // 银行卡打款必须校验收款人姓名（cardNo 与姓名不符时上游拒绝打款）
                 if (isBlank(transfer.getCardName()))
                     return Responses.wait("PARAM_ERROR", "银行卡打款必须填写收款人姓名");
             } else {
                 biz.put("product_code", "TRANS_ACCOUNT_NO_PWD");
-                var identity = transfer.getCardNo() != null ? transfer.getCardNo() : "";
+                var identity = transfer.getCardNo();
                 var identityType = identityTypeOf(identity);
                 payee.put("identity_type", identityType);
                 payee.put("identity", identity);

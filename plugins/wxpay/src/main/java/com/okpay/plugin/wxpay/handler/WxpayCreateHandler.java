@@ -74,10 +74,8 @@ public class WxpayCreateHandler {
 
     /** 场景信息（单笔）：四种形态统一带买家 IP payer_client_ip（下单时记录的订单买家 IP）；H5 额外带 h5_info.type=Wap。 */
     private static void putSceneInfo(Map<String, Object> body, Kind kind, OrderSnapshot order) {
-        var ip = order.getIpBuyer();
-        if ((ip == null || ip.isBlank()) && kind != Kind.H5) return; // 非 H5 且无买家 IP：scene_info 整体可省略
         var scene = new LinkedHashMap<String, Object>();
-        if (ip != null && !ip.isBlank()) scene.put("payer_client_ip", ip);
+        scene.put("payer_client_ip", order.getIp());
         if (kind == Kind.H5) scene.put("h5_info", Map.of("type", "Wap"));
         body.put("scene_info", scene);
     }
@@ -86,8 +84,7 @@ public class WxpayCreateHandler {
     private static void putCombineSceneInfo(Map<String, Object> body, Kind kind, OrderSnapshot order) {
         if (kind != Kind.H5) return;
         var scene = new LinkedHashMap<String, Object>();
-        var ip = order.getIpBuyer();
-        if (ip != null && !ip.isBlank()) scene.put("payer_client_ip", ip);
+        scene.put("payer_client_ip", order.getIp());
         scene.put("h5_info", Map.of("type", "Wap"));
         scene.put("device_id", "10001");
         body.put("scene_info", scene);
@@ -439,12 +436,12 @@ public class WxpayCreateHandler {
     // =========================================================================
 
     private static String buildReturnUrl(InvokeContext ctx, WxpayConfig cfg) {
-        return PaymentPaths.cashier(cfg != null ? cfg.getSiteDomain() : "", ctx.getOrder().getTradeNo());
+        return PaymentPaths.cashier(cfg.getSiteDomain(), ctx.getOrder().getTradeNo());
     }
 
     /** 渠道 H5 同步回跳统一收口：支付结果状态机页（/pay/result/{tradeNo}）。buildReturnUrl 专供 OAuth/中转，勿混用 */
     private static String resultPageUrl(WxpayConfig cfg, InvokeContext ctx) {
-        return PaymentPaths.result(cfg != null ? cfg.getSiteDomain() : "", ctx.getOrder().getTradeNo());
+        return PaymentPaths.result(cfg.getSiteDomain(), ctx.getOrder().getTradeNo());
     }
 
     private static String uaOf(InvokeContext ctx) {

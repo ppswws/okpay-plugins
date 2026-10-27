@@ -48,7 +48,7 @@ class EpayCreateHandlerTest {
     private static InvokeContext ctx(byte[] cfgRaw) {
         var order = OrderSnapshot.builder()
                 .tradeNo("T1").type("alipay").real(100L)
-                .ipBuyer("1.2.3.4").param("P1").build();
+                .ip("1.2.3.4").param("P1").build();
         return InvokeContext.builder()
                 .requestId("r1")
                 .channel(ChannelSnapshot.builder().cfgRaw(cfgRaw).build())

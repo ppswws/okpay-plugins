@@ -155,6 +155,7 @@ public class JoinpayCreateHandler {
         params.put("p8_ReturnUrl", resultPageUrl(ctx, cfg));
         params.put("p9_NotifyUrl", PaymentPaths.notify(cfg.getNotifyDomain(), order.getTradeNo()));
         params.put("q1_FrpCode", frpCode);
+        params.put("ql_TerminalIp", order.getIp());
         params.put("qa_TradeMerchantNo", cfg.getAppmchid() != null ? cfg.getAppmchid() : "");
         extra.forEach(params::put);
         params.put("hmac", JoinpaySignUtil.sign(params, PAY_REQ_FIELDS, cfg.getAppkey()));

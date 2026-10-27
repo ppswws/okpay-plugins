@@ -81,7 +81,7 @@ class AlipayCombineCreateHandlerTest {
         var b = InvokeContext.builder()
                 .requestId("r1")
                 .channel(ChannelSnapshot.builder().cfgRaw(cfgRaw).build())
-                .order(OrderSnapshot.builder().tradeNo(TRADE_NO).real(real).build())
+                .order(OrderSnapshot.builder().tradeNo(TRADE_NO).real(real).ip("1.2.3.4").build())
                 .callback(mock(HostCallback.class))
                 .config(ConfigSnapshot.builder().siteDomain("https://pay.example.com")
                         .notifyDomain("https://pay.example.com").goodsName("合单测试商品")
