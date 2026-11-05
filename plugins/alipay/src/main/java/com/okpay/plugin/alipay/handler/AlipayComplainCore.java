@@ -386,7 +386,6 @@ public class AlipayComplainCore {
                 .phone(item != null ? item.path("phone_no").asString(null) : null)                   // 投诉人电话
                 .amount(item != null ? toFen(item.path("trade_amount").asString(null)) : null)       // 交易金额（元 → 分）
                 .occurredAt(item != null ? parseTime(item.path("gmt_create").asString(null)) : null)
-                .images(item != null ? textList(item.path("images")) : List.of())
                 .messages(item != null ? extractMessages(item) : List.of())
                 .build();
     }

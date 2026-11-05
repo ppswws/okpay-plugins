@@ -31,9 +31,6 @@ class WxpayConvertTest {
                   "complaint_time": "2022-01-01T08:00:00+08:00",
                   "complaint_order_info": [
                     {"transaction_id": "4200000000000000000000001", "out_trade_no": "T20220101001", "amount": 500}
-                  ],
-                  "complaint_media_list": [
-                    {"media_type": "image", "media_url": ["https://api.mch.weixin.qq.com/v3/merchant-service/images/a1", "https://api.mch.weixin.qq.com/v3/merchant-service/images/a2"]}
                   ]
                 }
                 """;
@@ -53,9 +50,6 @@ class WxpayConvertTest {
         assertThat(record.getIncomingUserResponse()).isTrue();
         assertThat(record.getAmount()).isEqualTo(500L); // 金额取订单金额，优先于申请退款金额
         assertThat(record.getOccurredAt()).isEqualTo(java.time.LocalDateTime.of(2022, 1, 1, 8, 0, 0));
-        assertThat(record.getImages()).containsExactly(
-                "https://api.mch.weixin.qq.com/v3/merchant-service/images/a1",
-                "https://api.mch.weixin.qq.com/v3/merchant-service/images/a2");
     }
 
     @Test
@@ -89,7 +83,6 @@ class WxpayConvertTest {
         assertThat(record.getTradeNo()).isEmpty();
         assertThat(record.getAmount()).isNull();
         assertThat(record.getOccurredAt()).isNull();
-        assertThat(record.getImages()).isEmpty();
 
         // 非法时间 → null
         var badTime = WxpayConvert.toRecord(HttpHelper.MAPPER.readTree(
@@ -98,16 +91,18 @@ class WxpayConvertTest {
     }
 
     @Test
-    @DisplayName("media_url 多数组展平")
-    void mediaFlattening() throws Exception {
-        var record = WxpayConvert.toRecord(HttpHelper.MAPPER.readTree("""
-                {"complaint_media_list":[
-                  {"media_url":["u1"]},
-                  {"media_url":["u2","u3"]},
-                  {"media_type":"video"}
-                ]}
-                """));
-        assertThat(record.getImages()).isEqualTo(List.of("u1", "u2", "u3"));
+    @DisplayName("协商历史 media_url 转 media_id：剥离 query/#，保留原始编码")
+    void historyMediaUrlsBecomeMediaIds() throws Exception {
+        var historys = HttpHelper.MAPPER.readTree("""
+                [{"operator":"投诉人","operate_time":"2022-01-01T09:00:00+08:00",
+                  "operate_type":"USER_CREATE_COMPLAINT","operate_details":"请退款",
+                  "complaint_media_list":{"media_url":[
+                    "https://api.mch.weixin.qq.com/v3/merchant-service/images/a1?token=x",
+                    "https://api.mch.weixin.qq.com/v3/merchant-service/images/abc%3D%3D"
+                  ]}}]
+                """);
+        var msgs = WxpayConvert.toMessages(historys);
+        assertThat(msgs.get(0).getImages()).containsExactly("a1", "abc%3D%3D");
     }
 
     @Test

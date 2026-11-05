@@ -61,8 +61,7 @@ class AlipayComplainCoreTest {
                  "complain_reason": "未收到货",
                  "content": "订单已付款但一直未发货",
                  "phone_no": "13800138000",
-                 "trade_amount": "100.00",
-                 "images": ["https://o.alicdn.com/x.jpg"]}
+                 "trade_amount": "100.00"}
                 """);
 
         var rec = core.toRecord(node);
@@ -79,7 +78,6 @@ class AlipayComplainCoreTest {
         assertThat(rec.getPhone()).isEqualTo("13800138000");
         assertThat(rec.getAmount()).isEqualTo(10000L);
         assertThat(rec.getOccurredAt().toString()).isEqualTo("2026-08-28T10:00");
-        assertThat(rec.getImages()).containsExactly("https://o.alicdn.com/x.jpg");
     }
 
     @Test

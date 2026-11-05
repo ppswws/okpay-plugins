@@ -36,7 +36,6 @@ final class WxpayConvert {
                 // 金额语义为交易金额：优先订单金额，缺失才回退申请退款金额
                 .amount(orderAmount != null ? orderAmount : refundAmount)
                 .occurredAt(parseTime(item.path("complaint_time").asString(null)))
-                .images(extractImages(item))
                 .messages(extractMessages(item))
                 .build();
     }
@@ -90,10 +89,13 @@ final class WxpayConvert {
         return click == null || click.isBlank() ? null : click;
     }
 
-    /** 协商历史图片：只取官方推荐的 complaint_media_list.media_url（image_list 已废弃，不读）。 */
+    /** 协商历史图片：只取官方推荐的 complaint_media_list.media_url（image_list 已废弃，不读），转成 media_id。 */
     private static List<String> historyImages(JsonNode h) {
         var media = h.path("complaint_media_list");
-        return media.isObject() ? new ArrayList<>(textList(media.path("media_url"))) : List.of();
+        if (!media.isObject()) return List.of();
+        var images = new ArrayList<String>();
+        addMediaIds(images, media.path("media_url"));
+        return images;
     }
 
     /** 角色按操作类型前缀分类：*（系统消息后缀）→ 系统；USER_* → 用户；MERCHANT_* → 商户；PLATFORM_* → 平台 */
@@ -196,12 +198,11 @@ final class WxpayConvert {
         }
     }
 
-    /** 投诉详情图片：complaint_media_list 为 array[object] */
-    private static List<String> extractImages(JsonNode item) {
-        var images = new ArrayList<String>();
-        var mediaList = item.path("complaint_media_list");
-        if (!mediaList.isArray()) return images;
-        for (var media : mediaList) images.addAll(textList(media.path("media_url")));
-        return images;
+    /** media_url → media_id（原始路径末段，保持上游编码）；浏览器不能直连微信图片，需宿主签名代理。 */
+    private static void addMediaIds(List<String> target, JsonNode urls) {
+        for (var url : textList(urls)) {
+            var id = extractMediaId(url);
+            if (id != null && !id.isBlank()) target.add(id);
+        }
     }
 }
