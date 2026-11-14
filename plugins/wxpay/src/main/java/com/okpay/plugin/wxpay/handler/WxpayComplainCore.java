@@ -1,5 +1,6 @@
 package com.okpay.plugin.wxpay.handler;
 
+import com.okpay.plugin.ComplaintHandler;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.HttpHelper;
 import com.okpay.plugin.sdk.PluginLog;
@@ -21,23 +22,37 @@ public class WxpayComplainCore {
 
     private static final Logger log = LoggerFactory.getLogger(WxpayComplainCore.class);
 
-    public SyncListResult syncList(ChannelConfig cfg, LocalDate since, int limit) {
+    /**
+     * 拉取一页投诉。游标即 offset；total_count 仅首页返回，据此判断是否还有下一页。
+     * 单页固定 {@link ComplaintHandler#SYNC_PAGE_SIZE}：微信 limit 过大时会返回
+     * INVALID_REQUEST「当前查询结果数据量过大」。
+     */
+    public SyncListResult syncListPage(ChannelConfig cfg, LocalDate since, String cursor, int limit) {
+        int pageSize = Math.max(1, Math.min(limit, ComplaintHandler.SYNC_PAGE_SIZE));
+        int offset = parseOffset(cursor);
         var client = buildClient(cfg);
-        int pageSize = Math.min(limit, 50);
         var all = new ArrayList<ComplaintRecord>();
         try {
-            for (int offset = 0; ; offset += pageSize) {
-                // 不传 complainted_mchid：直连查本商户，服务商/收付通查名下全部子商户
-                var query = "?limit=" + pageSize + "&offset=" + offset
-                        + "&begin_date=" + since + "&end_date=" + LocalDate.now();
-                var resp = client.get("/v3/merchant-service/complaints-v2" + query, null);
-                var data = resp.body().path("data");
-                if (data == null || !data.isArray() || data.isEmpty()) break;
+            // 不传 complainted_mchid：直连查本商户，服务商/收付通查名下全部子商户
+            var query = "?limit=" + pageSize + "&offset=" + offset
+                    + "&begin_date=" + since + "&end_date=" + LocalDate.now();
+            var resp = client.get("/v3/merchant-service/complaints-v2" + query, null);
+            var body = resp.body();
+            var data = body.path("data");
+            boolean fullPage = false;
+            if (data != null && data.isArray()) {
+                fullPage = data.size() == pageSize;
                 for (var item : data) {
                     all.add(decryptPhone(fillDirectComplaintedMchid(WxpayConvert.toRecord(item), cfg), client));
                 }
-                if (data.size() < pageSize || all.size() >= limit) break;
             }
+            // total_count 只在 offset=0 返回；拿不到时以“本页是否满页”判断，最多多拉一次空页
+            int total = body.path("total_count").asInt(-1);
+            boolean hasMore = fullPage && (total < 0 || offset + data.size() < total);
+            String nextCursor = hasMore ? String.valueOf(offset + pageSize) : null;
+            log.debug("微信投诉列表同步: appId={}, since={}, offset={}, pageSize={}, total={}, fetched={}, hasMore={}",
+                    cfg.getAppId(), since, offset, pageSize, total, all.size(), hasMore);
+            return SyncListResult.builder().complaints(all).nextCursor(nextCursor).build();
         } catch (Exception e) {
             if (!PluginLog.isExpected(e)) {
                 if (e instanceof RuntimeException re) throw re;
@@ -45,7 +60,16 @@ public class WxpayComplainCore {
             }
             throw new ExpectedFailureException("微信投诉列表同步失败", e);
         }
-        return SyncListResult.builder().complaints(all).hasMore(all.size() >= limit).build();
+    }
+
+    /** 游标即 offset；非法游标说明宿主/插件契约被破坏。 */
+    private static int parseOffset(String cursor) {
+        if (cursor == null || cursor.isBlank()) return 0;
+        try {
+            return Math.max(0, Integer.parseInt(cursor.trim()));
+        } catch (NumberFormatException e) {
+            throw new ExpectedFailureException("微信投诉同步游标无效: " + cursor, e);
+        }
     }
 
     public ComplaintRecord syncDetail(ChannelConfig cfg, ComplaintRef ref) {

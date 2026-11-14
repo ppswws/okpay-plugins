@@ -23,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -568,7 +569,7 @@ class AlipayComplainCoreTest {
 
     @Test
     @DisplayName("同步合并：交易投诉 + RiskGO 同时拉取，RiskGO 记录带前缀")
-    void syncListMergesTradeAndRisk() {
+    void syncPageMergesTradeAndRisk() {
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class, CALLS_REAL_METHODS)) {
             mocked.when(() -> HttpHelper.post(any(), anyString(), anyString(), anyString()))
                     .thenAnswer(inv -> {
@@ -589,7 +590,7 @@ class AlipayComplainCoreTest {
                                         + "\"status\":\"MERCHANT_PROCESSING\",\"merchant_order_no\":\"T202611131200000000002\"}]}");
                     });
 
-            var result = core.syncList(cfg(), LocalDate.of(2026, 11, 13), 50);
+            var result = core.syncListPage(cfg(), LocalDate.of(2026, 11, 13), null, 50);
 
             assertThat(result.getComplaints()).extracting(ComplaintRecord::getComplaintId)
                     .containsExactlyInAnyOrder("2026111310002001234567890", "31304792");
@@ -603,7 +604,7 @@ class AlipayComplainCoreTest {
 
     @Test
     @DisplayName("同步业务错误不再静默为 0 条：交易投诉 40004 → 同步抛错并透出 sub_msg")
-    void syncListSurfacesTradeBusinessError() {
+    void syncPageSurfacesTradeBusinessError() {
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class, CALLS_REAL_METHODS)) {
             mocked.when(() -> HttpHelper.post(any(), anyString(), anyString(), anyString()))
                     .thenAnswer(inv -> {
@@ -618,7 +619,7 @@ class AlipayComplainCoreTest {
                                         + "\"sub_code\":\"ACQ.ACCESS_FORBIDDEN\",\"sub_msg\":\"无权限使用接口\"}");
                     });
 
-            assertThatThrownBy(() -> core.syncList(cfg(), LocalDate.of(2026, 11, 13), 50))
+            assertThatThrownBy(() -> core.syncListPage(cfg(), LocalDate.of(2026, 11, 13), null, 50))
                     .hasMessageContaining("支付宝投诉列表同步失败")
                     .hasRootCauseMessage("支付宝交易投诉同步失败: 无权限使用接口");
         }
@@ -689,7 +690,7 @@ class AlipayComplainCoreTest {
 
     @Test
     @DisplayName("同步容错：交易投诉失败但 RiskGO 成功 → 返回 RiskGO 数据，不整段失败")
-    void syncListKeepsRiskWhenTradeFails() {
+    void syncPageKeepsRiskWhenTradeFails() {
         try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class, CALLS_REAL_METHODS)) {
             mocked.when(() -> HttpHelper.post(any(), anyString(), anyString(), anyString()))
                     .thenAnswer(inv -> {
@@ -705,11 +706,87 @@ class AlipayComplainCoreTest {
                                         + "\"sub_code\":\"ACQ.ACCESS_FORBIDDEN\",\"sub_msg\":\"无权限使用接口\"}");
                     });
 
-            var result = core.syncList(cfg(), LocalDate.of(2026, 11, 13), 50);
+            var result = core.syncListPage(cfg(), LocalDate.of(2026, 11, 13), null, 50);
 
             assertThat(result.getComplaints()).extracting(ComplaintRecord::getComplaintId)
                     .containsExactly("31304792");
         }
+    }
+
+    @Test
+    @DisplayName("分页：单页固定 10 条，交易投诉有下一页时游标只带交易体系")
+    void syncListPageUsesTenAndCarriesCursor() {
+        var bodies = new ArrayList<String>();
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class, CALLS_REAL_METHODS)) {
+            mocked.when(() -> HttpHelper.post(any(), anyString(), anyString(), anyString()))
+                    .thenAnswer(inv -> {
+                        var body = URLDecoder.decode(inv.getArgument(2).toString(), StandardCharsets.UTF_8);
+                        bodies.add(body);
+                        if (body.contains("method=alipay.security.risk.complaint.info.batchquery")) {
+                            return signedJson("alipay_security_risk_complaint_info_batchquery_response",
+                                    riskPage(1, 1, 1));
+                        }
+                        return signedJson("alipay_merchant_tradecomplain_batchquery_response",
+                                tradePage(1, 10, 15));
+                    });
+
+            var result = core.syncListPage(cfg(), LocalDate.of(2026, 11, 13), null, 50);
+
+            assertThat(result.getComplaints()).hasSize(11);
+            assertThat(result.getNextCursor()).isEqualTo("2|");
+        }
+        assertThat(bodies).hasSize(2);
+        assertThat(bodies).allMatch(b -> b.contains("\"page_size\":10"));
+        assertThat(bodies).anyMatch(b -> b.contains("\"page_num\":1"));
+        assertThat(bodies).anyMatch(b -> b.contains("\"current_page_num\":1"));
+    }
+
+    @Test
+    @DisplayName("分页：按游标续拉，已完成体系不再请求，末页游标为空")
+    void syncListPageFollowsCursorAndSkipsDoneSystem() {
+        var bodies = new ArrayList<String>();
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class, CALLS_REAL_METHODS)) {
+            mocked.when(() -> HttpHelper.post(any(), anyString(), anyString(), anyString()))
+                    .thenAnswer(inv -> {
+                        var body = URLDecoder.decode(inv.getArgument(2).toString(), StandardCharsets.UTF_8);
+                        bodies.add(body);
+                        return signedJson("alipay_merchant_tradecomplain_batchquery_response",
+                                tradePage(2, 5, 15));
+                    });
+
+            var result = core.syncListPage(cfg(), LocalDate.of(2026, 11, 13), "2|", 10);
+
+            assertThat(result.getComplaints()).hasSize(5);
+            assertThat(result.getNextCursor()).isNull();
+        }
+        assertThat(bodies).hasSize(1);
+        assertThat(bodies.get(0)).contains("\"page_num\":2", "\"page_size\":10");
+    }
+
+    /** 交易投诉单页响应；total 为该体系总条数。 */
+    private static String tradePage(int page, int count, int total) {
+        var sb = new StringBuilder("{\"code\":\"10000\",\"msg\":\"Success\",\"total_num\":").append(total)
+                .append(",\"page_num\":").append(page)
+                .append(",\"page_size\":10,\"trade_complain_infos\":[");
+        for (int i = 0; i < count; i++) {
+            if (i > 0) sb.append(',');
+            sb.append("{\"complain_event_id\":\"T").append(page).append('-').append(i)
+                    .append("\",\"status\":\"MERCHANT_PROCESSING\"}");
+        }
+        return sb.append("]}").toString();
+    }
+
+    /** RiskGO 单页响应；total 为该体系总条数。 */
+    private static String riskPage(int page, int count, int total) {
+        var sb = new StringBuilder("{\"code\":\"10000\",\"msg\":\"Success\",\"total_size\":").append(total)
+                .append(",\"current_page_num\":").append(page)
+                .append(",\"page_size\":10,\"complaint_list\":[");
+        for (int i = 0; i < count; i++) {
+            if (i > 0) sb.append(',');
+            sb.append("{\"id\":\"R").append(page).append('-').append(i)
+                    .append("\",\"status\":\"PROCESSING\"}");
+        }
+        return sb.append("]}").toString();
     }
 
     /** 构造带响应签名的支付宝 JSON 响应（响应验签走真实公钥） */

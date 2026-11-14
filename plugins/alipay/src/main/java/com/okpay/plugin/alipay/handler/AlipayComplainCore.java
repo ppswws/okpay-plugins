@@ -1,6 +1,7 @@
 package com.okpay.plugin.alipay.handler;
 
 import tools.jackson.databind.JsonNode;
+import com.okpay.plugin.ComplaintHandler;
 import com.okpay.plugin.model.*;
 import com.okpay.plugin.sdk.AlipayOpenApiClient;
 import com.okpay.plugin.sdk.HttpHelper;
@@ -60,30 +61,42 @@ public class AlipayComplainCore {
     // =========================================================================
 
     /**
-     * 从支付宝批量同步投诉列表：交易投诉（tradecomplain）+ 消费者投诉（RiskGO）合并。
+     * 拉取一页投诉（两套体系各一页）。游标编码两套体系各自的下一页页码，格式 {@code trade|risk}；
+     * 某套体系已拉完或失败时对应段留空，避免对已失败体系反复重试。
      *
      * <p>两个体系独立容错：任一体系失败只记录日志，另一体系结果照常返回；两者都失败且
      * 没有任何数据时才向宿主抛出，避免“某一体系无权限导致整个同步不可用”。</p>
      */
-    public SyncListResult syncList(ChannelConfig cfg, LocalDate since, int limit) {
-        var client = buildClient(cfg);
+    public SyncListResult syncListPage(ChannelConfig cfg, LocalDate since, String cursor, int limit) {
+        int pageSize = Math.max(1, Math.min(limit, ComplaintHandler.SYNC_PAGE_SIZE));
+        var start = parseCursor(cursor);
         var systems = List.of(
                 new ComplaintSystem("交易投诉", "alipay.merchant.tradecomplain.batchquery",
-                        "trade_complain_infos", "page_num", "begin_time", "total_num", this::toRecord),
+                        "trade_complain_infos", "page_num", "begin_time", "total_num",
+                        false, start.tradePage(), this::toRecord),
                 new ComplaintSystem("消费者投诉(RiskGO)", "alipay.security.risk.complaint.info.batchquery",
-                        "complaint_list", "current_page_num", "gmt_complaint_start", "total_size", this::toRiskRecord));
+                        "complaint_list", "current_page_num", "gmt_complaint_start", "total_size",
+                        true, start.riskPage(), this::toRiskRecord));
 
+        var client = buildClient(cfg);
         var all = new ArrayList<ComplaintRecord>();
         Exception failure = null;
         int success = 0;
+        int nextTrade = 0, nextRisk = 0;
         for (var system : systems) {
+            if (system.page() <= 0) continue; // 该体系已拉完
             try {
-                all.addAll(syncPages(client, cfg, system, since, limit));
+                var page = syncPage(client, cfg, system, since, pageSize);
+                all.addAll(page.records());
                 success++;
+                if (page.hasMore()) {
+                    if (system.risk()) nextRisk = system.page() + 1;
+                    else nextTrade = system.page() + 1;
+                }
             } catch (Exception e) {
                 if (failure == null) failure = e;
-                log.warn("支付宝{}同步失败, appId={}, since={}, error={}",
-                        system.label(), cfg.getAppId(), since, PluginLog.summary(e));
+                log.warn("支付宝{}同步失败, appId={}, since={}, page={}, error={}",
+                        system.label(), cfg.getAppId(), since, system.page(), PluginLog.summary(e));
             }
         }
         // 任一体系成功即返回（另一体系失败只记 WARN）；两个体系都失败才向宿主抛出，
@@ -95,51 +108,87 @@ public class AlipayComplainCore {
             }
             throw new ExpectedFailureException("支付宝投诉列表同步失败", failure);
         }
-        return SyncListResult.builder().complaints(all).hasMore(all.size() >= limit).build();
+        return SyncListResult.builder()
+                .complaints(all).nextCursor(formatCursor(nextTrade, nextRisk)).build();
     }
 
     /** 一个投诉体系的分页/字段差异配置（拉取骨架两套共用）。 */
     private record ComplaintSystem(String label, String listMethod, String listField,
                                    String pageParam, String sinceParam, String totalField,
+                                   boolean risk, int page,
                                    Function<JsonNode, ComplaintRecord> mapper) {}
 
-    /** 两套投诉体系共用的分页拉取骨架：业务错误透出、分页终止条件和空记录过滤只实现一次。 */
-    private List<ComplaintRecord> syncPages(AlipayOpenApiClient client, ChannelConfig cfg,
-                                            ComplaintSystem system, LocalDate since, int limit) throws Exception {
-        int pageSize = Math.min(limit, 20);
-        var all = new ArrayList<ComplaintRecord>();
-        for (int page = 1; ; page++) {
-            var biz = new LinkedHashMap<String, Object>();
-            biz.put(system.pageParam(), (long) page);
-            biz.put("page_size", (long) pageSize);
-            // 开始时间格式 yyyy-MM-dd HH:mm:ss；结束时间不传（官方默认当前时间，
-            // 显式传当天 00:00:00 会漏掉当天产生的投诉）；时间跨度最大一年
-            biz.put(system.sinceParam(), since + " 00:00:00");
+    /** 单页拉取结果：记录 + 该体系是否还有下一页。 */
+    private record PageResult(List<ComplaintRecord> records, boolean hasMore) {}
 
-            var resp = client.execute(null, system.listMethod(), biz, authParams(cfg));
-            log.debug("支付宝{}同步: appId={}, since={}, page={}, ok={}, code={}, subCode={}, subMsg={}, total={}",
-                    system.label(), cfg.getAppId(), since, page, resp.ok(), resp.code(), resp.subCode(),
-                    resp.subMsg(), resp.text(system.totalField()));
-            if (!resp.ok())
-                throw new ExpectedFailureException("支付宝" + system.label() + "同步失败: " + alipayErrMsg(resp));
-            var list = resp.node(system.listField());
-            if (list == null || !list.isArray()) {
-                log.debug("支付宝{}同步响应不含 {}, appId={}, page={}",
-                        system.label(), system.listField(), cfg.getAppId(), page);
-                break;
-            }
-            if (list.isEmpty()) break;
+    /** 两套投诉体系共用的单页拉取骨架：业务错误透出、分页终止条件和空记录过滤只实现一次。 */
+    private PageResult syncPage(AlipayOpenApiClient client, ChannelConfig cfg,
+                                ComplaintSystem system, LocalDate since, int pageSize) throws Exception {
+        var biz = new LinkedHashMap<String, Object>();
+        biz.put(system.pageParam(), (long) system.page());
+        biz.put("page_size", (long) pageSize);
+        // 开始时间格式 yyyy-MM-dd HH:mm:ss；结束时间不传（官方默认当前时间，
+        // 显式传当天 00:00:00 会漏掉当天产生的投诉）；时间跨度最大一年
+        biz.put(system.sinceParam(), since + " 00:00:00");
 
-            for (var item : list) {
-                var rec = system.mapper().apply(item);
-                // 上游缺投诉单号的脏记录不落库（宿主以单号做唯一键）
-                if (rec != null && rec.getComplaintId() != null && !rec.getComplaintId().isBlank())
-                    all.add(rec);
-            }
+        var resp = client.execute(null, system.listMethod(), biz, authParams(cfg));
+        log.debug("支付宝{}同步: appId={}, since={}, page={}, pageSize={}, ok={}, code={}, subCode={}, subMsg={}, total={}",
+                system.label(), cfg.getAppId(), since, system.page(), pageSize, resp.ok(), resp.code(),
+                resp.subCode(), resp.subMsg(), resp.text(system.totalField()));
+        if (!resp.ok())
+            throw new ExpectedFailureException("支付宝" + system.label() + "同步失败: " + alipayErrMsg(resp));
+        var list = resp.node(system.listField());
+        if (list == null || !list.isArray() || list.isEmpty())
+            return new PageResult(List.of(), false);
 
-            if (list.size() < pageSize || all.size() >= limit) break;
+        var records = new ArrayList<ComplaintRecord>();
+        for (var item : list) {
+            var rec = system.mapper().apply(item);
+            // 上游缺投诉单号的脏记录不落库（宿主以单号做唯一键）
+            if (rec != null && rec.getComplaintId() != null && !rec.getComplaintId().isBlank())
+                records.add(rec);
         }
-        return all;
+        int total = parseTotal(resp.text(system.totalField()));
+        boolean hasMore = list.size() == pageSize
+                && (total < 0 || (long) system.page() * pageSize < total);
+        return new PageResult(records, hasMore);
+    }
+
+    private record Cursor(int tradePage, int riskPage) {}
+
+    /** 首页（cursor 空）从两套体系的第 1 页开始；空段表示该体系已拉完，非法游标视为契约破坏。 */
+    private static Cursor parseCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) return new Cursor(1, 1);
+        var parts = cursor.split("\\|", -1);
+        if (parts.length != 2)
+            throw new ExpectedFailureException("支付宝投诉同步游标无效: " + cursor);
+        return new Cursor(parsePage(parts[0], cursor), parsePage(parts[1], cursor));
+    }
+
+    private static int parsePage(String value, String cursor) {
+        if (value == null || value.isBlank()) return 0;
+        try {
+            int page = Integer.parseInt(value.trim());
+            return Math.max(0, page);
+        } catch (NumberFormatException e) {
+            throw new ExpectedFailureException("支付宝投诉同步游标无效: " + cursor, e);
+        }
+    }
+
+    /** 两套体系都无后续页返回 null；否则编码 {@code trade|risk}，已完成的一段留空。 */
+    private static String formatCursor(int tradePage, int riskPage) {
+        if (tradePage <= 0 && riskPage <= 0) return null;
+        return (tradePage > 0 ? String.valueOf(tradePage) : "") + "|"
+                + (riskPage > 0 ? String.valueOf(riskPage) : "");
+    }
+
+    private static int parseTotal(String value) {
+        if (value == null || value.isBlank()) return -1;
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     /**
