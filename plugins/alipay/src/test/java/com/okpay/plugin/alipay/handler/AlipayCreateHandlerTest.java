@@ -242,6 +242,59 @@ class AlipayCreateHandlerTest {
     }
 
     @Test
+    @DisplayName("当面付扫码（3）：precreate 不传 product_code，business_params 为对象（不是 JSON 串）")
+    void qrcodeF2FPrecreateShape() throws Exception {
+        var cb = mock(HostCallback.class);
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+        var ctx = ctx(100L, "3", UA_PC, null, false, null, cb);
+        var reqBody = new AtomicReference<String>();
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv -> {
+                reqBody.set(inv.getArgument(2).toString());
+                return new HttpHelper.HttpResponse(200, Map.of(),
+                        signedResponse("alipay_trade_precreate_response",
+                                "{\"code\":\"10000\",\"msg\":\"Success\",\"qr_code\":\"https://qr.alipay/T1\"}"),
+                        "req", 10, 1);
+            });
+            assertThat(pageOutcome((PageOutcome) new AlipayCreateHandler().alipay(ctx)).page())
+                    .isEqualTo("alipay_qrcode");
+        }
+
+        var biz = parseBizContent(reqBody.get());
+        // 当面付只签约 FACE_TO_FACE_PAYMENT：传 QR_CODE_OFFLINE 会被渠道判参数无效
+        assertThat(biz).doesNotContainKey("product_code")
+                // BusinessParams 必须是对象；二次字符串化会报「参数无效：参数格式错误」
+                .containsEntry("business_params", Map.of("mc_create_trade_ip", "1.2.3.4"));
+    }
+
+    @Test
+    @DisplayName("订单码（7）：precreate 带 product_code=QR_CODE_OFFLINE")
+    void qrcodeOrderCodePrecreateShape() throws Exception {
+        var cb = mock(HostCallback.class);
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+        var ctx = ctx(100L, "7", UA_PC, null, false, null, cb);
+        var reqBody = new AtomicReference<String>();
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv -> {
+                reqBody.set(inv.getArgument(2).toString());
+                return new HttpHelper.HttpResponse(200, Map.of(),
+                        signedResponse("alipay_trade_precreate_response",
+                                "{\"code\":\"10000\",\"msg\":\"Success\",\"qr_code\":\"https://qr.alipay/T1\"}"),
+                        "req", 10, 1);
+            });
+            assertThat(pageOutcome((PageOutcome) new AlipayCreateHandler().alipay(ctx)).page())
+                    .isEqualTo("alipay_qrcode");
+        }
+
+        assertThat(parseBizContent(reqBody.get()))
+                .containsEntry("product_code", "QR_CODE_OFFLINE");
+    }
+
+    @Test
     @DisplayName("JSPAY：全局未配置 → 插件直调 SDK 用通道应用 OAuth（跳授权页，redirect 回本站收 auth_code），不写 ext")
     void jsPayChannelOAuthWhenGlobalUnconfigured() throws Exception {
         var cb = mock(HostCallback.class);

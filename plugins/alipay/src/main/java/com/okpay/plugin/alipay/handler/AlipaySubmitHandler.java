@@ -52,7 +52,6 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
             biz.put("out_request_no", refund.getRefundNo());
             biz.put("refund_amount", toYuan(refund.getAmount()));
             biz.put("refund_reason", refund.getRemark() != null ? refund.getRemark() : "退款");
-            biz.put("notify_url", PaymentPaths.refundNotify(cfg.getNotifyDomain(), refund.getRefundNo()));
 
             var resp = cfg.client().execute(ctx, "alipay.trade.refund", biz, cfg.extras(null));
             if (resp.ok()) {
@@ -102,7 +101,6 @@ public class AlipaySubmitHandler extends AbstractBizHandler {
             biz.put("out_request_no", refund.getRefundNo() + "_" + idx);
             biz.put("refund_amount", toYuan(quota));
             biz.put("refund_reason", refund.getRemark() != null ? refund.getRemark() : "退款");
-            biz.put("notify_url", PaymentPaths.refundNotify(cfg.getNotifyDomain(), refund.getRefundNo()));
             var resp = cfg.client().execute(ctx, "alipay.trade.refund", biz, cfg.extras(null));
             if (resp.ok()) {
                 // 同单笔退款：受理成功 ≠ 资金变动成功，fund_change=Y 才计成功（N/缺失交查单确认）

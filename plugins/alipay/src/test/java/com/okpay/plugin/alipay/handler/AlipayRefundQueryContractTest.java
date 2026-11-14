@@ -11,17 +11,21 @@ import com.okpay.plugin.model.OrderSnapshot;
 import com.okpay.plugin.model.RefundSnapshot;
 import com.okpay.plugin.sdk.HttpHelper;
 import com.okpay.plugin.sdk.RsaKeys;
+import tools.jackson.core.type.TypeReference;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -100,9 +104,47 @@ class AlipayRefundQueryContractTest {
         return mocked;
     }
 
+    /** 从表单请求体解析 biz_content */
+    private static Map<String, Object> bizOf(String formBody) throws Exception {
+        for (var pair : formBody.split("&")) {
+            var idx = pair.indexOf('=');
+            if (idx > 0 && "biz_content".equals(URLDecoder.decode(pair.substring(0, idx), StandardCharsets.UTF_8))) {
+                return HttpHelper.MAPPER.readValue(
+                        URLDecoder.decode(pair.substring(idx + 1), StandardCharsets.UTF_8),
+                        new TypeReference<LinkedHashMap<String, Object>>() {});
+            }
+        }
+        throw new IllegalStateException("请求体缺少 biz_content");
+    }
+
     // =========================================================================
     // 单笔退款：fund_change 复合判定
     // =========================================================================
+
+    @Test
+    @DisplayName("退款报文：不含 notify_url（退款接口无该参数），单号/金额按文档")
+    void refundRequestShape() throws Exception {
+        var ctx = ctx(false);
+        var reqBody = new AtomicReference<String>();
+        try (var mocked = mockStatic(HttpHelper.class)) {
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv -> {
+                reqBody.set(inv.getArgument(2).toString());
+                return new HttpHelper.HttpResponse(200, Map.of(),
+                        signedResponse("alipay_trade_refund_response",
+                                "{\"code\":\"10000\",\"msg\":\"Success\",\"fund_change\":\"Y\",\"trade_no\":\"TX1\"}"),
+                        "req", 10, 1);
+            });
+            new AlipaySubmitHandler().handle(ctx,
+                    BizRequest.builder().bizType(BizType.T_REF).bizNo(REFUND_NO).build());
+        }
+
+        assertThat(bizOf(reqBody.get()))
+                .containsEntry("out_trade_no", TRADE_NO)
+                .containsEntry("out_request_no", REFUND_NO)
+                .containsEntry("refund_amount", "50.00")
+                // 官方退款接口无 notify_url；传入非文档参数可能退款失败/重复退款
+                .doesNotContainKey("notify_url");
+    }
 
     @Test
     @DisplayName("退款 fund_change=Y → S_OK（资金变动成功）")

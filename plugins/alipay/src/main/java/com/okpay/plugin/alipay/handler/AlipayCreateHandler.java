@@ -124,10 +124,12 @@ public class AlipayCreateHandler {
                         "amount", biz.get("total_amount")))));
     }
 
-    /** 客户端 IP 风控字段：business_params={"mc_create_trade_ip":ip}（business_params 是 biz_content 内的 JSON 串）；
+    /** 客户端 IP 风控：business_params={"mc_create_trade_ip":ip}（BusinessParams 对象，不能二次字符串化）；
      *  取订单买家 IP（浏览器优先，商户提交兜底），全 pay 方法（含合单子单）都带。 */
     private static void putClientIpBusinessParams(InvokeContext ctx, Map<String, Object> biz) {
-        biz.put("business_params", "{\"mc_create_trade_ip\":\"" + ctx.getOrder().getIp() + "\"}");
+        var ip = ctx.getOrder().getIp();
+        if (ip == null || ip.isBlank()) return;
+        biz.put("business_params", Map.of("mc_create_trade_ip", ip));
     }
 
     /** 电脑网站支付 → 返回 HTML 表单 */
@@ -166,13 +168,16 @@ public class AlipayCreateHandler {
                 Pages.html(cfg.client().pageExecute("alipay.trade.wap.pay", biz, cfg.extras(extras))), null);
     };
 
-    /** 扫码/订单码支付（方式 3/8）→ 返回二维码 URL（官方当面付扫码统一带 QR_CODE_OFFLINE） */
+    /** 扫码（当面付扫码 3 / 订单码 7）→ 返回二维码 URL */
     private static final Mode Precreate = (ctx, cfg, order) -> {
         var biz = new LinkedHashMap<String, Object>();
         biz.put("out_trade_no", order.getTradeNo());
         biz.put("total_amount", toYuan(order.getReal()));
         biz.put("subject", cfg.getGoodsName());
-        biz.put("product_code", "QR_CODE_OFFLINE");
+        // 只有订单码支付传 QR_CODE_OFFLINE；当面付扫码不传，走默认 FACE_TO_FACE_PAYMENT。
+        // 只签约当面付却传 QR_CODE_OFFLINE 会被判参数无效。
+        var modes = cfg.modeSet();
+        if (!modes.contains("3") && modes.contains("7")) biz.put("product_code", "QR_CODE_OFFLINE");
         applyDirectPaySettle(cfg, biz);
         putClientIpBusinessParams(ctx, biz);
         var resp = call(ctx, "alipay.trade.precreate", biz,
