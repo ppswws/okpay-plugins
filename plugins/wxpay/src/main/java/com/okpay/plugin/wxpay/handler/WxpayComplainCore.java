@@ -48,12 +48,12 @@ public class WxpayComplainCore {
         return SyncListResult.builder().complaints(all).hasMore(all.size() >= limit).build();
     }
 
-    public ComplaintRecord syncDetail(ChannelConfig cfg, String complaintId) {
+    public ComplaintRecord syncDetail(ChannelConfig cfg, ComplaintRef ref) {
         try {
             var client = buildClient(cfg);
-            var record = fetchDetail(client, cfg, complaintId);
+            var record = fetchDetail(client, cfg, ref.externalId());
             // 协商历史独立接口（详情应答已无 query_historys 字段）；limit 上限 300，默认单页足够
-            var enc = java.net.URLEncoder.encode(complaintId, StandardCharsets.UTF_8);
+            var enc = java.net.URLEncoder.encode(ref.externalId(), StandardCharsets.UTF_8);
             var history = client.get("/v3/merchant-service/complaints-v2/" + enc
                     + "/negotiation-historys?limit=300&offset=0", null);
             record.setMessages(WxpayConvert.toMessages(history.body().path("data")));
@@ -68,10 +68,10 @@ public class WxpayComplainCore {
     }
 
     /** 回调落库只取投诉字段，跳过协商历史接口 */
-    public ComplaintRecord syncDetailWithoutHistory(ChannelConfig cfg, String complaintId) {
+    public ComplaintRecord syncDetailWithoutHistory(ChannelConfig cfg, ComplaintRef ref) {
         try {
             var client = buildClient(cfg);
-            return decryptPhone(fetchDetail(client, cfg, complaintId), client);
+            return decryptPhone(fetchDetail(client, cfg, ref.externalId()), client);
         } catch (Exception e) {
             if (!PluginLog.isExpected(e)) {
                 if (e instanceof RuntimeException re) throw re;
@@ -94,6 +94,7 @@ public class WxpayComplainCore {
             var parsed = buildClient(cfg).parseNotify(
                     new String(body, StandardCharsets.UTF_8), headerList);
             return CallbackResult.builder()
+                    .source(ComplaintSource.WXPAY)
                     .complaintId(parsed.path("complaint_id").asString(null))
                     .actionType(parsed.path("action_type").asString(null))
                     .ackStatus(200).ackContent("{\"code\":\"SUCCESS\"}").contentType("application/json")
@@ -108,7 +109,8 @@ public class WxpayComplainCore {
         }
     }
 
-    public String uploadMedia(ChannelConfig cfg, byte[] fileData, String filename) {
+    public ComplaintMediaRef uploadMedia(ChannelConfig cfg, ComplaintRef ref,
+                                         byte[] fileData, String filename) {
         try {
             // 微信支持 jpg/jpeg/png/bmp；仅校验，保留原文件名
             var mediaFilename = WxpayConvert.validateMediaFilename(filename);
@@ -123,7 +125,7 @@ public class WxpayComplainCore {
                     fileData, null);
             var mediaId = resp.body().path("media_id").asString(null);
             if (mediaId == null || mediaId.isBlank()) throw new ExpectedFailureException("上传图片未返回 media_id");
-            return mediaId;
+            return ComplaintMediaRef.ofId(mediaId);
         } catch (Exception e) {
             if (!PluginLog.isExpected(e)) {
                 if (e instanceof RuntimeException re) throw re;
@@ -162,9 +164,15 @@ public class WxpayComplainCore {
             body.put("complainted_mchid", mchId);
             body.put("response_content", params.getContent());
             var images = body.putArray("response_images");
-            if (params.getImages() != null) params.getImages().forEach(images::add);
+            if (params.getImages() != null) {
+                for (var image : params.getImages()) {
+                    if (image == null || image.id() == null || image.id().isBlank())
+                        throw new ExpectedFailureException("图片引用缺少 media_id");
+                    images.add(image.id());
+                }
+            }
             buildClient(cfg).post("/v3/merchant-service/complaints-v2/"
-                            + java.net.URLEncoder.encode(params.getComplaintId(), StandardCharsets.UTF_8)
+                            + java.net.URLEncoder.encode(params.getRef().externalId(), StandardCharsets.UTF_8)
                             + "/response", body, null);
         } catch (Exception e) {
             if (!PluginLog.isExpected(e)) {
@@ -175,18 +183,56 @@ public class WxpayComplainCore {
         }
     }
 
-    public void refundProgress(ChannelConfig cfg, String complaintId, RefundDecision decision,
-                                String reason, java.util.List<String> images) {
-        log.debug("微信 v3 投诉接口不支持退款审批");
+    /**
+     * 更新退款审批结果（消费者投诉 2.0）：
+     * 同意/拒绝由微信推进投诉单状态；同意退款不等于资金退回，仍需另行发起退款。
+     */
+    public void refundProgress(ChannelConfig cfg, ComplaintRefundParams params) {
+        try {
+            var mchId = requireComplaintedMchid(params.getMerchantNo());
+            var body = HttpHelper.MAPPER.createObjectNode();
+            body.put("complainted_mchid", mchId);
+            if (params.getDecision() == RefundDecision.AGREE) {
+                body.put("action", "APPROVE");
+                // 官方/易支付一致：同意退款发起日 0=立即；备注只属于拒绝分支
+                body.put("launch_refund_day", 0);
+            } else {
+                if (params.getReason() == null || params.getReason().isBlank())
+                    throw new ExpectedFailureException("拒绝退款必须填写原因");
+                body.put("action", "REJECT");
+                body.put("reject_reason", params.getReason());
+                var images = params.getImages();
+                if (images != null && !images.isEmpty()) {
+                    var arr = body.putArray("reject_media_list");
+                    for (var image : images) {
+                        if (image == null || image.id() == null || image.id().isBlank())
+                            throw new ExpectedFailureException("举证图片缺少 media_id");
+                        arr.add(image.id());
+                    }
+                }
+            }
+            buildClient(cfg).post("/v3/merchant-service/complaints-v2/"
+                            + java.net.URLEncoder.encode(params.getRef().externalId(), StandardCharsets.UTF_8)
+                            + "/update-refund-progress", body, null);
+        } catch (ExpectedFailureException e) {
+            throw e;
+        } catch (Exception e) {
+            if (!PluginLog.isExpected(e)) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+            throw new ExpectedFailureException("更新退款审批失败", e);
+        }
     }
 
-    public void complete(ChannelConfig cfg, String complaintId, String merchantNo) {
+    /** 微信无结果码/内容：统一 finish 入口只做「反馈处理完成」。 */
+    public void finish(ChannelConfig cfg, ComplaintFinishParams params) {
         try {
-            var mchId = requireComplaintedMchid(merchantNo);
+            var mchId = requireComplaintedMchid(params.getMerchantNo());
             var body = HttpHelper.MAPPER.createObjectNode();
             body.put("complainted_mchid", mchId);
             buildClient(cfg).post("/v3/merchant-service/complaints-v2/"
-                            + java.net.URLEncoder.encode(complaintId, StandardCharsets.UTF_8)
+                            + java.net.URLEncoder.encode(params.getRef().externalId(), StandardCharsets.UTF_8)
                             + "/complete", body, null);
         } catch (Exception e) {
             if (!PluginLog.isExpected(e)) {

@@ -2,6 +2,8 @@ package com.okpay.plugin.wxpay;
 
 import com.okpay.plugin.ComplaintHandler;
 import com.okpay.plugin.model.ChannelConfig;
+import com.okpay.plugin.model.ComplaintMediaRef;
+import com.okpay.plugin.model.ComplaintRef;
 import com.okpay.plugin.wxpay.handler.WxpayComplainCore;
 import org.pf4j.Extension;
 
@@ -20,7 +22,7 @@ public class WxpayComplainHandler extends WxpayComplainCore implements Complaint
 
     /** 微信无商家补充凭证 API，留空。 */
     @Override
-    public void supplementSubmit(ChannelConfig config, String complaintId,
-                                 String content, List<String> images) {
+    public void supplementSubmit(ChannelConfig config, ComplaintRef ref,
+                                 String content, List<ComplaintMediaRef> images) {
     }
 }

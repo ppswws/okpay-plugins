@@ -25,6 +25,10 @@ class WxpayConvertTest {
                   "payer_phone": "13800000000",
                   "payer_openid": "oUpF8uMuAJO_M2pxb1Q9zNjWeS6o",
                   "incoming_user_response": true,
+                  "complaint_full_refunded": true,
+                  "user_complaint_times": 2,
+                  "user_tag_list": ["HIGH_RISK", "TRUSTED"],
+                  "need_immediate_service": true,
                   "apply_refund_amount": 100,
                   "complaint_time": "2022-01-01T08:00:00+08:00",
                   "complaint_order_info": [
@@ -34,7 +38,12 @@ class WxpayConvertTest {
                 """;
         var record = WxpayConvert.toRecord(HttpHelper.MAPPER.readTree(json));
 
+        assertThat(record.getSource()).isEqualTo(com.okpay.plugin.model.ComplaintSource.WXPAY);
         assertThat(record.getComplaintId()).isEqualTo("20020182022010108000000000001");
+        // 官方 FAQ：user_complaint_times=2 → 用户首次升级；HIGH_RISK → 高风险
+        assertThat(record.getEscalated()).isTrue();
+        assertThat(record.getLabels()).containsExactly("高风险", "极速退款");
+        assertThat(record.getNeedImmediateService()).isTrue();
         assertThat(record.getMerchantNo()).isEqualTo("1900012181");
         assertThat(record.getTradeNo()).isEqualTo("T20220101001");
         assertThat(record.getOutTradeNo()).isEqualTo("T20220101001");
@@ -46,7 +55,10 @@ class WxpayConvertTest {
         assertThat(record.getPhone()).isEqualTo("13800000000");
         assertThat(record.getBuyerId()).isEqualTo("oUpF8uMuAJO_M2pxb1Q9zNjWeS6o");
         assertThat(record.getIncomingUserResponse()).isTrue();
+        assertThat(record.getIsFullRefunded()).isTrue();
+        assertThat(record.getUserComplaintTimes()).isEqualTo(2);
         assertThat(record.getAmount()).isEqualTo(500L); // 金额取订单金额，优先于申请退款金额
+        assertThat(record.getRefundAmount()).isEqualTo(100L);
         assertThat(record.getOccurredAt()).isEqualTo(java.time.LocalDateTime.of(2022, 1, 1, 8, 0, 0));
     }
 
@@ -64,11 +76,13 @@ class WxpayConvertTest {
     }
 
     @Test
-    @DisplayName("状态映射：PENDING→0、PROCESSING→1、其他/缺失→2/0")
+    @DisplayName("状态映射：PENDING→0、PROCESSING→1、PROCESSED→2、未知→1、缺失→0")
     void stateMapping() throws Exception {
         assertThat(state("{\"complaint_state\":\"PENDING\"}")).isEqualTo(0);
         assertThat(state("{\"complaint_state\":\"PROCESSING\"}")).isEqualTo(1);
-        assertThat(state("{\"complaint_state\":\"RESOLVED\"}")).isEqualTo(2);
+        assertThat(state("{\"complaint_state\":\"PROCESSED\"}")).isEqualTo(2);
+        // 未知官方状态按处理中保留，不擅自判终态
+        assertThat(state("{\"complaint_state\":\"RESOLVED\"}")).isEqualTo(1);
         assertThat(state("{}")).isEqualTo(0);
     }
 

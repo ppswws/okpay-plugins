@@ -2,6 +2,7 @@ package com.okpay.plugin.wxpay.handler;
 
 import tools.jackson.databind.JsonNode;
 import com.okpay.plugin.model.ComplaintRecord;
+import com.okpay.plugin.model.ComplaintSource;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -20,7 +21,18 @@ final class WxpayConvert {
         var orderAmount = extractOrderAmount(orderInfo);
         var refundAmount = item.path("apply_refund_amount").isNumber()
                 ? item.path("apply_refund_amount").asLong() : null;
+        // 微信官方 FAQ：user_complaint_times=1 首次咨询，=2 用户首次升级，>=3 多次升级；
+        // user_tag_list 的 HIGH_RISK 为高风险投诉。二者统一归一化为 escalated + labels。
+        var complaintTimes = item.path("user_complaint_times").isNumber()
+                ? item.path("user_complaint_times").asInt() : null;
+        var tagsNode = item.path("user_tag_list");
+        var labels = tagsNode.isArray() ? userLabels(textList(tagsNode)) : null;
+        var escalated = (complaintTimes != null && complaintTimes >= 2)
+                || (labels != null && labels.contains("高风险"));
+        Boolean escalatedFlag = escalated ? Boolean.TRUE
+                : (complaintTimes != null || labels != null ? Boolean.FALSE : null);
         return ComplaintRecord.builder()
+                .source(ComplaintSource.WXPAY)
                 .complaintId(item.path("complaint_id").asString(null))
                 .merchantNo(item.path("complainted_mchid").asString(null))
                 .tradeNo(outTradeNo)
@@ -33,8 +45,15 @@ final class WxpayConvert {
                 .phone(item.path("payer_phone").asString(null))
                 .buyerId(item.path("payer_openid").asString(null))
                 .incomingUserResponse(item.path("incoming_user_response").asBoolean(false))
+                .isFullRefunded(item.path("complaint_full_refunded").asBoolean(false))
+                .needImmediateService(item.path("need_immediate_service").isBoolean()
+                        ? item.path("need_immediate_service").asBoolean(false) : null)
+                .userComplaintTimes(complaintTimes)
+                .escalated(escalatedFlag)
+                .labels(labels)
                 // 金额语义为交易金额：优先订单金额，缺失才回退申请退款金额
                 .amount(orderAmount != null ? orderAmount : refundAmount)
+                .refundAmount(refundAmount)
                 .occurredAt(parseTime(item.path("complaint_time").asString(null)))
                 .messages(extractMessages(item))
                 .build();
@@ -124,6 +143,14 @@ final class WxpayConvert {
         return list;
     }
 
+    /** 微信用户标签 → 归一化标签（当前官方枚举只有两种）。 */
+    private static List<String> userLabels(List<String> tags) {
+        var labels = new ArrayList<String>();
+        if (tags.contains("HIGH_RISK")) labels.add("高风险");
+        if (tags.contains("TRUSTED")) labels.add("极速退款");
+        return labels;
+    }
+
     /**
      * 从图片 URL（{@code .../v3/merchant-service/images/{media_id}}）提取末段 media_id。
      * 先剥离上游可能追加的 {@code ?}/{@code #} 后缀，末段为空返回 null。
@@ -185,7 +212,13 @@ final class WxpayConvert {
 
     private static int mapState(String state) {
         if (state == null) return 0;
-        return switch (state) { case "PENDING" -> 0; case "PROCESSING" -> 1; default -> 2; };
+        return switch (state) {
+            case "PENDING" -> 0;
+            case "PROCESSING" -> 1;
+            case "PROCESSED" -> 2;
+            // 官方新增/未知状态不擅自判终态；rawState 保留原值
+            default -> 1;
+        };
     }
 
     private static LocalDateTime parseTime(String time) {
