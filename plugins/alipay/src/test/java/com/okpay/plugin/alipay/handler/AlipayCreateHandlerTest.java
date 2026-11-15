@@ -68,11 +68,19 @@ class AlipayCreateHandlerTest {
      */
     private InvokeContext ctx(long real, String biztype, String ua, String query,
                               boolean miniConfigured, String buyer, HostCallback cb) throws Exception {
+        return ctx(real, biztype, ua, query, miniConfigured, buyer, false, cb);
+    }
+
+    /** 同上，forceIdentity = 支付前强制获取用户标识开关 */
+    private InvokeContext ctx(long real, String biztype, String ua, String query,
+                              boolean miniConfigured, String buyer, boolean forceIdentity,
+                              HostCallback cb) throws Exception {
         var cfgMap = new LinkedHashMap<String, Object>();
         cfgMap.put("appid", APP_ID);
         cfgMap.put("appsecret", pem("PRIVATE KEY", KP.getPrivate().getEncoded()));
         cfgMap.put("appkey", pem("PUBLIC KEY", KP.getPublic().getEncoded()));
         if (biztype != null) cfgMap.put("biztype", biztype);
+        if (forceIdentity) cfgMap.put("force_identity", true);
         var order = OrderSnapshot.builder().tradeNo("T1").real(real).type("alipay")
                 .ip("1.2.3.4").build();
         if (buyer != null) order.setBuyer(buyer);
@@ -208,6 +216,7 @@ class AlipayCreateHandlerTest {
 
     private static final String UA_ALIPAY = "Mozilla/5.0 (iPhone) Mobile AlipayClient/10.0.1";
     private static final String UA_PC = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+    private static final String UA_MOBILE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Mobile";
 
     /**
      * mockStatic(HttpHelper) 会连 UA 判定（isAlipay/isMobile/isWeChat）一起拦截，
@@ -292,6 +301,225 @@ class AlipayCreateHandlerTest {
 
         assertThat(parseBizContent(reqBody.get()))
                 .containsEntry("product_code", "QR_CODE_OFFLINE");
+    }
+
+    @Test
+    @DisplayName("只开当面付JS + PC：返回本地中转码（授权地址），不调用未启用的 precreate、不写 ext")
+    void jsPayOnlyOnPcUsesLocalRelay() throws Exception {
+        var cb = mock(HostCallback.class);
+        var ctx = ctx(100L, "4", UA_PC, null, false, null, cb);
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            var page = pageOutcome(new AlipayCreateHandler().alipay(ctx));
+            assertThat(page.page()).isEqualTo("alipay_qrcode");
+            assertThat(URLDecoder.decode(page.url(), StandardCharsets.UTF_8))
+                    .startsWith("https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?")
+                    .contains("app_id=" + APP_ID)
+                    .contains("redirect_uri=https://pay.example.com/pay/cashier/T1");
+            mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
+        }
+        verify(cb, never()).lockOrderExt(any());
+    }
+
+    @Test
+    @DisplayName("只开当面付JS + 手机H5 + PC：中转码指向收银台（落地走 Wap），不编授权地址")
+    void jsPayRelayWithWapUsesCashierUrl() throws Exception {
+        var cb = mock(HostCallback.class);
+        var ctx = ctx(100L, "4,2", UA_PC, null, false, null, cb);
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            var page = pageOutcome(new AlipayCreateHandler().alipay(ctx));
+            assertThat(page.page()).isEqualTo("alipay_qrcode");
+            assertThat(page.url()).isEqualTo("https://pay.example.com/pay/cashier/T1");
+            mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
+        }
+        verify(cb, never()).lockOrderExt(any());
+    }
+
+    @Test
+    @DisplayName("门禁开启 + 扫码 + 桌面：返回授权地址二维码，不调渠道、不写 ext")
+    void forceIdentityQrcodeDesktopShowsOauthRelay() throws Exception {
+        var cb = mock(HostCallback.class);
+        var ctx = ctx(100L, "3", UA_PC, null, false, null, true, cb);
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            var page = pageOutcome(new AlipayCreateHandler().alipay(ctx));
+            assertThat(page.page()).isEqualTo("alipay_qrcode");
+            assertThat(URLDecoder.decode(page.url(), StandardCharsets.UTF_8))
+                    .startsWith("https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?")
+                    .contains("redirect_uri=https://pay.example.com/pay/cashier/T1");
+            mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
+        }
+        verify(cb, never()).lockOrderExt(any());
+    }
+
+    @Test
+    @DisplayName("门禁开启 + 扫码 + 商户 API 建单（无请求）：返回本地中转页，不调渠道")
+    void forceIdentityQrcodeApiCreateReturnsLocalPage() throws Exception {
+        var cb = mock(HostCallback.class);
+        var ctx = ctx(100L, "3", null, null, false, null, true, cb);
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            var page = pageOutcome(new AlipayCreateHandler().alipay(ctx));
+            assertThat(page.page()).isEqualTo("alipay_qrcode");
+            assertThat(URLDecoder.decode(page.url(), StandardCharsets.UTF_8))
+                    .startsWith("https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?")
+                    .contains("redirect_uri=https://pay.example.com/pay/cashier/T1");
+            mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
+        }
+        verify(cb, never()).lockOrderExt(any());
+    }
+
+    @Test
+    @DisplayName("门禁开启 + 扫码 + 支付宝内无 buyer：跳授权页，不调渠道")
+    void forceIdentityQrcodeAlipayRedirectsToOauth() throws Exception {
+        var cb = mock(HostCallback.class);
+        var ctx = ctx(100L, "3", UA_ALIPAY, null, false, null, true, cb);
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            var decoded = URLDecoder.decode(redirectUrl(new AlipayCreateHandler().alipay(ctx)),
+                    StandardCharsets.UTF_8);
+            assertThat(decoded)
+                    .startsWith("https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?")
+                    .contains("redirect_uri=https://pay.example.com/pay/cashier/T1");
+            mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
+        }
+        verify(cb, never()).lockOrderExt(any());
+    }
+
+    @Test
+    @DisplayName("门禁开启 + 扫码 + 支付宝回调：兑换 user_id + 风控 → precreate → 二维码页")
+    void forceIdentityQrcodeCallbackExchangesThenPrecreate() throws Exception {
+        var cb = mock(HostCallback.class);
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+        var ctx = ctx(100L, "3", UA_ALIPAY, "auth_code=AC1", false, null, true, cb);
+        var precreateBody = new AtomicReference<String>();
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv -> {
+                var body = inv.getArgument(2).toString();
+                if (body.contains("alipay.system.oauth.token")) {
+                    return new HttpHelper.HttpResponse(200, Map.of(),
+                            signedResponse("alipay_system_oauth_token_response",
+                                    "{\"code\":\"10000\",\"msg\":\"Success\",\"user_id\":\"2088123456789012\","
+                                            + "\"open_id\":\"OU1\",\"access_token\":\"tok\"}"),
+                            "req", 10, 1);
+                }
+                precreateBody.set(body);
+                return new HttpHelper.HttpResponse(200, Map.of(),
+                        signedResponse("alipay_trade_precreate_response",
+                                "{\"code\":\"10000\",\"msg\":\"Success\",\"qr_code\":\"https://qr.alipay/T1\"}"),
+                        "req", 10, 1);
+            });
+            var page = pageOutcome(new AlipayCreateHandler().alipay(ctx));
+            assertThat(page.page()).isEqualTo("alipay_qrcode");
+            assertThat(page.url()).isEqualTo("https://qr.alipay/T1");
+        }
+
+        assertThat(parseBizContent(precreateBody.get())).containsEntry("out_trade_no", "T1");
+        verify(cb).recordOAuthIdentity(any());
+        verify(cb, atLeastOnce()).lockOrderExt(any());
+        verify(cb, never()).completeBiz(any());
+    }
+
+    @Test
+    @DisplayName("门禁开启 + 扫码 + 黑名单：兑换内部拦截 → 失败页，不 precreate")
+    void forceIdentityQrcodeBlacklistBlocksBeforeChannel() throws Exception {
+        var cb = mock(HostCallback.class);
+        when(cb.recordOAuthIdentity(any())).thenReturn(true);
+        var ctx = ctx(100L, "3", UA_ALIPAY, "auth_code=AC1", false, null, true, cb);
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv ->
+                    new HttpHelper.HttpResponse(200, Map.of(),
+                            signedResponse("alipay_system_oauth_token_response",
+                                    "{\"code\":\"10000\",\"msg\":\"Success\",\"user_id\":\"2088123456789012\","
+                                            + "\"open_id\":\"OU1\",\"access_token\":\"tok\"}"),
+                            "req", 10, 1));
+            assertThat(redirectUrl(new AlipayCreateHandler().alipay(ctx)))
+                    .isEqualTo("https://pay.example.com/pay/result/T1");
+        }
+        verify(cb, never()).lockOrderExt(any());
+        verify(cb, never()).completeBiz(any());
+    }
+
+    @Test
+    @DisplayName("门禁开启 + 手机H5 + 普通手机浏览器：返回授权地址中转页，不调渠道")
+    void forceIdentityWapMobileBrowserShowsOauthRelay() throws Exception {
+        var cb = mock(HostCallback.class);
+        var ctx = ctx(100L, "2", UA_MOBILE, null, false, null, true, cb);
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            var page = pageOutcome(new AlipayCreateHandler().alipay(ctx));
+            assertThat(page.page()).isEqualTo("alipay_qrcode");
+            assertThat(URLDecoder.decode(page.url(), StandardCharsets.UTF_8))
+                    .startsWith("https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?")
+                    .contains("redirect_uri=https://pay.example.com/pay/cashier/T1");
+            mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
+        }
+        verify(cb, never()).lockOrderExt(any());
+    }
+
+    @Test
+    @DisplayName("门禁开启 + 手机H5 + 支付宝内无 buyer：跳授权页，不调渠道")
+    void forceIdentityWapAlipayRedirectsToOauth() throws Exception {
+        var cb = mock(HostCallback.class);
+        var ctx = ctx(100L, "2", UA_ALIPAY, null, false, null, true, cb);
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            var decoded = URLDecoder.decode(redirectUrl(new AlipayCreateHandler().alipay(ctx)),
+                    StandardCharsets.UTF_8);
+            assertThat(decoded)
+                    .startsWith("https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?")
+                    .contains("redirect_uri=https://pay.example.com/pay/cashier/T1");
+            mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
+        }
+        verify(cb, never()).lockOrderExt(any());
+    }
+
+    @Test
+    @DisplayName("门禁开启 + 手机H5 + 支付宝回调：兑换后生成 wap.pay 表单")
+    void forceIdentityWapCallbackExchangesThenWap() throws Exception {
+        var cb = mock(HostCallback.class);
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+        var ctx = ctx(100L, "2", UA_ALIPAY, "auth_code=AC1", false, null, true, cb);
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv ->
+                    new HttpHelper.HttpResponse(200, Map.of(),
+                            signedResponse("alipay_system_oauth_token_response",
+                                    "{\"code\":\"10000\",\"msg\":\"Success\",\"user_id\":\"2088123456789012\","
+                                            + "\"open_id\":\"OU1\",\"access_token\":\"tok\"}"),
+                            "req", 10, 1));
+            var html = htmlOf(new AlipayCreateHandler().alipay(ctx));
+            assertThat(html).contains("alipay.trade.wap.pay");
+        }
+        verify(cb).recordOAuthIdentity(any());
+        verify(cb, atLeastOnce()).lockOrderExt(any());
+    }
+
+    @Test
+    @DisplayName("手机H5 关闭门禁：直接生成 wap.pay 表单，不走 OAuth")
+    void wapWithoutGateSkipsOAuth() throws Exception {
+        var cb = mock(HostCallback.class);
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+        var ctx = ctx(100L, "2", UA_ALIPAY, null, false, null, cb);
+
+        var html = htmlOf(new AlipayCreateHandler().alipay(ctx));
+
+        assertThat(html).contains("alipay.trade.wap.pay");
+        verify(cb, never()).recordOAuthIdentity(any());
+        verify(cb, atLeastOnce()).lockOrderExt(any());
     }
 
     @Test
@@ -483,7 +711,34 @@ class AlipayCreateHandlerTest {
     }
 
     @Test
-    @DisplayName("JSAPI：宿主回跳携带 op_app_id（全局小程序应用）→ op_app_id 用携带值而非通道应用（open_id 同源）")
+    @DisplayName("JSAPI：buyer 2088 开头 → buyer_id（不传 buyer_open_id），op_app_id 仍带")
+    void jsApiWithUserIdBuyer() throws Exception {
+        var cb = mock(HostCallback.class);
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+        var ctx = ctx(100L, "6", UA_ALIPAY, null, true, "2088123456789012", cb);
+        var reqBody = new AtomicReference<String>();
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv -> {
+                reqBody.set(inv.getArgument(2));
+                return new HttpHelper.HttpResponse(200, Map.of(),
+                        signedResponse("alipay_trade_create_response",
+                                "{\"code\":\"10000\",\"msg\":\"Success\",\"trade_no\":\"ALI_NO\"}"),
+                        "req", 10, 1);
+            });
+            assertThat(pageOutcome(new AlipayCreateHandler().alipay(ctx)).page()).isEqualTo("alipay_jspay");
+        }
+
+        var biz = parseBizContent(reqBody.get());
+        assertThat(biz).containsEntry("product_code", "JSAPI_PAY")
+                .containsEntry("op_app_id", APP_ID)
+                .containsEntry("buyer_id", "2088123456789012")
+                .doesNotContainKey("buyer_open_id");
+    }
+
+    @Test
+    @DisplayName("JSAPI：宿主回跳携带 op_app_id（全局小程序应用，与调用 appid 不同）→ op_buyer_open_id")
     void jsApiUsesCarriedOpAppIdFromHostOAuth() throws Exception {
         var cb = mock(HostCallback.class);
         when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
@@ -506,7 +761,8 @@ class AlipayCreateHandlerTest {
         var biz = parseBizContent(reqBody.get());
         assertThat(biz).containsEntry("product_code", "JSAPI_PAY")
                 .containsEntry("op_app_id", "GLOBAL_MINI_APP")
-                .containsEntry("buyer_open_id", "OU_GLOBAL_MINI_1");
+                .containsEntry("op_buyer_open_id", "OU_GLOBAL_MINI_1")
+                .doesNotContainKey("buyer_open_id");
     }
 
     @Test

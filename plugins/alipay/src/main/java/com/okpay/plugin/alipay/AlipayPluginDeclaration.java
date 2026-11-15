@@ -77,7 +77,9 @@ final class AlipayPluginDeclaration {
                                         "7", "订单码"
                                     )).note("多选；按买家访问设备自动分配").build()),
                             Map.entry("alipay_paymode", InputField.builder().name("当面付优先").type("switch")
-                                    .note("开启后电脑网站(Page)支付改用当面付扫码二维码；手机端开电脑网站恒走扫码").build()),
+                                    .note("开启后电脑网站(Page)支付改用当面付扫码二维码（需已开启当面付扫码/订单码）").build()),
+                            Map.entry("force_identity", InputField.builder().name("支付前强制获取用户标识").type("switch")
+                                    .note("开启后，当面付扫码/订单码/手机H5 支付前强制获取支付宝用户标识并做风控；关闭则按原流程直接下单").build()),
                             Map.entry("appmchid", InputField.builder().name("直付通子商户号").type("input")
                                     .note("多个子商户号用逗号分隔").build()),
                             Map.entry("alicombine_open", InputField.builder().name("合单支付").type("switch")
@@ -96,13 +98,14 @@ final class AlipayPluginDeclaration {
                         .modes(Map.of(
                             "direct", PluginMode.builder().label("直连商户")
                                     .fields(List.of("appid", "is_prod", "biztype_alipay",
-                                            "alipay_paymode")).build(),
+                                            "alipay_paymode", "force_identity")).build(),
                             "isv", PluginMode.builder().label("服务商(ISV)")
                                     .fields(List.of("appid", "is_prod", "auth_token",
-                                            "biztype_alipay", "alipay_paymode")).build(),
+                                            "biztype_alipay", "alipay_paymode", "force_identity")).build(),
                             "zhifutong", PluginMode.builder().label("直付通")
                                     .fields(List.of("appid", "is_prod", "appmchid",
-                                            "alicombine_open", "biztype_alipay", "alipay_paymode")).build()
+                                            "alicombine_open", "biztype_alipay", "alipay_paymode",
+                                            "force_identity")).build()
                         ))
                         .defaultMode("direct")
                         // 认证维度：公钥/私钥 vs 证书模式（凭据字段在 authModes，与 modes 正交）；证书模式仍需 appsecret 签名

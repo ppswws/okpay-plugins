@@ -56,6 +56,42 @@ ext 为空 → create(ctx)                  // 渠道尚未请求，按当前浏
 
 **这是中转支付页的主链路，不是兜底分支。** 任何“收银台只重建本地页、不继续建单”的实现都会让 OAuth 回跳停在半路（线上表现：`插件返回空结果` / `渠道处理暂时不可用`，`buyer_id` 已落库但 `ext` 为空、无渠道报文）。
 
+### 身份门禁（可选）
+
+渠道**不要求**用户身份也能下单的方式（如支付宝当面付扫码/订单码/手机H5），如果业务需要“付款前先风控”，可以在插件配置里提供一个开关（参照：alipay 的 `force_identity`）。开启后，在该方式的 `create` 里**先取身份、再请求渠道**：
+
+0. **身份来源（硬前提）**：
+   - **微信公众号**：平台统一公众号首层（系统配置时）只做 buyer 记录 + 风控，随后通道自己的公众号 OAuth 取支付 openid；通道有自己的公众号也要走首层。
+   - **支付宝官方插件**：通道自己的支付宝应用 OAuth（`user_id`），无平台首层；身份同时用于风控和 JSPAY 支付。
+   - **三方支付宝插件**：通道配置是聚合商凭据，不是支付宝应用；必须依赖**平台统一的支付宝网页应用/中转**（固定回调域）。未配置时 `force_identity` 不生效（fail-closed），不能把“未配置身份源”当成门禁通过。上游支付不要求二次 OAuth；上游接受 `buyer_id` 时可回传平台 `user_id`。
+   - **小程序支付环境**：通道自己的小程序应用（或平台统一小程序兜底）；epay 的小程序机制暂时保留，不作为通用网页身份首层。
+1. **商户 API 建单 / 桌面 / 普通浏览器**：返回本地中转页（二维码内容 = 身份授权地址，如支付宝 `openauth.alipay.com/...`），`ext` 保持空；不请求渠道。移动端页面可用 `alipays://` 直接拉起授权页。
+2. **目标 App 内无身份**：返回 OAuth 授权跳转；回跳收银台带 `auth_code`/`code` 后兑换身份（SDK 的 `OAuthHelper` 内部已落 buyer + 黑名单）。
+3. **门禁通过后才 `lockCreate` 请求渠道**；`pay_url` 始终是本地收银台，渠道地址只进 ext。
+4. **失败关闭**：OAuth/配置失败按 `S_WAIT`，黑名单/拦截直接失败页；两者都不得调用渠道。
+5. **不做门禁**：渠道 API 本身强制 buyer 的方式（当面付JS/JSAPI/微信 JSAPI）走正常身份流程、不设开关；不经我们页面的方式（APP 直开、商户直连）没有门禁入口。
+6. **产品与展示分离**：不要为了给非目标环境出码而调用一个未启用的渠道产品。实例：只开当面付JS 的 PC 端应返回本地中转码，扫码进支付宝后再走 JSPAY，而不是调用未启用的 `precreate`（当面付扫码）。
+7. **桌面 Page 不做门禁**：桌面浏览器 OAuth + 支付会两次扫码；需要桌面身份时用“当面付优先”（需已开启当面付扫码/订单码）把桌面降级成扫码入口。
+
+#### 平台支付宝网页应用 OAuth 中转（三方插件）
+
+- **系统配置**：`payment.alipay.oauth_web`（JSON：`appid` / `private_key` / `is_prod` / `identity`；`identity` 必须显式选 `user_id` 或 `open_id`，不回退；open_id 需在支付宝开放平台启用 openid 配置，user_id 账号级但新商户可能不返回）。管理后台「支付宝 OAuth」组；该网页应用的授权回调域必须配置为 `payment.gateway`，本服务用 `/oauth/aliweb` 中转。
+- **插件侧**：用 `ConfigSnapshot.isOauthAlipayWebConfigured()` 判断是否就绪；用 `OAuthHelper.buildAlipayWebPayAuthUrl(ctx, cashierUrl, tradeNo)` 生成中转地址（`gatewayDomain/oauth/aliweb?redirect_uri=...&state=...`）。三方插件门禁页把它作为二维码/拉起地址；未配置时 fail-closed，不得下单。
+- **宿主链路**：
+  1. 三方插件中转页 → `GET /oauth/aliweb?redirect_uri=<cashier>&state=<tradeNo>`；
+  2. 无 `auth_code` → 302 到支付宝网页应用 `publicAppAuthorize`（`payment.alipay.oauth_web`，`auth_base`），回调回 `/oauth/aliweb` 并携带原 `redirect_uri`/`state`；
+  3. 有 `auth_code` → 兑换 `user_id`（或配置的 `open_id`）→ `OrderRiskService` 落 buyer + 黑名单 → 302 回 cashier，追加 `oauth_done=1`；
+  4. 插件门禁看到 buyer 已存在，继续渠道下单；黑名单命中停在 `/pay/result/{tradeNo}`。
+- **官方 Alipay 插件不使用这一层**（通道自己的应用）；`payment.alipay.oauth_mini` 继续保留给 JSAPI/小程序支付，不作为通用网页首层。
+- **上线顺序**：先在管理后台配置 `payment.alipay.oauth_web`，并在支付宝网页应用配置回调域 `payment.gateway`；再接入具体三方插件的门禁。
+
+自检：
+
+- 门禁前渠道调用为 0（mock 渠道客户端断言）；
+- 关闭开关时与原行为一致；
+- 重复扫码不重复建单（`lockCreate`/ext）；
+- 中转页二维码不是渠道地址，渠道地址只在门禁通过后产生。
+
 ## 3. 术语与判定层级（必读）
 
 > 为了避免把“HTTP 成功”“解析成功”当成“业务成功”，四层必须分开判断。

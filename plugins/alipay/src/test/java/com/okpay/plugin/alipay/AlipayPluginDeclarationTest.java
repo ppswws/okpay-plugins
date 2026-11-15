@@ -34,4 +34,18 @@ class AlipayPluginDeclarationTest {
         assertThat(d.getCapabilities().getQueryBizTypes())
                 .containsExactlyInAnyOrder(BizType.T_PAY, BizType.T_REF, BizType.T_XFER, BizType.T_BAL);
     }
+
+    @Test
+    @DisplayName("强制获取用户标识开关：字段注册 + 三个支付模式窗口均可见")
+    void forceIdentitySwitchDeclared() {
+        var declaration = new AlipayPlugin().descriptor().getDeclaration();
+
+        assertThat(declaration.getConfig().field("force_identity")).isNotNull();
+        assertThat(declaration.getConfig().getModes().get("direct").getFields())
+                .contains("force_identity");
+        assertThat(declaration.getConfig().getModes().get("isv").getFields())
+                .contains("force_identity");
+        assertThat(declaration.getConfig().getModes().get("zhifutong").getFields())
+                .contains("force_identity");
+    }
 }

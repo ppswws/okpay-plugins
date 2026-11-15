@@ -25,6 +25,8 @@ public class AlipayConfig implements ChannelConfig {
     @JsonProperty("alicombine_open") private boolean combineOpen;
     /** 当面付优先：开电脑网站(Page)时改用当面付扫码；手机端开电脑网站恒走扫码 */
     @JsonProperty("alipay_paymode") private boolean paymode;
+    /** 支付前强制获取用户标识：扫码/手机H5 先经本地中转页 OAuth + 风控，再向渠道下单 */
+    @JsonProperty("force_identity") private boolean forceIdentity;
     /** 直付通子商户 SMID，逗号分隔（多 SMID 按子单顺序轮询）；空 = 非直付通直连，合单不可用（门控见 AlipayCreateHandler.combinePlan） */
     @JsonProperty("appmchid") private String appMchid;
     // 前端 ChannelList 保存时把 biztype_* 合并进 biztype 键（前后端一致，无老数据兼容）
@@ -63,6 +65,8 @@ public class AlipayConfig implements ChannelConfig {
     public boolean combineOpen() { return combineOpen; }
 
     public boolean paymode() { return paymode; }
+
+    public boolean forceIdentity() { return forceIdentity; }
 
     /** 直付通 SMID 列表（逗号分隔去空）；非直付通/未配置 → 空列表 */
     public List<String> smidList() {
