@@ -48,4 +48,15 @@ class AlipayPluginDeclarationTest {
         assertThat(declaration.getConfig().getModes().get("zhifutong").getFields())
                 .contains("force_identity");
     }
+
+    @Test
+    @DisplayName("指定收款账号 UID：字段注册 + 仅直连模式可见")
+    void sellerIdFieldDeclaredForDirectOnly() {
+        var config = new AlipayPlugin().descriptor().getDeclaration().getConfig();
+
+        assertThat(config.field("seller_id")).isNotNull();
+        assertThat(config.getModes().get("direct").getFields()).contains("seller_id");
+        assertThat(config.getModes().get("isv").getFields()).doesNotContain("seller_id");
+        assertThat(config.getModes().get("zhifutong").getFields()).doesNotContain("seller_id");
+    }
 }

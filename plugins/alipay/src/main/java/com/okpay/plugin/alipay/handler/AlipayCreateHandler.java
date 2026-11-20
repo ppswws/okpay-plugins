@@ -50,6 +50,7 @@ public class AlipayCreateHandler {
         var mode = resolveMode(ctx, cfg);
         if (mode == null)
             throw new ExpectedFailureException("当前环境无可用支付宝支付方式（请检查已开启方式与访问设备）");
+        ensureSellerIdSupported(cfg, mode);
         var order = ctx.getOrder();
         // 只开当面付JS 时，非支付宝环境先出本地中转码（扫码进支付宝后再走 JSPAY），
         // 绝不因“PC 不能调 JSAPI”而回退去调用未启用的 precreate 产品
@@ -91,6 +92,7 @@ public class AlipayCreateHandler {
         var mode = resolveMode(ctx, cfg);
         if (mode == null)
             throw new ExpectedFailureException("当前环境无可用支付宝支付方式（请检查已开启方式与访问设备）");
+        ensureSellerIdSupported(cfg, mode);
         var order = ctx.getOrder();
         if (needsOAuth(mode, order)) return oauth(ctx, cfg, order, mode);
         throw new ExpectedFailureException("订单支付页面数据尚未生成");
@@ -203,6 +205,29 @@ public class AlipayCreateHandler {
                         "amount", biz.get("total_amount")))));
     }
 
+    /**
+     * 指定收款账号 UID 仅在当面付扫码/JS（含 JSAPI）生效；其余方式明确失败，
+     * 避免静默按签约主账号收款。直付通/ISV 由 {@link AlipayConfig#sellerIdForPay()} 互斥为空。
+     */
+    private static void ensureSellerIdSupported(AlipayConfig cfg, AlipayModeResolver.Mode mode) {
+        var sellerId = cfg.sellerIdForPay();
+        if (sellerId == null) return;
+        if (sellerId.contains(",")) {
+            throw new ExpectedFailureException("收款账号 UID 仅支持单个；多个子号请分别创建通道");
+        }
+        if (mode == AlipayModeResolver.Mode.QRCODE
+                || mode == AlipayModeResolver.Mode.JSPAY
+                || mode == AlipayModeResolver.Mode.JSPAY_RELAY
+                || mode == AlipayModeResolver.Mode.JSAPI) return;
+        throw new ExpectedFailureException("该通道已配置收款账号 UID，仅支持当面付扫码/当面付JS；请在通道配置中只勾选这两种支付方式");
+    }
+
+    /** 直连形态的指定收款账号；直付通/ISV 已由 sellerIdForPay 互斥为空。 */
+    private static void applySellerId(AlipayConfig cfg, Map<String, Object> biz) {
+        var sellerId = cfg.sellerIdForPay();
+        if (sellerId != null) biz.put("seller_id", sellerId);
+    }
+
     /** 客户端 IP 风控：business_params={"mc_create_trade_ip":ip}（BusinessParams 对象，不能二次字符串化）；
      *  取订单买家 IP（浏览器优先，商户提交兜底），全 pay 方法（含合单子单）都带。 */
     private static void putClientIpBusinessParams(InvokeContext ctx, Map<String, Object> biz) {
@@ -258,6 +283,7 @@ public class AlipayCreateHandler {
         var modes = cfg.modeSet();
         if (!modes.contains("3") && modes.contains("7")) biz.put("product_code", "QR_CODE_OFFLINE");
         applyDirectPaySettle(cfg, biz);
+        applySellerId(cfg, biz);
         putClientIpBusinessParams(ctx, biz);
         var resp = call(ctx, "alipay.trade.precreate", biz,
                 cfg.extras(Map.of("notify_url", notifyUrl(cfg, order.getTradeNo()))), cfg);
@@ -441,6 +467,7 @@ public class AlipayCreateHandler {
         biz.put("total_amount", toYuan(order.getReal()));
         biz.put("subject", cfg.getGoodsName());
         applyDirectPaySettle(cfg, biz);
+        applySellerId(cfg, biz);
         putClientIpBusinessParams(ctx, biz);
         if (buyer.startsWith("2088")) biz.put("buyer_id", buyer);
         else biz.put("buyer_open_id", buyer);
@@ -468,6 +495,7 @@ public class AlipayCreateHandler {
         biz.put("total_amount", toYuan(order.getReal()));
         biz.put("subject", cfg.getGoodsName());
         applyDirectPaySettle(cfg, biz);
+        applySellerId(cfg, biz);
         putClientIpBusinessParams(ctx, biz);
         biz.put("product_code", "JSAPI_PAY");
         var opAppId = opAppIdOf(ctx, cfg);

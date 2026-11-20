@@ -29,6 +29,8 @@ public class AlipayConfig implements ChannelConfig {
     @JsonProperty("force_identity") private boolean forceIdentity;
     /** 直付通子商户 SMID，逗号分隔（多 SMID 按子单顺序轮询）；空 = 非直付通直连，合单不可用（门控见 AlipayCreateHandler.combinePlan） */
     @JsonProperty("appmchid") private String appMchid;
+    /** 指定收款账号 UID（2088 开头 16 位支付宝用户 ID）；空 = 收款到签约主账号。仅直连形态当面付扫码/JS 生效。 */
+    @JsonProperty("seller_id") private String sellerId;
     // 前端 ChannelList 保存时把 biztype_* 合并进 biztype 键（前后端一致，无老数据兼容）
     @JsonProperty("biztype")
     private String biztype;
@@ -78,6 +80,15 @@ public class AlipayConfig implements ChannelConfig {
         return out;
     }
 
+    /**
+     * 实际生效的指定收款账号 UID：直付通（appmchid）/服务商（auth_token）形态不适用，
+     * 按字段值互斥；空 = 不传，支付宝默认收款到签约主账号。
+     */
+    public String sellerIdForPay() {
+        if (notBlank(appMchid) || notBlank(appAuthToken)) return null;
+        return notBlank(sellerId) ? sellerId.trim() : null;
+    }
+
     public String getGateway() {
         // 默认正式环境（与投诉插件 is_prod 默认值一致）；显式 "false" 才走沙箱
         return "false".equals(isProd)
@@ -110,7 +121,7 @@ public class AlipayConfig implements ChannelConfig {
             try {
                 client = buildClient();
             } catch (Exception e) {
-                throw new ExpectedFailureException("支付宝客户端初始化失败（请检查 "
+                throw new ExpectedFailureException("支付宝客户端初始化失败（" + e.getMessage() + "；请检查 "
                         + (certMode() ? "appsecret/app_cert/alipay_cert/root_cert 证书格式" : "appsecret/appkey 密钥格式")
                         + "）", e);
             }
@@ -127,7 +138,7 @@ public class AlipayConfig implements ChannelConfig {
             try {
                 payoutClient = buildClient();
             } catch (Exception e) {
-                throw new ExpectedFailureException("支付宝客户端初始化失败（请检查 "
+                throw new ExpectedFailureException("支付宝客户端初始化失败（" + e.getMessage() + "；请检查 "
                         + (certMode() ? "appsecret/app_cert/alipay_cert/root_cert 证书格式" : "appsecret/appkey 密钥格式")
                         + "）", e);
             }

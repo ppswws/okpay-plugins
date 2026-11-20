@@ -68,19 +68,27 @@ class AlipayCreateHandlerTest {
      */
     private InvokeContext ctx(long real, String biztype, String ua, String query,
                               boolean miniConfigured, String buyer, HostCallback cb) throws Exception {
-        return ctx(real, biztype, ua, query, miniConfigured, buyer, false, cb);
+        return ctx(real, biztype, ua, query, miniConfigured, buyer, false, cb, Map.of());
     }
 
     /** 同上，forceIdentity = 支付前强制获取用户标识开关 */
     private InvokeContext ctx(long real, String biztype, String ua, String query,
                               boolean miniConfigured, String buyer, boolean forceIdentity,
                               HostCallback cb) throws Exception {
+        return ctx(real, biztype, ua, query, miniConfigured, buyer, forceIdentity, cb, Map.of());
+    }
+
+    /** 同上，extraCfg 追加通道配置字段（如 seller_id / appmchid / auth_token）。 */
+    private InvokeContext ctx(long real, String biztype, String ua, String query,
+                              boolean miniConfigured, String buyer, boolean forceIdentity,
+                              HostCallback cb, Map<String, ?> extraCfg) throws Exception {
         var cfgMap = new LinkedHashMap<String, Object>();
         cfgMap.put("appid", APP_ID);
         cfgMap.put("appsecret", pem("PRIVATE KEY", KP.getPrivate().getEncoded()));
         cfgMap.put("appkey", pem("PUBLIC KEY", KP.getPublic().getEncoded()));
         if (biztype != null) cfgMap.put("biztype", biztype);
         if (forceIdentity) cfgMap.put("force_identity", true);
+        cfgMap.putAll(extraCfg);
         var order = OrderSnapshot.builder().tradeNo("T1").real(real).type("alipay")
                 .ip("1.2.3.4").build();
         if (buyer != null) order.setBuyer(buyer);
@@ -274,6 +282,7 @@ class AlipayCreateHandlerTest {
         var biz = parseBizContent(reqBody.get());
         // 当面付只签约 FACE_TO_FACE_PAYMENT：传 QR_CODE_OFFLINE 会被渠道判参数无效
         assertThat(biz).doesNotContainKey("product_code")
+                .doesNotContainKey("seller_id")
                 // BusinessParams 必须是对象；二次字符串化会报「参数无效：参数格式错误」
                 .containsEntry("business_params", Map.of("mc_create_trade_ip", "1.2.3.4"));
     }
@@ -631,7 +640,8 @@ class AlipayCreateHandlerTest {
         assertThat(biz).containsEntry("out_trade_no", "T1")
                 .containsEntry("total_amount", "1.00")
                 .containsEntry("buyer_id", "2088123456789012")
-                .doesNotContainKey("product_code");
+                .doesNotContainKey("product_code")
+                .doesNotContainKey("seller_id");
         // 完成交易不在此处：等支付完成通知，仅创建交易
         verify(cb, never()).completeBiz(any());
     }
@@ -889,5 +899,207 @@ class AlipayCreateHandlerTest {
         assertThat(html).contains("punchout_form").contains("alipay.trade.page.pay");
         // 渠道同步回跳统一收口：return_url 指向结果页，不直传商户 return_url
         assertThat(html).contains("return_url").contains("/pay/result/T1");
+    }
+
+    // =========================================================================
+    // 指定收款账号 UID（seller_id）
+    // =========================================================================
+
+    @Test
+    @DisplayName("当面付扫码：配置 seller_id → precreate 携带")
+    void precreateCarriesSellerId() throws Exception {
+        var cb = mock(HostCallback.class);
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+        var ctx = ctx(100L, "3", UA_PC, null, false, null, false, cb,
+                Map.of("seller_id", "2088123456789012"));
+        var reqBody = new AtomicReference<String>();
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv -> {
+                reqBody.set(inv.getArgument(2).toString());
+                return new HttpHelper.HttpResponse(200, Map.of(),
+                        signedResponse("alipay_trade_precreate_response",
+                                "{\"code\":\"10000\",\"msg\":\"Success\",\"qr_code\":\"https://qr.alipay/T1\"}"),
+                        "req", 10, 1);
+            });
+            assertThat(pageOutcome((PageOutcome) new AlipayCreateHandler().alipay(ctx)).page())
+                    .isEqualTo("alipay_qrcode");
+        }
+
+        assertThat(parseBizContent(reqBody.get()))
+                .containsEntry("seller_id", "2088123456789012");
+    }
+
+    @Test
+    @DisplayName("当面付JS：配置 seller_id → trade.create 携带（buyer_id 与 seller_id 互不干扰）")
+    void jsPayCarriesSellerId() throws Exception {
+        var cb = mock(HostCallback.class);
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+        var ctx = ctx(100L, "4", UA_ALIPAY, null, false, "2088000000000001", false, cb,
+                Map.of("seller_id", "2088123456789012"));
+        var reqBody = new AtomicReference<String>();
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv -> {
+                reqBody.set(inv.getArgument(2));
+                return new HttpHelper.HttpResponse(200, Map.of(),
+                        signedResponse("alipay_trade_create_response",
+                                "{\"code\":\"10000\",\"msg\":\"Success\",\"trade_no\":\"ALI_NO\"}"),
+                        "req", 10, 1);
+            });
+            assertThat(pageOutcome((PageOutcome) new AlipayCreateHandler().alipay(ctx)).page())
+                    .isEqualTo("alipay_jspay");
+        }
+
+        assertThat(parseBizContent(reqBody.get()))
+                .containsEntry("seller_id", "2088123456789012")
+                .containsEntry("buyer_id", "2088000000000001");
+    }
+
+    @Test
+    @DisplayName("JSAPI：配置 seller_id → trade.create 携带")
+    void jsApiCarriesSellerId() throws Exception {
+        var cb = mock(HostCallback.class);
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+        var ctx = ctx(100L, "6", UA_ALIPAY, null, true, "OU_OPEN_ID_1", false, cb,
+                Map.of("seller_id", "2088123456789012"));
+        var reqBody = new AtomicReference<String>();
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv -> {
+                reqBody.set(inv.getArgument(2));
+                return new HttpHelper.HttpResponse(200, Map.of(),
+                        signedResponse("alipay_trade_create_response",
+                                "{\"code\":\"10000\",\"msg\":\"Success\",\"trade_no\":\"ALI_NO\"}"),
+                        "req", 10, 1);
+            });
+            assertThat(pageOutcome((PageOutcome) new AlipayCreateHandler().alipay(ctx)).page())
+                    .isEqualTo("alipay_jspay");
+        }
+
+        assertThat(parseBizContent(reqBody.get()))
+                .containsEntry("seller_id", "2088123456789012")
+                .containsEntry("product_code", "JSAPI_PAY");
+    }
+
+    @Test
+    @DisplayName("直付通（appmchid 非空）：不传 seller_id，改挂 sub_merchant")
+    void zhifutongSuppressesSellerId() throws Exception {
+        var cb = mock(HostCallback.class);
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+        var ctx = ctx(100L, "3", UA_PC, null, false, null, false, cb,
+                Map.of("seller_id", "2088123456789012", "appmchid", "S1"));
+        var reqBody = new AtomicReference<String>();
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv -> {
+                reqBody.set(inv.getArgument(2).toString());
+                return new HttpHelper.HttpResponse(200, Map.of(),
+                        signedResponse("alipay_trade_precreate_response",
+                                "{\"code\":\"10000\",\"msg\":\"Success\",\"qr_code\":\"https://qr.alipay/T1\"}"),
+                        "req", 10, 1);
+            });
+            assertThat(pageOutcome((PageOutcome) new AlipayCreateHandler().alipay(ctx)).page())
+                    .isEqualTo("alipay_qrcode");
+        }
+
+        var biz = parseBizContent(reqBody.get());
+        assertThat(biz).doesNotContainKey("seller_id")
+                .containsEntry("sub_merchant", Map.of("merchant_id", "S1"));
+    }
+
+    @Test
+    @DisplayName("服务商（auth_token 非空）：不传 seller_id")
+    void isvSuppressesSellerId() throws Exception {
+        var cb = mock(HostCallback.class);
+        when(cb.lockOrderExt(any())).thenReturn(LockExtResult.builder().build());
+        var ctx = ctx(100L, "3", UA_PC, null, false, null, false, cb,
+                Map.of("seller_id", "2088123456789012", "auth_token", "TOKEN"));
+        var reqBody = new AtomicReference<String>();
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            mocked.when(() -> HttpHelper.post(any(), any(), any(), any())).thenAnswer(inv -> {
+                reqBody.set(inv.getArgument(2).toString());
+                return new HttpHelper.HttpResponse(200, Map.of(),
+                        signedResponse("alipay_trade_precreate_response",
+                                "{\"code\":\"10000\",\"msg\":\"Success\",\"qr_code\":\"https://qr.alipay/T1\"}"),
+                        "req", 10, 1);
+            });
+            assertThat(pageOutcome((PageOutcome) new AlipayCreateHandler().alipay(ctx)).page())
+                    .isEqualTo("alipay_qrcode");
+        }
+
+        assertThat(parseBizContent(reqBody.get())).doesNotContainKey("seller_id");
+    }
+
+    @Test
+    @DisplayName("配置 seller_id + Page/Wap/APP：明确失败，不请求渠道（防静默进主号）")
+    void sellerIdUnsupportedMethodsFailFast() throws Exception {
+        for (var tc : Map.of("1", UA_PC, "2", UA_MOBILE, "5", UA_PC).entrySet()) {
+            var cb = mock(HostCallback.class);
+            var ctx = ctx(100L, tc.getKey(), tc.getValue(), null, false, null, false, cb,
+                    Map.of("seller_id", "2088123456789012"));
+
+            try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+                letRealUaChecks(mocked);
+                assertThatThrownBy(() -> new AlipayCreateHandler().alipay(ctx))
+                        .as("biztype=%s", tc.getKey())
+                        .isInstanceOf(ExpectedFailureException.class)
+                        .hasMessageContaining("收款账号 UID");
+                mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
+            }
+            verify(cb, never()).lockOrderExt(any());
+        }
+    }
+
+    @Test
+    @DisplayName("收银台重建：配置 seller_id + Page → 明确失败（不返回页面）")
+    void localPageSellerIdUnsupportedFailsFast() throws Exception {
+        var cb = mock(HostCallback.class);
+        var ctx = ctx(100L, "1", UA_PC, null, false, null, false, cb,
+                Map.of("seller_id", "2088123456789012"));
+
+        assertThatThrownBy(() -> new AlipayCreateHandler().localPage(ctx))
+                .isInstanceOf(ExpectedFailureException.class)
+                .hasMessageContaining("收款账号 UID");
+        verify(cb, never()).lockOrderExt(any());
+    }
+
+    @Test
+    @DisplayName("配置 seller_id + 只开当面付JS + PC：本地中转码放行（最终由 JSPAY 携带）")
+    void sellerIdAllowsJsPayRelay() throws Exception {
+        var cb = mock(HostCallback.class);
+        var ctx = ctx(100L, "4", UA_PC, null, false, null, false, cb,
+                Map.of("seller_id", "2088123456789012"));
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            var page = pageOutcome(new AlipayCreateHandler().alipay(ctx));
+            assertThat(page.page()).isEqualTo("alipay_qrcode");
+            mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
+        }
+        verify(cb, never()).lockOrderExt(any());
+    }
+
+    @Test
+    @DisplayName("seller_id 填多个（逗号分隔）：明确失败（每通道仅一个 UID）")
+    void sellerIdCommaSeparatedFailsFast() throws Exception {
+        var cb = mock(HostCallback.class);
+        var ctx = ctx(100L, "3", UA_PC, null, false, null, false, cb,
+                Map.of("seller_id", "2088123456789012,2088123456789013"));
+
+        try (MockedStatic<HttpHelper> mocked = mockStatic(HttpHelper.class)) {
+            letRealUaChecks(mocked);
+            assertThatThrownBy(() -> new AlipayCreateHandler().alipay(ctx))
+                    .isInstanceOf(ExpectedFailureException.class)
+                    .hasMessageContaining("仅支持单个");
+            mocked.verify(() -> HttpHelper.post(any(), any(), any(), any()), never());
+        }
+        verify(cb, never()).lockOrderExt(any());
     }
 }

@@ -18,8 +18,9 @@ import java.util.Map;
  *
  * <p>配置模式（modes）：直连商户 / 服务商(ISV) / 直付通。模式只影响前端渲染字段集合，
  * 运行期逻辑由字段值驱动（auth_token 非空即注入 ISV app_auth_token、appmchid 有值即直付通
- * 挂 sub_merchant），插件无需感知 mode。直付通合单（大单拆小单）：appmchid=子商户 SMID
- * （逗号分隔轮询）、alicombine_open 为合单开关（金额参数走全局 payment.combine）。</p>
+ * 挂 sub_merchant、seller_id 非空且非直付通/ISV 即注入指定收款账号），插件无需感知 mode。
+ * 直付通合单（大单拆小单）：appmchid=子商户 SMID（逗号分隔轮询）、alicombine_open 为合单开关
+ * （金额参数走全局 payment.combine）。</p>
  *
  * <p>字段语义边界：{@code pid} 是付款账户 PID（余额查询 alipay_user_id），仅付款通道配置
  * （{@code payoutChannelFields}）收集，支付收单不消费——服务商收单靠 {@code auth_token}
@@ -82,6 +83,8 @@ final class AlipayPluginDeclaration {
                                     .note("开启后，当面付扫码/订单码/手机H5 支付前强制获取支付宝用户标识并做风控；关闭则按原流程直接下单").build()),
                             Map.entry("appmchid", InputField.builder().name("直付通子商户号").type("input")
                                     .note("多个子商户号用逗号分隔").build()),
+                            Map.entry("seller_id", InputField.builder().name("收款账号UID").type("input")
+                                    .note("2088 开头的 16 位支付宝用户 ID；留空=收款到签约主账号。仅直连模式，且支付方式只能勾选当面付扫码/JS；每个子号建一个通道").build()),
                             Map.entry("alicombine_open", InputField.builder().name("合单支付").type("switch")
                                     .note("开启大单拆小单（直付通）；起拆金额在平台配置维护").build()),
                             Map.entry("cardNo", InputField.builder().name("支付宝账号").type("input").required(true)
@@ -97,7 +100,7 @@ final class AlipayPluginDeclaration {
                         ))
                         .modes(Map.of(
                             "direct", PluginMode.builder().label("直连商户")
-                                    .fields(List.of("appid", "is_prod", "biztype_alipay",
+                                    .fields(List.of("appid", "is_prod", "seller_id", "biztype_alipay",
                                             "alipay_paymode", "force_identity")).build(),
                             "isv", PluginMode.builder().label("服务商(ISV)")
                                     .fields(List.of("appid", "is_prod", "auth_token",
