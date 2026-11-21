@@ -18,13 +18,13 @@ import java.util.concurrent.ThreadLocalRandom;
  * 支付宝支付下单处理器（零第三方 SDK，走 AlipayOpenApiClient）。
  *
  * <p>支付方式按访问 UA 自动分配（{@link AlipayModeResolver} 优先级表）。
- * 当面付JS/JSAPI 需 OAuth 身份（buyer）：
+ * 当面付JS/JSAPI/身份门禁 需 OAuth 身份（buyer）：
  * <ul>
- *   <li>JSAPI（小程序入口）：全局小程序应用已配置（payment.alipay.oauth_mini，
- *       alipay_mini_login）→ 跳宿主 /oauth/alimini，全局应用 + 黑名单风控 + buyer 落库；
- *       全局未配置 → 插件直调 SDK 用通道本身的应用完成 OAuth</li>
- *   <li>当面付JS（网页入口）：无全局应用键——user_id（2088）是账号级标识跨应用一致，
- *       恒走通道应用 OAuth</li>
+ *   <li>JSAPI（小程序入口）：小程序端 {@code my.getAuthCode} 后把 auth_code 交给收银台；
+ *       SDK 统一选择全局/通道小程序应用兑换（全局凭证由快照下发，插件不直接读）</li>
+ *   <li>当面付JS（网页入口）与 force_identity 扫码/H5 门禁：SDK 统一选择全局/通道网页应用
+ *       直连支付宝 OAuth（有全局用全局，否则通道；redirect_uri=收银台），auth_code 回跳后
+ *       由 SDK 用同一规则兑换；插件不读全局私钥</li>
  * </ul>
  * 通道路径身份经 {@link OAuthHelper} exchange 方法内部自动闭环风控（落库 buyer + 买家黑名单，
  * 命中黑名单直接构造失败页跳转终止支付）。</p>
@@ -54,7 +54,7 @@ public class AlipayCreateHandler {
         var order = ctx.getOrder();
         // 只开当面付JS 时，非支付宝环境先出本地中转码（扫码进支付宝后再走 JSPAY），
         // 绝不因“PC 不能调 JSAPI”而回退去调用未启用的 precreate 产品
-        if (mode == AlipayModeResolver.Mode.JSPAY_RELAY) return jspayRelay(cfg, order);
+        if (mode == AlipayModeResolver.Mode.JSPAY_RELAY) return jspayRelay(ctx, cfg, order);
         // 身份门禁：仅覆盖渠道不要求 buyer 的扫码/H5；当面付JS/JSAPI 走下面的 needsOAuth
         if (cfg.forceIdentity() && isGateable(mode)) {
             var gate = identityGate(ctx, cfg, order, mode);
@@ -68,7 +68,7 @@ public class AlipayCreateHandler {
         if (mode == AlipayModeResolver.Mode.APP)
             return Sdk.lockCreate(ctx, () -> appCombine(ctx, cfg, order, combinePlan(ctx, cfg, order)));
         return Sdk.lockCreate(ctx, () -> switch (mode) {
-            case JSPAY -> jsPay(ctx, cfg, order, order.getBuyer());
+            case JSPAY -> jsPay(ctx, cfg, order, order.getBuyer(), false);
             case JSAPI -> jsApi(ctx, cfg, order, order.getBuyer());
             case QRCODE -> Precreate.execute(ctx, cfg, order);
             case WAP -> Wap.execute(ctx, cfg, order);
@@ -122,12 +122,6 @@ public class AlipayCreateHandler {
         return PaymentPaths.cashier(cfg.getSiteDomain(), order.getTradeNo());
     }
 
-    /** 通道应用网页授权地址：redirect_uri 固定收银台，state=订单号 */
-    private static String aliOAuthUrl(AlipayConfig cfg, OrderSnapshot order) {
-        return OAuthHelper.buildAliOAuthUrl(cfg.getAppId(), cashierUrl(cfg, order),
-                order.getTradeNo(), isProd(cfg));
-    }
-
     /** 本地二维码中转页（内容由调用方决定：渠道码 / 授权地址 / 收银台） */
     private static PageOutcome alipayQrPage(String url) {
         return Pages.page("alipay_qrcode", url);
@@ -147,8 +141,12 @@ public class AlipayCreateHandler {
      * 地址，让扫码落地按 UA 走 Wap（授权/门禁由 Wap 分支处理），避免 OAuth 回调落进 Wap
      * 后 auth_code 无人消费。</p>
      */
-    private static PageOutcome jspayRelay(AlipayConfig cfg, OrderSnapshot order) {
-        var qr = cfg.modeSet().contains("2") ? cashierUrl(cfg, order) : aliOAuthUrl(cfg, order);
+    private static PageOutcome jspayRelay(InvokeContext ctx, AlipayConfig cfg, OrderSnapshot order) {
+        // 未开手机网站支付：SDK 统一选择全局/通道网页应用生成授权地址；
+        // 开了手机网站支付则中转码固定收银台，由 Wap 分支按 UA/门禁决定身份
+        var qr = cfg.modeSet().contains("2") ? cashierUrl(cfg, order)
+                : OAuthHelper.buildAlipayWebPayAuthUrl(ctx, cfg.getAppId(), isProd(cfg),
+                        cashierUrl(cfg, order), order.getTradeNo());
         return alipayQrPage(qr);
     }
 
@@ -158,7 +156,8 @@ public class AlipayCreateHandler {
      *   <li>商户 API 建单 / 桌面 / 普通浏览器：只返回本地中转页（二维码=授权地址，
      *       redirect_uri=收银台），不请求渠道；移动端页面可自动拉起支付宝授权页</li>
      *   <li>已有 buyer：返回 null，继续正常下单</li>
-     *   <li>无 buyer：有 auth_code → 兑换身份 + 宿主风控，通过后才调用渠道
+     *   <li>无 buyer：SDK 统一选择全局/通道网页应用生成授权地址（redirect_uri=收银台），
+     *       auth_code 回跳后 SDK 用同一规则兑换；兑换 + 宿主风控通过后才调用渠道
      *       （QRCODE → precreate / WAP → wap.pay）并写 ext；无 auth_code 时，
      *       支付宝内跳授权页、非支付宝环境返回中转页</li>
      * </ul>
@@ -166,7 +165,8 @@ public class AlipayCreateHandler {
      */
     private static PageOutcome identityGate(InvokeContext ctx, AlipayConfig cfg,
                                             OrderSnapshot order, AlipayModeResolver.Mode mode) {
-        var oauthUrl = aliOAuthUrl(cfg, order);
+        var oauthUrl = OAuthHelper.buildAlipayWebPayAuthUrl(ctx, cfg.getAppId(), isProd(cfg),
+                cashierUrl(cfg, order), order.getTradeNo());
         var ua = ctx.getRequest() != null ? ctx.getRequest().getUa() : null;
         // 商户 API：二维码就是授权地址，扫码/拉起后进支付宝
         if (ctx.getRequest() == null) return alipayQrPage(oauthUrl);
@@ -174,9 +174,15 @@ public class AlipayCreateHandler {
         if (order.getBuyer() != null && !order.getBuyer().isBlank()) return null;
         var authCode = queryParam(ctx, "auth_code");
         if (!authCode.isBlank()) {
-            // 兑换 + 风控（OAuthHelper 内置），通过后才向渠道下单。
+            // 兑换 + 风控（SDK 内置），通过后才向渠道下单。
             // 不按 UA 拦截：桌面浏览器打开授权页（扫码登录）后回跳的 auth_code 同样要消费
-            return exchangeAliAndCreate(ctx, cfg, order, mode, authCode);
+            return OAuthHelper.exchangeAlipayWebIdentity(ctx, cfg.getAppId(), cfg.getAppPrivateKey(),
+                    isProd(cfg), cfg.getAlipayPublicKey(), authCode, false,
+                    buyer -> Sdk.lockCreate(ctx, () -> switch (mode) {
+                        case QRCODE -> Precreate.execute(ctx, cfg, order);
+                        case WAP -> Wap.execute(ctx, cfg, order);
+                        default -> throw new IllegalStateException("unreachable");
+                    }));
         }
         // 非支付宝环境：二维码就是授权地址，扫码/拉起后进支付宝
         if (!HttpHelper.isAlipay(ua)) return alipayQrPage(oauthUrl);
@@ -458,10 +464,11 @@ public class AlipayCreateHandler {
     /** 当面付JS（方式 4）：支付宝 App 内 AlipayJSBridge 调起。
      *
      * <p>需 OAuth 身份（buyer 空时在 {@link #alipay} 中先走 {@link #localPage}）。
-     * 身份类型按值推断：2088 开头 → buyer_id（user_id），否则 buyer_open_id。</p>
+     * 2088 → buyer_id；本次 OAuth 兑换的 open_id（allowOpenId=true；SDK 已拒绝全局跨应用
+     * open_id）与本应用同源，可用 buyer_open_id；已存储 buyer 非 2088 时 fail-closed。</p>
      */
     private static Sdk.FetchResult jsPay(InvokeContext ctx, AlipayConfig cfg, OrderSnapshot order,
-                                         String buyer) throws Exception {
+                                         String buyer, boolean allowOpenId) throws Exception {
         var biz = new LinkedHashMap<String, Object>();
         biz.put("out_trade_no", order.getTradeNo());
         biz.put("total_amount", toYuan(order.getReal()));
@@ -469,8 +476,13 @@ public class AlipayCreateHandler {
         applyDirectPaySettle(cfg, biz);
         applySellerId(cfg, biz);
         putClientIpBusinessParams(ctx, biz);
-        if (buyer.startsWith("2088")) biz.put("buyer_id", buyer);
-        else biz.put("buyer_open_id", buyer);
+        if (buyer.startsWith("2088")) {
+            biz.put("buyer_id", buyer);
+        } else if (allowOpenId) {
+            biz.put("buyer_open_id", buyer);
+        } else {
+            throw new ExpectedFailureException("支付宝网页身份类型不匹配：当面付JS 需要 user_id");
+        }
         var resp = call(ctx, "alipay.trade.create", biz,
                 cfg.extras(Map.of("notify_url", notifyUrl(cfg, order.getTradeNo()))), cfg);
         // 渠道已受理但未返回交易号 → 拿不到预期支付数据，明确拒绝
@@ -485,8 +497,8 @@ public class AlipayCreateHandler {
      *
      * <p>与当面付JS 同走统一 OAuth。身份类型按值推断（与 JSPAY 一致）：2088 开头 → buyer_id
      * （账号级 user_id）；否则按官方规则：op_app_id 与调用应用 appid 不一致时用 op_buyer_open_id，
-     * 一致时用 buyer_open_id（open_id 是应用级标识，必须与 op_app_id 同源）。全局小程序应用路径下
-     * 宿主回跳携带 op_app_id（OAuth 来源应用），通道兜底路径身份即通道应用 open_id → op_app_id=通道应用。</p>
+     * 一致时用 buyer_open_id（open_id 是应用级标识，必须与 op_app_id 同源）。全局小程序路径的
+     * 来源应用即全局小程序 AppID（插件从配置读取），通道兜底路径身份即通道应用 open_id → op_app_id=通道应用。</p>
      */
     private static Sdk.FetchResult jsApi(InvokeContext ctx, AlipayConfig cfg, OrderSnapshot order,
                                          String buyer) throws Exception {
@@ -511,21 +523,22 @@ public class AlipayCreateHandler {
                 Map.of("alipay_trade_no", tradeNo)), resp);
     }
 
-    /** JSAPI 的 op_app_id：宿主回跳携带的 OAuth 来源应用（全局小程序应用）优先，否则通道应用（通道兜底同源） */
+    /** JSAPI 的 op_app_id：全局小程序应用优先，未配置用通道应用（同源） */
     private static String opAppIdOf(InvokeContext ctx, AlipayConfig cfg) {
-        var carried = queryParam(ctx, "op_app_id");
-        return carried.isBlank() ? cfg.getAppId() : carried;
+        var c = ctx.getConfig();
+        return c != null && c.isOauthAlipayMiniConfigured() ? c.getOauthAlipayMiniAppId() : cfg.getAppId();
     }
 
     /**
      * 统一 OAuth（当面付JS/JSAPI 共用，渠道请求之前执行）：
      * <ul>
-     *   <li>JSAPI + 全局小程序应用已配置 → 跳宿主 /oauth/alimini（payment.alipay.oauth_mini，
-     *       全局应用 + buyer 风控落库）；oauth_done 回跳后 buyer 仍空 → 预期失败
-     *       （获取失败即失败，不降级为通道 OAuth 兜底）</li>
-     *   <li>当面付JS 恒走通道应用 OAuth（user_id 账号级跨应用一致，无全局网页应用键）；
-     *       JSAPI 全局未配置时同样走通道应用 OAuth——直调 SDK 用通道本身的应用
-     *       （channel.config 的 appid/私钥）完成兑换</li>
+     *   <li>JSAPI：小程序端 my.getAuthCode 后把 auth_code 交给收银台；SDK 统一选择全局/通道
+     *       小程序应用兑换；插件只传通道凭证</li>
+     *   <li>当面付JS：SDK 统一选择全局/通道网页应用直连支付宝 OAuth（有全局用全局，否则通道；
+     *       redirect_uri=收银台）；auth_code 回跳后 SDK 用同一规则兑换。JSPAY 最终只接受 user_id
+     *       （全局 open_id 跨应用，SDK fail-closed）；通道应用自己的 open_id 同源可用</li>
+     *   <li>JSAPI 通道应用 OAuth——直调 SDK 用通道本身的应用（channel.config 的 appid/私钥）
+     *       完成兑换；身份 user_id 优先，缺失时在同一 token 响应内回退 open_id</li>
      * </ul>
      * 兑换经 {@link OAuthHelper} exchange 方法内部自动闭环风控（落库 buyer + 黑名单，
      * 命中构造失败页跳转终止），插件无跳过路径。返回页面载荷，不写 ext 不记轨迹。
@@ -533,46 +546,22 @@ public class AlipayCreateHandler {
      */
     private static PageOutcome oauth(InvokeContext ctx, AlipayConfig cfg, OrderSnapshot order,
                                      AlipayModeResolver.Mode mode) {
-        var miniHostOAuth = mode == AlipayModeResolver.Mode.JSAPI
-                && ctx.getConfig().isOauthAlipayMiniConfigured();
         var returnUrl = cashierUrl(cfg, order);
-        // 首层：JSAPI + 全局小程序应用已配置 → 跳宿主统一 OAuth（入口基地址由 SDK 取平台网关域，
-        // redirect_uri 回本次支付链路域下的支付页，state=tradeNo）
-        if (miniHostOAuth && !queryParam(ctx, "oauth_done").equals("1")) {
-            return Pages.redirect(OAuthHelper.buildAlipayMiniPayAuthUrl(ctx, returnUrl,
-                    order.getTradeNo()));
+        if (mode == AlipayModeResolver.Mode.JSPAY) {
+            var webAuthCode = queryParam(ctx, "auth_code");
+            if (webAuthCode.isBlank()) {
+                return Pages.redirect(OAuthHelper.buildAlipayWebPayAuthUrl(ctx, cfg.getAppId(), isProd(cfg),
+                        returnUrl, order.getTradeNo()));
+            }
+            return OAuthHelper.exchangeAlipayWebIdentity(ctx, cfg.getAppId(), cfg.getAppPrivateKey(),
+                    isProd(cfg), cfg.getAlipayPublicKey(), webAuthCode, true,
+                    buyer -> Sdk.lockCreate(ctx, () -> jsPay(ctx, cfg, order, buyer, true)));
         }
+        // JSAPI：小程序端把 auth_code 交给收银台，SDK 选全局/通道小程序应用兑换；插件只传通道凭证。
         var authCode = queryParam(ctx, "auth_code");
-        if (authCode.isBlank()) {
-            // 全局已配置但 oauth_done 回跳后 buyer 仍空 → 获取失败即失败（不降级通道 OAuth）
-            if (miniHostOAuth) throw new ExpectedFailureException("获取支付宝身份失败");
-            // 通道应用 OAuth：跳授权页（redirect 回本站页面，回调收 auth_code）。
-            // appid/私钥由 AlipayConfig.from 配置校验保证非空（通道必填字段），此处无需再防御
-            return Pages.redirect(aliOAuthUrl(cfg, order));
-        }
-        if (miniHostOAuth) throw new ExpectedFailureException("获取支付宝身份失败");
-        // 通道 OAuth 回调：identity 与支付一致——JSPAY 取 user_id（2088 按值推断）、JSAPI 恒 open_id
-        return exchangeAliAndCreate(ctx, cfg, order, mode, authCode);
-    }
-
-    /**
-     * 通道应用 OAuth 回调兑换 + 宿主风控，通过后按原 mode 继续下单。
-     * JSPAY/JSAPI/QRCODE/WAP 共用；兑换与风控全部由 {@link OAuthHelper} 内部闭环。
-     */
-    private static PageOutcome exchangeAliAndCreate(InvokeContext ctx, AlipayConfig cfg,
-                                                    OrderSnapshot order, AlipayModeResolver.Mode mode,
-                                                    String authCode) {
-        return OAuthHelper.exchangeAliIdentity(ctx, cfg.getAppId(),
-                cfg.getAppPrivateKey(), authCode, isProd(cfg),
-                mode == AlipayModeResolver.Mode.JSAPI ? "open_id" : "user_id",
-                cfg.getAlipayPublicKey(),
-                buyer -> Sdk.lockCreate(ctx, () -> switch (mode) {
-                    case JSPAY -> jsPay(ctx, cfg, order, buyer);
-                    case JSAPI -> jsApi(ctx, cfg, order, buyer);
-                    case QRCODE -> Precreate.execute(ctx, cfg, order);
-                    case WAP -> Wap.execute(ctx, cfg, order);
-                    default -> throw new IllegalStateException("unreachable");
-                }));
+        return OAuthHelper.exchangeAlipayMiniIdentity(ctx, cfg.getAppId(), cfg.getAppPrivateKey(),
+                isProd(cfg), cfg.getAlipayPublicKey(), authCode,
+                buyer -> Sdk.lockCreate(ctx, () -> jsApi(ctx, cfg, order, buyer)));
     }
 
     /** 渠道业务失败文案：sub_msg → msg → sub_code → code 逐级兜底，全缺 → 统一文案 */
@@ -592,7 +581,7 @@ public class AlipayCreateHandler {
     // 内部
     // =========================================================================
 
-    /** 读取请求 query 参数（OAuth 回跳标记 oauth_done） */
+    /** 读取请求 query 参数（auth_code） */
     private static String queryParam(InvokeContext ctx, String key) {
         var q = ctx.getRequest() != null ? ctx.getRequest().getQuery() : null;
         return PaymentUtils.parseForm(q).getOrDefault(key, "");

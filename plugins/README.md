@@ -62,27 +62,27 @@ ext 为空 → create(ctx)                  // 渠道尚未请求，按当前浏
 
 0. **身份来源（硬前提）**：
    - **微信公众号**：平台统一公众号首层（系统配置时）只做 buyer 记录 + 风控，随后通道自己的公众号 OAuth 取支付 openid；通道有自己的公众号也要走首层。
-   - **支付宝官方插件**：通道自己的支付宝应用 OAuth（`user_id`），无平台首层；身份同时用于风控和 JSPAY 支付。
-   - **三方支付宝插件**：通道配置是聚合商凭据，不是支付宝应用；必须依赖**平台统一的支付宝网页应用/中转**（固定回调域）。未配置时 `force_identity` 不生效（fail-closed），不能把“未配置身份源”当成门禁通过。上游支付不要求二次 OAuth；上游接受 `buyer_id` 时可回传平台 `user_id`。
-   - **小程序支付环境**：通道自己的小程序应用（或平台统一小程序兜底）；epay 的小程序机制暂时保留，不作为通用网页身份首层。
-1. **商户 API 建单 / 桌面 / 普通浏览器**：返回本地中转页（二维码内容 = 身份授权地址，如支付宝 `openauth.alipay.com/...`），`ext` 保持空；不请求渠道。移动端页面可用 `alipays://` 直接拉起授权页。
-2. **目标 App 内无身份**：返回 OAuth 授权跳转；回跳收银台带 `auth_code`/`code` 后兑换身份（SDK 的 `OAuthHelper` 内部已落 buyer + 黑名单）。
+   - **支付宝官方插件**：网页 `user_id` 流程优先平台统一网页应用（`payment.alipay.oauth_web`），由插件用 `ConfigSnapshot` 下发的全局应用凭证**直连支付宝 OAuth**（redirect_uri=收银台），未配置才回退通道自己的支付宝应用 OAuth；身份同时用于风控和 JSPAY 支付。
+   - **三方支付宝插件**：通道配置是聚合商凭据，不是支付宝应用；强制身份使用**平台统一的支付宝网页应用/中转**（固定回调域）。未配置全局网页应用时，`force_identity` 忽略该功能、直接下单（不做身份获取），不调用 `/oauth/aliweb`。上游支付不要求二次 OAuth；上游接受 `buyer_id` 时可回传平台 `user_id`。
+   - **小程序支付环境**：官方插件当前使用全局/通道应用直连（小程序端把 `auth_code` 交收银台）；平台统一小程序应用对三方后续小程序支付也可用（当前未接入）。强制获取用户标识/网页 buyer 一律走网页应用；不需要 buyer 的支付方式直接下单。与 epay 的差异仅商户自带小程序身份（`sub_openid`/`sub_appid`）未实现，暂不接入。
+1. **商户 API 建单 / 桌面 / 普通浏览器**：返回本地中转页（二维码内容 = 身份授权地址：官方插件直连全局网页应用时为支付宝 `openauth.alipay.com/...`，三方插件为宿主 `/oauth/aliweb`，未配置全局时为通道应用支付宝授权地址），`ext` 保持空；不请求渠道。移动端页面可用 `alipays://` 直接拉起授权页。
+2. **目标 App 内无身份**：返回 OAuth 授权跳转；官方直连/通道兜底路径回跳收银台带 `auth_code`，由 SDK 兑换身份；三方插件经宿主 `/oauth/aliweb` 时由宿主消费 `auth_code` 并回跳 `oauth_done=1`（SDK 的 `OAuthHelper` 内部已落 buyer + 黑名单）。
 3. **门禁通过后才 `lockCreate` 请求渠道**；`pay_url` 始终是本地收银台，渠道地址只进 ext。
 4. **失败关闭**：OAuth/配置失败按 `S_WAIT`，黑名单/拦截直接失败页；两者都不得调用渠道。
 5. **不做门禁**：渠道 API 本身强制 buyer 的方式（当面付JS/JSAPI/微信 JSAPI）走正常身份流程、不设开关；不经我们页面的方式（APP 直开、商户直连）没有门禁入口。
 6. **产品与展示分离**：不要为了给非目标环境出码而调用一个未启用的渠道产品。实例：只开当面付JS 的 PC 端应返回本地中转码，扫码进支付宝后再走 JSPAY，而不是调用未启用的 `precreate`（当面付扫码）。
 7. **桌面 Page 不做门禁**：桌面浏览器 OAuth + 支付会两次扫码；需要桌面身份时用“当面付优先”（需已开启当面付扫码/订单码）把桌面降级成扫码入口。
 
-#### 平台支付宝网页应用 OAuth 中转（三方插件）
+#### 平台支付宝网页应用 OAuth 中转（三方 / 官方插件网页身份）
 
-- **系统配置**：`payment.alipay.oauth_web`（JSON：`appid` / `private_key` / `is_prod` / `identity`；`identity` 必须显式选 `user_id` 或 `open_id`，不回退；open_id 需在支付宝开放平台启用 openid 配置，user_id 账号级但新商户可能不返回）。管理后台「支付宝 OAuth」组；该网页应用的授权回调域必须配置为 `payment.gateway`，本服务用 `/oauth/aliweb` 中转。
-- **插件侧**：用 `ConfigSnapshot.isOauthAlipayWebConfigured()` 判断是否就绪；用 `OAuthHelper.buildAlipayWebPayAuthUrl(ctx, cashierUrl, tradeNo)` 生成中转地址（`gatewayDomain/oauth/aliweb?redirect_uri=...&state=...`）。三方插件门禁页把它作为二维码/拉起地址；未配置时 fail-closed，不得下单。
+- **系统配置**：`payment.alipay.oauth_web`（JSON：`appid` / `private_key` / `is_prod`；不含 `identity`；固定 user_id 优先、缺失回退 open_id；user_id 账号级（2088）但新商户可能不返回；open_id 是应用级标识，需在支付宝开放平台启用 openid 配置。官方插件网页支付要求 `user_id`；网页应用的 `open_id` 仅适用于只做风控的门禁。小程序/JSAPI 的 `open_id` 由 `oauth_mini` 部分说明（需应用与小程序关联、`op_app_id` 同源））。管理后台「支付宝 OAuth」组；官方插件直连时授权回调域需覆盖各通道前端域（cashier）；三方插件仍用 `/oauth/aliweb`，回调域为 `payment.gateway`。官方插件的全局应用凭证随 `ConfigSnapshot` 下发到插件进程内（仅内存、不写日志、不下发浏览器）。
+- **插件侧**：三方插件用 `OAuthHelper.buildAlipayWebBrokerAuthUrl(ctx, cashierUrl, tradeNo)` 生成宿主中转地址（`gatewayDomain/oauth/aliweb?redirect_uri=...&state=...`）；未配置全局网页应用时忽略 `force_identity`、直接下单，不调用本入口。官方插件用 `OAuthHelper.buildAlipayWebPayAuthUrl(ctx, channelAppId, channelIsProd, cashierUrl, tradeNo)` 直连（有全局用全局，否则通道应用）。
 - **宿主链路**：
   1. 三方插件中转页 → `GET /oauth/aliweb?redirect_uri=<cashier>&state=<tradeNo>`；
   2. 无 `auth_code` → 302 到支付宝网页应用 `publicAppAuthorize`（`payment.alipay.oauth_web`，`auth_base`），回调回 `/oauth/aliweb` 并携带原 `redirect_uri`/`state`；
-  3. 有 `auth_code` → 兑换 `user_id`（或配置的 `open_id`）→ `OrderRiskService` 落 buyer + 黑名单 → 302 回 cashier，追加 `oauth_done=1`；
+  3. 有 `auth_code` → 兑换身份（user_id 优先，缺失回退 open_id）→ `OrderRiskService` 落 buyer + 黑名单 → 302 回 cashier，追加 `oauth_done=1`；
   4. 插件门禁看到 buyer 已存在，继续渠道下单；黑名单命中停在 `/pay/result/{tradeNo}`。
-- **官方 Alipay 插件不使用这一层**（通道自己的应用）；`payment.alipay.oauth_mini` 继续保留给 JSAPI/小程序支付，不作为通用网页首层。
+- **官方 Alipay 插件网页/小程序 `user_id` 流程优先全局应用直连**（未配置才回退通道应用）；身份固定 user_id 优先、缺失回退 open_id，官方 JSPAY 最终必须 user_id（open_id 仅适用于只做风控的门禁）。`payment.alipay.oauth_mini` 服务 JSAPI 直连（官方当前使用；三方后续小程序支付可接入）；商户自带小程序身份（`sub_openid`/`sub_appid`）未实现。
 - **上线顺序**：先在管理后台配置 `payment.alipay.oauth_web`，并在支付宝网页应用配置回调域 `payment.gateway`；再接入具体三方插件的门禁。
 
 自检：
